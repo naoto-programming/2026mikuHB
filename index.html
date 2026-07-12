@@ -1,0 +1,2499 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ビートソード - 2D横スクロールリズム協力アクション</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a1a;
+            color: #fff;
+            font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+        }
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            max-width: 1200px;
+            aspect-ratio: 16/9;
+            background: #000;
+            border: 2px solid #333;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .hidden { display: none !important; }
+
+        /* Menu Styles */
+        .screen {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.9);
+            z-index: 20;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 3em;
+            color: #ff6b35;
+            text-shadow: 0 0 20px rgba(255,107,53,0.5);
+            margin-bottom: 10px;
+            letter-spacing: 4px;
+        }
+        h2 {
+            color: #ff6b35;
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+        .subtitle { color: #aaa; margin-bottom: 30px; font-size: 1.1em; text-align: center; }
+        .btn {
+            padding: 15px 40px;
+            margin: 10px;
+            font-size: 1.2em;
+            border: 2px solid #ff6b35;
+            background: transparent;
+            color: #ff6b35;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+        .btn:hover {
+            background: #ff6b35;
+            color: #fff;
+            box-shadow: 0 0 20px rgba(255,107,53,0.4);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-group { display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; }
+
+        .char-select {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .char-card {
+            border: 2px solid #444;
+            padding: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 130px;
+            text-align: center;
+            background: rgba(255,255,255,0.05);
+        }
+        .char-card:hover { border-color: #ff6b35; transform: translateY(-5px); }
+        .char-card.selected { border-color: #ff6b35; background: rgba(255,107,53,0.2); }
+        .char-card .char-name { font-weight: bold; color: #ff6b35; margin-bottom: 5px; font-size: 1.1em; }
+        .char-card .char-diff { font-size: 0.8em; color: #888; }
+        .char-card .char-desc { font-size: 0.75em; color: #aaa; margin-top: 5px; }
+        .diff-stars { color: #ffd700; font-size: 0.9em; }
+
+        .upgrade-card {
+            border: 2px solid #444;
+            padding: 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 220px;
+            text-align: center;
+            background: rgba(255,255,255,0.05);
+            margin: 10px;
+        }
+        .upgrade-card:hover { border-color: #ff6b35; transform: scale(1.05); }
+        .upgrade-card .upgrade-name { font-weight: bold; color: #ff6b35; margin-bottom: 8px; font-size: 1.1em; }
+        .upgrade-card .upgrade-desc { font-size: 0.85em; color: #aaa; }
+        .upgrade-card .upgrade-rarity { font-size: 0.75em; margin-top: 8px; }
+        .rarity-common { color: #aaa; }
+        .rarity-rare { color: #4a90d9; }
+        .rarity-epic { color: #9b59b6; }
+        .rarity-legendary { color: #ffd700; }
+
+        input[type="text"] {
+            padding: 12px 15px;
+            font-size: 1em;
+            border: 2px solid #444;
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            border-radius: 4px;
+            margin: 5px;
+            font-family: inherit;
+            width: 280px;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #ff6b35;
+        }
+
+        .player-tag {
+            display: inline-block;
+            padding: 5px 12px;
+            margin: 3px;
+            border-radius: 15px;
+            background: rgba(255,107,53,0.2);
+            border: 1px solid #ff6b35;
+            font-size: 0.9em;
+        }
+
+        .howto-text {
+            max-width: 600px;
+            text-align: left;
+            line-height: 1.8;
+            color: #ccc;
+            font-size: 1em;
+        }
+        .howto-text p { margin-bottom: 12px; }
+        .howto-text strong { color: #ff6b35; }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            top: 10px; left: 10px; right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+            z-index: 15;
+        }
+        .hud-panel {
+            background: rgba(0,0,0,0.7);
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            min-width: 80px;
+        }
+        .hud-label { font-size: 0.65em; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .hud-value { font-size: 1.3em; font-weight: bold; color: #fff; }
+        .hp-bar {
+            width: 100px;
+            height: 8px;
+            background: #333;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .hp-fill {
+            height: 100%;
+            transition: width 0.2s, background 0.2s;
+            border-radius: 4px;
+        }
+        .hp-fill.high { background: #2ecc71; }
+        .hp-fill.mid { background: #f39c12; }
+        .hp-fill.low { background: #e74c3c; }
+
+        .combo-display {
+            position: absolute;
+            bottom: 140px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            pointer-events: none;
+            z-index: 15;
+        }
+        .combo-count {
+            font-size: 3em;
+            font-weight: bold;
+            color: #ff6b35;
+            text-shadow: 0 0 20px rgba(255,107,53,0.8);
+            line-height: 1;
+        }
+        .combo-label { font-size: 1em; color: #ffaa77; letter-spacing: 3px; }
+
+        #beatBar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 90px;
+            background: rgba(0,0,0,0.8);
+            border: 2px solid #333;
+            border-radius: 12px;
+            overflow: hidden;
+            z-index: 15;
+        }
+        .beat-target {
+            position: absolute;
+            left: 50%;
+            top: 0; bottom: 0;
+            width: 4px;
+            background: #ff6b35;
+            box-shadow: 0 0 15px rgba(255,107,53,0.9);
+            z-index: 5;
+            transform: translateX(-50%);
+        }
+        .beat-target::before {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px; height: 20px;
+            border: 2px solid #ff6b35;
+            border-radius: 50%;
+            opacity: 0.5;
+        }
+
+        .tutorial-box {
+            position: absolute;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.85);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            color: #aaa;
+            border: 1px solid #444;
+            z-index: 15;
+            white-space: nowrap;
+        }
+        .tutorial-box span { font-weight: bold; }
+
+        .hit-effect {
+            position: absolute;
+            pointer-events: none;
+            font-weight: bold;
+            font-size: 1.8em;
+            animation: hitFloat 0.8s ease-out forwards;
+            z-index: 100;
+            text-shadow: 0 0 10px rgba(0,0,0,0.8);
+        }
+        @keyframes hitFloat {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-100px) scale(1.5); opacity: 0; }
+        }
+        .judge-perfect { color: #ffd700; }
+        .judge-great { color: #ff6b35; }
+        .judge-good { color: #4a90d9; }
+        .judge-miss { color: #666; }
+
+        .damage-number {
+            position: absolute;
+            pointer-events: none;
+            font-weight: bold;
+            font-size: 1.3em;
+            animation: damageFloat 1s ease-out forwards;
+            z-index: 50;
+        }
+        @keyframes damageFloat {
+            0% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(-70px); opacity: 0; }
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 10px; right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            z-index: 20;
+            color: #888;
+        }
+        .connection-status.online { color: #2ecc71; border: 1px solid #2ecc71; }
+        .connection-status.host { color: #ff6b35; border: 1px solid #ff6b35; }
+
+        .warning-flash {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(231,76,60,0.2);
+            pointer-events: none;
+            z-index: 12;
+            animation: flash 0.3s ease-out;
+        }
+        @keyframes flash {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        .stage-clear {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 4em;
+            font-weight: bold;
+            color: #ffd700;
+            text-shadow: 0 0 30px rgba(255,215,0,0.6);
+            z-index: 100;
+            animation: stageClear 1.5s ease-out forwards;
+            pointer-events: none;
+        }
+        @keyframes stageClear {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            30% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+            70% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+    </style>
+<base target="_blank">
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- HUD -->
+        <div id="hud" class="hidden">
+            <div class="hud-panel">
+                <div class="hud-label">SCORE</div>
+                <div class="hud-value" id="scoreValue">0</div>
+            </div>
+            <div class="hud-panel">
+                <div class="hud-label">STAGE</div>
+                <div class="hud-value" id="stageValue">1-1</div>
+            </div>
+            <div class="hud-panel">
+                <div class="hud-label">BPM</div>
+                <div class="hud-value" id="bpmValue">120</div>
+            </div>
+            <div class="hud-panel">
+                <div class="hud-label">HP</div>
+                <div class="hp-bar"><div class="hp-fill high" id="hpBar" style="width:100%"></div></div>
+                <div class="hud-value" id="hpValue" style="font-size:1em">100/100</div>
+            </div>
+        </div>
+
+        <div class="combo-display hidden" id="comboDisplay">
+            <div class="combo-count" id="comboCount">0</div>
+            <div class="combo-label">COMBO</div>
+        </div>
+
+        <div id="beatBar" class="hidden">
+            <div class="beat-target"></div>
+        </div>
+
+        <div class="tutorial-box hidden" id="tutorialBox">
+            <span style="color:#ff6b35">Z</span> 剣攻撃 | <span style="color:#4a90d9">X</span> 能力 | <span style="color:#e74c3c">C</span> カウンター | <span style="color:#aaa">←→</span> 移動
+        </div>
+
+        <div class="connection-status hidden" id="connStatus">OFFLINE</div>
+
+        <!-- Menu Screen -->
+        <div id="menuScreen" class="screen">
+            <h1>ビートソード</h1>
+            <div class="subtitle">2D横スクロール リズム協力アクション</div>
+            <div class="btn-group">
+                <button class="btn" onclick="Game.showModeSelect()">ゲーム開始</button>
+                <button class="btn" onclick="Game.showHowToPlay()">遊び方</button>
+            </div>
+        </div>
+
+        <!-- Mode Select -->
+        <div id="modeScreen" class="screen hidden">
+            <h2>モード選択</h2>
+            <div class="btn-group">
+                <button class="btn" onclick="Game.startSinglePlayer()">1人プレイ</button>
+                <button class="btn" onclick="Game.showLobby()">LANマルチプレイ</button>
+            </div>
+            <button class="btn" onclick="Game.showMenu()" style="margin-top:30px;">戻る</button>
+        </div>
+
+        <!-- Character Select -->
+        <div id="charScreen" class="screen hidden">
+            <h2>キャラクター選択</h2>
+            <div class="subtitle" id="charSelectSubtitle">難易度が低い順</div>
+            <div class="char-select" id="charSelect"></div>
+            <div class="btn-group">
+                <button class="btn" onclick="Game.confirmChar()">決定</button>
+                <button class="btn" onclick="Game.showModeSelect()">戻る</button>
+            </div>
+        </div>
+
+        <!-- Lobby Screen -->
+        <div id="lobbyScreen" class="screen hidden">
+            <h2>LANロビー</h2>
+            <div id="lobbyContent">
+                <div class="btn-group">
+                    <button class="btn" onclick="Game.createHost()">ホストを作成</button>
+                    <button class="btn" onclick="Game.showJoin()">参加する</button>
+                </div>
+            </div>
+            <div id="hostPanel" class="hidden" style="text-align:center;margin-top:20px;">
+                <p style="margin:10px 0;">ホストIP: <span id="hostIP" style="color:#ff6b35;font-weight:bold;font-size:1.2em;">127.0.0.1</span></p>
+                <p style="margin:10px 0;">ポート: <span style="color:#ff6b35;font-weight:bold;">8080</span></p>
+                <p style="color:#888;font-size:0.9em;margin-bottom:15px;">同じWi-Fi内のプレイヤーにこのIPを伝えてください</p>
+                <div id="playerList" style="margin:15px 0;"></div>
+                <button class="btn" onclick="Game.startMultiplayer()" id="startMultiBtn" disabled>ゲーム開始 (1/2)</button>
+            </div>
+            <div id="joinPanel" class="hidden" style="text-align:center;margin-top:20px;">
+                <p style="margin:10px 0;">ホストIPアドレスを入力:</p>
+                <input type="text" id="joinIP" placeholder="例: 192.168.1.5" value="127.0.0.1">
+                <br>
+                <button class="btn" onclick="Game.joinHost()" style="margin-top:10px;">接続</button>
+                <p id="joinStatus" style="margin:10px;color:#888;"></p>
+            </div>
+            <button class="btn" onclick="Game.showModeSelect()" style="margin-top:20px;">戻る</button>
+        </div>
+
+        <!-- Upgrade Screen -->
+        <div id="upgradeScreen" class="screen hidden">
+            <h2>ステージクリア！</h2>
+            <div class="subtitle">強化を1つ選択してください</div>
+            <div class="btn-group" id="upgradeChoices" style="flex-wrap:wrap;"></div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameOverScreen" class="screen hidden">
+            <h2 id="gameOverTitle" style="color:#e74c3c;margin-bottom:20px;">ゲームオーバー</h2>
+            <div class="subtitle" id="gameOverStats"></div>
+            <div class="btn-group">
+                <button class="btn" onclick="Game.restart()">再挑戦</button>
+                <button class="btn" onclick="Game.showMenu()">メニューへ</button>
+            </div>
+        </div>
+
+        <!-- How to Play -->
+        <div id="howToScreen" class="screen hidden">
+            <h2>遊び方</h2>
+            <div class="howto-text">
+                <p><strong>基本操作:</strong></p>
+                <p>• <strong>Zキー</strong> - 剣攻撃（リズムに合わせて）</p>
+                <p>• <strong>Xキー</strong> - 固有能力発動</p>
+                <p>• <strong>Cキー</strong> - カウンター</p>
+                <p>• <strong>←→キー</strong> - 移動</p>
+                <p><strong>リズムシステム:</strong></p>
+                <p>BGMの拍に合わせてノーツが流れてきます。タイミングよくキーを押して攻撃！</p>
+                <p>Perfect > Great > Good > Miss の判定があります。</p>
+                <p><strong>協力プレイ:</strong></p>
+                <p>最大8人で協力プレイ可能。ホストPCがゲームサーバーを兼任します。</p>
+                <p>同じWi-Fi内でプレイしてください。</p>
+                <p><strong>成長システム:</strong></p>
+                <p>ステージクリア時に3つの強化から1つ選択。ローグライト方式で進むほど強くなる！</p>
+            </div>
+            <button class="btn" onclick="Game.showMenu()" style="margin-top:30px;">戻る</button>
+        </div>
+    </div>
+
+<script>
+
+// ============================================================
+// ビートソード - 2D横スクロールリズム協力アクション
+// ============================================================
+
+const CONSTANTS = {
+    CANVAS_WIDTH: 1280,
+    CANVAS_HEIGHT: 720,
+    GRAVITY: 0.6,
+    GROUND_Y: 600,
+    PLAYER_SPEED: 6,
+    BASE_BPM: 120,
+    NOTE_SPEED: 280,
+    PERFECT_WINDOW: 0.06,
+    GREAT_WINDOW: 0.12,
+    GOOD_WINDOW: 0.20,
+    STAGE_LENGTH: 4000,
+    MAX_PLAYERS: 8,
+    HOST_PORT: 8080,
+};
+
+const CHARACTERS = [
+    { id: 'swordsman', name: '剣士', diff: 1, desc: '初心者向け・安定型', color: '#e74c3c', 
+      ability: '斬鉄剣', abilityDesc: '前方広範囲攻撃', hp: 120, atk: 10, speed: 1.0 },
+    { id: 'archer', name: '弓士', diff: 2, desc: '遠距離型', color: '#2ecc71',
+      ability: '連射', abilityDesc: '遠距離複数射撃', hp: 90, atk: 12, speed: 1.1 },
+    { id: 'thief', name: '盗賊', diff: 3, desc: '高速攻撃型', color: '#9b59b6',
+      ability: '神速', abilityDesc: '攻撃速度大幅UP', hp: 80, atk: 8, speed: 1.3 },
+    { id: 'fighter', name: '拳士', diff: 4, desc: '高火力コンボ型', color: '#f39c12',
+      ability: '百裂拳', abilityDesc: '連続多段攻撃', hp: 100, atk: 15, speed: 0.9 },
+    { id: 'beast', name: '獣人', diff: 5, desc: '高火力高難度', color: '#e67e22',
+      ability: '獣王撃', abilityDesc: '超高威力一撃', hp: 110, atk: 20, speed: 0.85 },
+    { id: 'mage', name: '魔法使い', diff: 6, desc: '能力重視型', color: '#3498db',
+      ability: 'メテオ', abilityDesc: '広範囲魔法攻撃', hp: 70, atk: 5, speed: 0.8 },
+    { id: 'spirit', name: '精霊騎士', diff: 7, desc: '複数要素管理型', color: '#1abc9c',
+      ability: '精霊召喚', abilityDesc: '自動攻撃+回復', hp: 95, atk: 11, speed: 1.0 },
+    { id: 'dragon', name: '竜騎士', diff: 8, desc: '最高火力・最高難易度', color: '#c0392b',
+      ability: '竜破斬', abilityDesc: '全画面壊滅攻撃', hp: 130, atk: 25, speed: 0.75 },
+];
+
+const UPGRADES = [
+    { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
+    { name: '攻撃力UP', desc: '攻撃力+25%', type: 'atk', value: 0.25, rarity: 'common' },
+    { name: '攻撃速度UP', desc: 'ノーツ速度+15%', type: 'speed', value: 0.15, rarity: 'common' },
+    { name: 'Perfect効果強化', desc: 'Perfect時ダメージ+50%', type: 'perfect', value: 0.5, rarity: 'rare' },
+    { name: 'カウンター強化', desc: 'カウンター威力+40%', type: 'counter', value: 0.4, rarity: 'rare' },
+    { name: 'コンボ強化', desc: 'コンボ倍率+0.1', type: 'combo', value: 0.1, rarity: 'rare' },
+    { name: '能力威力UP', desc: '能力ダメージ+60%', type: 'ability', value: 0.6, rarity: 'epic' },
+    { name: 'HP回復', desc: '最大HPの50%回復', type: 'heal', value: 0.5, rarity: 'common' },
+    { name: '吸血効果', desc: '与ダメージの10%回復', type: 'lifesteal', value: 0.1, rarity: 'epic' },
+    { name: '無敵時間UP', desc: '被ダメージ後無敵+0.5秒', type: 'invincible', value: 0.5, rarity: 'legendary' },
+];
+
+const ENEMY_TYPES = {
+    normal: { name: 'スライム', hp: 30, atk: 5, speed: 1, size: 30, color: '#2ecc71', score: 10, flying: false, ranged: false, defense: false },
+    flying: { name: 'バット', hp: 20, atk: 8, speed: 2, size: 25, color: '#9b59b6', score: 15, flying: true, ranged: false, defense: false },
+    ranged: { name: 'ゴブリン射手', hp: 25, atk: 10, speed: 0.8, size: 28, color: '#e67e22', score: 20, flying: false, ranged: true, defense: false, range: 300 },
+    defense: { name: '盾兵', hp: 60, atk: 6, speed: 0.5, size: 35, color: '#34495e', score: 25, flying: false, ranged: false, defense: true, shield: true },
+    large: { name: 'オーガ', hp: 150, atk: 15, speed: 0.6, size: 50, color: '#c0392b', score: 50, flying: false, ranged: false, defense: false, elite: true },
+    elite: { name: 'エリート', hp: 200, atk: 20, speed: 1.2, size: 45, color: '#e74c3c', score: 100, flying: false, ranged: true, defense: true, elite: true },
+};
+
+// ============================================================
+// Audio System (Web Audio API)
+// ============================================================
+class AudioSystem {
+    constructor() {
+        this.ctx = null;
+        this.bpm = CONSTANTS.BASE_BPM;
+        this.startTime = 0;
+        this.beatCount = 0;
+        this.isPlaying = false;
+        this.onBeat = null;
+        this.beatCallbacks = [];
+        this.masterGain = null;
+    }
+
+    init() {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.4;
+        this.masterGain.connect(this.ctx.destination);
+    }
+
+    startBGM(bpm) {
+        if (!this.ctx) this.init();
+        this.bpm = bpm || this.bpm;
+        this.startTime = this.ctx.currentTime;
+        this.beatCount = 0;
+        this.isPlaying = true;
+        this.scheduleBeats();
+    }
+
+    scheduleBeats() {
+        const beatInterval = 60 / this.bpm;
+        const lookahead = 0.15;
+
+        const schedule = () => {
+            if (!this.isPlaying) return;
+            const currentTime = this.ctx.currentTime;
+
+            while (this.startTime + (this.beatCount + 1) * beatInterval < currentTime + lookahead) {
+                this.beatCount++;
+                const beatTime = this.startTime + this.beatCount * beatInterval;
+                this.playBeatSound(beatTime);
+                if (this.onBeat) this.onBeat(this.beatCount, beatTime);
+                this.beatCallbacks.forEach(cb => cb(this.beatCount));
+            }
+
+            requestAnimationFrame(schedule);
+        };
+        schedule();
+    }
+
+    playBeatSound(time) {
+        const beatInBar = (this.beatCount % 4) + 1;
+
+        // Kick on beats 1 and 3
+        if (beatInBar === 1 || beatInBar === 3) {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+            osc.frequency.setValueAtTime(150, time);
+            osc.frequency.exponentialRampToValueAtTime(40, time + 0.1);
+            gain.gain.setValueAtTime(0.5, time);
+            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.15);
+            osc.start(time);
+            osc.stop(time + 0.15);
+        }
+
+        // Snare on beats 2 and 4
+        if (beatInBar === 2 || beatInBar === 4) {
+            const noise = this.ctx.createBufferSource();
+            const bufferSize = this.ctx.sampleRate * 0.1;
+            const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.05));
+            }
+            noise.buffer = buffer;
+            const gain = this.ctx.createGain();
+            noise.connect(gain);
+            gain.connect(this.masterGain);
+            gain.gain.setValueAtTime(0.3, time);
+            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.08);
+            noise.start(time);
+        }
+
+        // Hi-hat on all beats
+        const hihat = this.ctx.createOscillator();
+        const hihatGain = this.ctx.createGain();
+        hihat.type = 'square';
+        hihat.connect(hihatGain);
+        hihatGain.connect(this.masterGain);
+        hihat.frequency.setValueAtTime(12000, time);
+        hihatGain.gain.setValueAtTime(0.03, time);
+        hihatGain.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
+        hihat.start(time);
+        hihat.stop(time + 0.03);
+    }
+
+    getCurrentBeat() {
+        if (!this.isPlaying) return 0;
+        const elapsed = this.ctx.currentTime - this.startTime;
+        return elapsed / (60 / this.bpm);
+    }
+
+    getBeatAccuracy() {
+        const beatInterval = 60 / this.bpm;
+        const currentBeat = this.getCurrentBeat();
+        const nearestBeat = Math.round(currentBeat);
+        const offset = Math.abs(currentBeat - nearestBeat) * beatInterval;
+        return { offset, nearestBeat };
+    }
+
+    playHitSound(type) {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        if (type === 'perfect') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.setValueAtTime(1100, now + 0.05);
+            osc.frequency.setValueAtTime(1320, now + 0.1);
+            gain.gain.setValueAtTime(0.25, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+        } else if (type === 'great') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(660, now);
+            osc.frequency.setValueAtTime(880, now + 0.05);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        } else if (type === 'good') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(440, now);
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        } else {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, now);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        }
+
+        osc.start(now);
+        osc.stop(now + 0.3);
+    }
+
+    playSwordSound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const bufferSize = this.ctx.sampleRate * 0.08;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
+        }
+        const source = this.ctx.createBufferSource();
+        source.buffer = buffer;
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 2000;
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+        source.start(now);
+    }
+
+    playAbilitySound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+        osc.start(now);
+        osc.stop(now + 0.4);
+    }
+
+    playCounterSound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+    }
+
+    stop() {
+        this.isPlaying = false;
+    }
+}
+
+// ============================================================
+// Rhythm System
+// ============================================================
+class RhythmSystem {
+    constructor(audio) {
+        this.audio = audio;
+        this.notes = [];
+        this.combo = 0;
+        this.maxCombo = 0;
+        this.score = 0;
+        this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
+        this.onJudge = null;
+        this.noteId = 0;
+        this.abilityNotes = [];
+        this.abilityActive = false;
+        this.abilityStartBeat = 0;
+        this.abilityLength = 0;
+    }
+
+    generateSwordNotes(beatStart, beatEnd, density = 1) {
+        for (let i = beatStart; i <= beatEnd; i++) {
+            if (Math.random() < density) {
+                this.notes.push({
+                    id: this.noteId++,
+                    beat: i,
+                    type: 'sword',
+                    hit: false,
+                    missed: false,
+                });
+            }
+        }
+    }
+
+    startAbility(beats) {
+        this.abilityActive = true;
+        this.abilityStartBeat = Math.ceil(this.audio.getCurrentBeat());
+        this.abilityLength = beats;
+        this.abilityNotes = [];
+        for (let i = 0; i < beats; i++) {
+            this.abilityNotes.push({
+                id: this.noteId++,
+                beat: this.abilityStartBeat + i,
+                type: 'ability',
+                hit: false,
+                missed: false,
+                index: i,
+            });
+        }
+    }
+
+    generateCounterNote(beat) {
+        this.notes.push({
+            id: this.noteId++,
+            beat: beat,
+            type: 'counter',
+            hit: false,
+            missed: false,
+        });
+    }
+
+    update() {
+        const currentBeat = this.audio.getCurrentBeat();
+
+        // Mark missed notes
+        [...this.notes, ...this.abilityNotes].forEach(note => {
+            if (!note.hit && !note.missed && currentBeat > note.beat + CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60)) {
+                note.missed = true;
+                if (note.type !== 'ability') {
+                    this.combo = 0;
+                    this.judges.miss++;
+                    if (this.onJudge) this.onJudge('miss', 0, this.combo);
+                }
+            }
+        });
+
+        // Check ability completion
+        if (this.abilityActive) {
+            const allDone = this.abilityNotes.every(n => n.hit || n.missed);
+            if (allDone || currentBeat > this.abilityStartBeat + this.abilityLength + 1) {
+                this.abilityActive = false;
+                const hitCount = this.abilityNotes.filter(n => n.hit).length;
+                const total = this.abilityNotes.length;
+                return { type: 'ability_complete', hitCount, total };
+            }
+        }
+
+        // Remove old notes
+        this.notes = this.notes.filter(n => {
+            if (n.hit) return currentBeat - n.beat < 2;
+            return currentBeat - n.beat < 3;
+        });
+
+        return null;
+    }
+
+    checkInput(inputType) {
+        const currentBeat = this.audio.getCurrentBeat();
+        const beatInterval = 60 / this.audio.bpm;
+
+        let searchPool = inputType === 'ability' && this.abilityActive ? this.abilityNotes : this.notes;
+
+        let nearest = null;
+        let nearestDist = Infinity;
+
+        searchPool.forEach(note => {
+            if (!note.hit && !note.missed && note.type === inputType) {
+                const dist = Math.abs(note.beat - currentBeat) * beatInterval;
+                if (dist < nearestDist && dist < CONSTANTS.GOOD_WINDOW) {
+                    nearestDist = dist;
+                    nearest = note;
+                }
+            }
+        });
+
+        if (!nearest) return null;
+
+        let judge = 'miss';
+        let multiplier = 0.5;
+
+        if (nearestDist <= CONSTANTS.PERFECT_WINDOW) {
+            judge = 'perfect';
+            multiplier = 2.0;
+        } else if (nearestDist <= CONSTANTS.GREAT_WINDOW) {
+            judge = 'great';
+            multiplier = 1.5;
+        } else if (nearestDist <= CONSTANTS.GOOD_WINDOW) {
+            judge = 'good';
+            multiplier = 1.0;
+        }
+
+        if (judge !== 'miss') {
+            nearest.hit = true;
+            if (inputType !== 'ability') {
+                this.combo++;
+                if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+
+                const baseScore = 100;
+                const comboBonus = Math.min(this.combo * 10, 500);
+                const points = Math.floor(baseScore * multiplier + comboBonus);
+                this.score += points;
+
+                this.judges[judge]++;
+                this.audio.playHitSound(judge);
+
+                if (this.onJudge) this.onJudge(judge, points, this.combo);
+
+                return { judge, multiplier, note: nearest, points, combo: this.combo };
+            } else {
+                this.audio.playHitSound('good');
+                return { judge, multiplier: 1, note: nearest, points: 0, combo: 0, ability: true };
+            }
+        } else {
+            if (inputType !== 'ability') {
+                this.combo = 0;
+                this.judges.miss++;
+                if (this.onJudge) this.onJudge('miss', 0, 0);
+            }
+            return { judge: 'miss', multiplier: 0, note: nearest, points: 0, combo: 0 };
+        }
+    }
+
+    getNotesForRender() {
+        const currentBeat = this.audio.getCurrentBeat();
+        const beatInterval = 60 / this.audio.bpm;
+        const visibleBeats = 4;
+
+        const allNotes = [...this.notes];
+        if (this.abilityActive) {
+            allNotes.push(...this.abilityNotes);
+        }
+
+        return allNotes.filter(n => {
+            const dist = n.beat - currentBeat;
+            return dist > -0.5 && dist < visibleBeats && !n.hit;
+        }).map(n => ({
+            ...n,
+            x: 300 + (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * beatInterval),
+        }));
+    }
+
+    reset() {
+        this.notes = [];
+        this.abilityNotes = [];
+        this.abilityActive = false;
+        this.combo = 0;
+        this.maxCombo = 0;
+        this.score = 0;
+        this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
+    }
+}
+
+// ============================================================
+// Player
+// ============================================================
+class Player {
+    constructor(id, charId, isLocal = true) {
+        this.id = id;
+        this.charId = charId;
+        this.isLocal = isLocal;
+        this.char = CHARACTERS.find(c => c.id === charId) || CHARACTERS[0];
+
+        this.x = 200;
+        this.y = CONSTANTS.GROUND_Y;
+        this.vx = 0;
+        this.vy = 0;
+        this.hp = this.char.hp;
+        this.maxHp = this.char.hp;
+        this.atk = this.char.atk;
+        this.facing = 1;
+        this.isGrounded = true;
+        this.isAttacking = false;
+        this.attackTimer = 0;
+        this.isCountering = false;
+        this.counterTimer = 0;
+        this.isUsingAbility = false;
+        this.abilityTimer = 0;
+        this.invincible = 0;
+        this.animFrame = 0;
+        this.animTimer = 0;
+        this.state = 'idle';
+        this.flashTimer = 0;
+
+        this.upgrades = {
+            range: 1, atk: 1, speed: 1, perfect: 1, counter: 1,
+            combo: 0, ability: 1, lifesteal: 0, invincible: 0,
+        };
+    }
+
+    applyUpgrade(upgrade) {
+        if (upgrade.type === 'heal') {
+            this.hp = Math.min(this.hp + this.maxHp * upgrade.value, this.maxHp);
+        } else if (this.upgrades[upgrade.type] !== undefined) {
+            if (upgrade.type === 'range' || upgrade.type === 'atk' || upgrade.type === 'speed' || 
+                upgrade.type === 'perfect' || upgrade.type === 'counter' || upgrade.type === 'ability' || 
+                upgrade.type === 'invincible') {
+                this.upgrades[upgrade.type] += upgrade.value;
+            } else if (upgrade.type === 'combo' || upgrade.type === 'lifesteal') {
+                this.upgrades[upgrade.type] += upgrade.value;
+            }
+        }
+    }
+
+    getAttackRange() {
+        return 80 * this.upgrades.range;
+    }
+
+    getDamage(baseDamage, judge) {
+        let dmg = baseDamage * this.upgrades.atk;
+        if (judge === 'perfect') dmg *= this.upgrades.perfect;
+        else if (judge === 'great') dmg *= 1.5;
+        else if (judge === 'good') dmg *= 1.0;
+        else dmg *= 0.5;
+        return Math.floor(dmg * (this.char.atk / 10));
+    }
+
+    update(input, dt, scrollX) {
+        this.animTimer += dt;
+        if (this.invincible > 0) this.invincible -= dt;
+        if (this.flashTimer > 0) this.flashTimer -= dt;
+
+        if (this.isLocal && input) {
+            if (input.left) { this.vx = -CONSTANTS.PLAYER_SPEED * this.char.speed; this.facing = -1; }
+            else if (input.right) { this.vx = CONSTANTS.PLAYER_SPEED * this.char.speed; this.facing = 1; }
+            else { this.vx *= 0.8; }
+
+            if (Math.abs(this.vx) > 0.5 && !this.isAttacking && !this.isCountering && !this.isUsingAbility) 
+                this.state = 'run';
+            else if (!this.isAttacking && !this.isCountering && !this.isUsingAbility) 
+                this.state = 'idle';
+        }
+
+        this.x += this.vx;
+        this.x = Math.max(scrollX + 50, Math.min(this.x, scrollX + CONSTANTS.CANVAS_WIDTH - 50));
+
+        if (this.animTimer > 0.1) {
+            this.animFrame = (this.animFrame + 1) % 4;
+            this.animTimer = 0;
+        }
+
+        if (this.isAttacking) {
+            this.attackTimer -= dt;
+            if (this.attackTimer <= 0) { this.isAttacking = false; this.state = 'idle'; }
+        }
+        if (this.isCountering) {
+            this.counterTimer -= dt;
+            if (this.counterTimer <= 0) { this.isCountering = false; this.state = 'idle'; }
+        }
+        if (this.isUsingAbility) {
+            this.abilityTimer -= dt;
+            if (this.abilityTimer <= 0) { this.isUsingAbility = false; this.state = 'idle'; }
+        }
+    }
+
+    attack() {
+        this.isAttacking = true;
+        this.attackTimer = 0.25;
+        this.state = 'attack';
+    }
+
+    counter() {
+        this.isCountering = true;
+        this.counterTimer = 0.4;
+        this.state = 'counter';
+    }
+
+    useAbility() {
+        this.isUsingAbility = true;
+        this.abilityTimer = 0.6;
+        this.state = 'ability';
+    }
+
+    takeDamage(dmg) {
+        if (this.invincible > 0) return 0;
+        this.hp -= dmg;
+        this.invincible = 0.5 + this.upgrades.invincible;
+        this.flashTimer = 0.2;
+        this.state = 'hurt';
+        if (this.hp <= 0) this.hp = 0;
+        return dmg;
+    }
+
+    heal(amount) {
+        this.hp = Math.min(this.hp + amount, this.maxHp);
+    }
+
+    isAlive() { return this.hp > 0; }
+
+    getHitbox() {
+        return { x: this.x - 20, y: this.y - 60, w: 40, h: 60 };
+    }
+
+    getAttackHitbox() {
+        const range = this.getAttackRange();
+        return {
+            x: this.facing > 0 ? this.x : this.x - range,
+            y: this.y - 50,
+            w: range,
+            h: 50,
+        };
+    }
+}
+
+// ============================================================
+// Enemy
+// ============================================================
+class Enemy {
+    constructor(type, x, y, stageMod = 1) {
+        this.type = type;
+        this.data = ENEMY_TYPES[type];
+        this.x = x;
+        this.y = y;
+        this.hp = this.data.hp * stageMod;
+        this.maxHp = this.hp;
+        this.atk = this.data.atk * stageMod;
+        this.vx = -this.data.speed * (1 + stageMod * 0.1);
+        this.vy = 0;
+        this.state = 'move';
+        this.animTimer = 0;
+        this.animFrame = 0;
+        this.attackTimer = 0;
+        this.attackCooldown = 1.5 + Math.random() * 2;
+        this.isAttacking = false;
+        this.attackWarning = false;
+        this.counterable = false;
+        this.stunTimer = 0;
+        this.dead = false;
+        this.flying = this.data.flying;
+        this.groundY = y;
+        this.resistances = {};
+
+        if (Math.random() < 0.25 * stageMod) {
+            const types = ['sword', 'ability', 'counter'];
+            this.resistances[types[Math.floor(Math.random() * types.length)]] = 0.5;
+        }
+    }
+
+    update(dt, players, scrollX) {
+        if (this.dead) return;
+        if (this.stunTimer > 0) { this.stunTimer -= dt; return; }
+
+        this.animTimer += dt;
+        if (this.animTimer > 0.15) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
+
+        let nearest = null, nearestDist = Infinity;
+        players.forEach(p => {
+            if (!p.isAlive()) return;
+            const dist = Math.abs(p.x - this.x);
+            if (dist < nearestDist) { nearestDist = dist; nearest = p; }
+        });
+
+        if (nearest) {
+            const dist = nearest.x - this.x;
+            const attackRange = this.data.ranged ? (this.data.range || 250) : 70;
+
+            if (Math.abs(dist) < attackRange && !this.isAttacking && this.attackCooldown <= 0) {
+                this.startAttack();
+            } else if (!this.isAttacking) {
+                if (this.flying) {
+                    this.x += Math.sign(dist) * Math.abs(this.vx) * 0.5;
+                    this.y = this.groundY + Math.sin(this.animTimer * 3) * 25;
+                } else {
+                    this.x += Math.sign(dist) * Math.abs(this.vx);
+                }
+            }
+        }
+
+        if (this.isAttacking) {
+            this.attackTimer -= dt;
+            if (this.attackTimer <= 0) {
+                this.executeAttack(players);
+                this.isAttacking = false;
+                this.attackWarning = false;
+                this.counterable = false;
+                this.attackCooldown = 2 + Math.random() * 2;
+            } else if (this.attackTimer < 0.6 && !this.attackWarning) {
+                this.attackWarning = true;
+                this.counterable = true;
+            }
+        } else {
+            this.attackCooldown -= dt;
+        }
+
+        if (this.x < scrollX - 150) this.dead = true;
+    }
+
+    startAttack() {
+        this.isAttacking = true;
+        this.attackTimer = 1.0;
+        this.state = 'attack';
+    }
+
+    executeAttack(players) {
+        const hitbox = this.getAttackHitbox();
+        players.forEach(p => {
+            if (!p.isAlive()) return;
+            const pBox = p.getHitbox();
+            if (this.checkCollision(hitbox, pBox)) {
+                if (p.isCountering && this.counterable) {
+                    this.takeDamage(p.getDamage(p.atk * 3, 'perfect'), 'counter');
+                    this.stunTimer = 1.5;
+                } else {
+                    p.takeDamage(this.atk);
+                }
+            }
+        });
+    }
+
+    takeDamage(dmg, type = 'normal') {
+        if (this.dead) return 0;
+        if (this.resistances[type]) dmg *= this.resistances[type];
+        if (this.data.defense && type === 'sword') dmg *= 0.5;
+
+        this.hp -= dmg;
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.dead = true;
+            return dmg + this.data.score;
+        }
+        return dmg;
+    }
+
+    getHitbox() {
+        const s = this.data.size;
+        return { x: this.x - s/2, y: this.y - s, w: s, h: s };
+    }
+
+    getAttackHitbox() {
+        const s = this.data.size;
+        return { x: this.x - s, y: this.y - s, w: s * 2, h: s };
+    }
+
+    checkCollision(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+}
+
+// ============================================================
+// Stage Manager
+// ============================================================
+class StageManager {
+    constructor() {
+        this.stage = 1;
+        this.subStage = 1;
+        this.scrollX = 0;
+        this.scrollSpeed = 2;
+        this.distance = 0;
+        this.maxDistance = CONSTANTS.STAGE_LENGTH;
+        this.enemies = [];
+        this.spawnTimer = 0;
+        this.eliteSpawned = false;
+        this.completed = false;
+        this.totalScore = 0;
+    }
+
+    getStageMod() {
+        return 1 + (this.stage - 1) * 0.3 + (this.subStage - 1) * 0.1;
+    }
+
+    getBPM() {
+        return CONSTANTS.BASE_BPM + (this.stage - 1) * 12 + (this.subStage - 1) * 6;
+    }
+
+    start() {
+        this.distance = 0;
+        this.enemies = [];
+        this.spawnTimer = 1;
+        this.eliteSpawned = false;
+        this.completed = false;
+        this.scrollX = 0;
+    }
+
+    update(dt, players) {
+        if (this.completed) return;
+
+        this.scrollX += this.scrollSpeed;
+        this.distance += this.scrollSpeed;
+
+        players.forEach(p => {
+            if (p.x < this.scrollX + 50) p.x = this.scrollX + 50;
+        });
+
+        this.spawnTimer -= dt;
+        if (this.spawnTimer <= 0 && this.distance < this.maxDistance - 300) {
+            this.spawnEnemy();
+            this.spawnTimer = Math.max(0.4, 1.8 - this.getStageMod() * 0.15);
+        }
+
+        if (this.distance > this.maxDistance * 0.85 && !this.eliteSpawned) {
+            this.spawnElite();
+            this.eliteSpawned = true;
+        }
+
+        this.enemies.forEach(e => e.update(dt, players, this.scrollX));
+        this.enemies = this.enemies.filter(e => !e.dead);
+
+        if (this.distance >= this.maxDistance && this.enemies.length === 0) {
+            this.completed = true;
+        }
+    }
+
+    spawnEnemy() {
+        const mod = this.getStageMod();
+        const types = ['normal'];
+        if (this.stage >= 1) types.push('flying');
+        if (this.stage >= 2) types.push('ranged');
+        if (this.stage >= 3) types.push('defense');
+        if (this.stage >= 4) types.push('large');
+
+        const type = types[Math.floor(Math.random() * types.length)];
+        const x = this.scrollX + CONSTANTS.CANVAS_WIDTH + 80 + Math.random() * 150;
+        const y = ENEMY_TYPES[type].flying ? CONSTANTS.GROUND_Y - 80 - Math.random() * 40 : CONSTANTS.GROUND_Y;
+
+        this.enemies.push(new Enemy(type, x, y, mod));
+
+        if (this.stage >= 2 && Math.random() < 0.25) {
+            const type2 = types[Math.floor(Math.random() * types.length)];
+            const x2 = x + 80 + Math.random() * 100;
+            const y2 = ENEMY_TYPES[type2].flying ? CONSTANTS.GROUND_Y - 80 : CONSTANTS.GROUND_Y;
+            this.enemies.push(new Enemy(type2, x2, y2, mod));
+        }
+        if (this.stage >= 4 && Math.random() < 0.15) {
+            const type3 = types[Math.floor(Math.random() * types.length)];
+            const x3 = x + 160 + Math.random() * 100;
+            const y3 = ENEMY_TYPES[type3].flying ? CONSTANTS.GROUND_Y - 80 : CONSTANTS.GROUND_Y;
+            this.enemies.push(new Enemy(type3, x3, y3, mod));
+        }
+    }
+
+    spawnElite() {
+        const mod = this.getStageMod();
+        const x = this.scrollX + CONSTANTS.CANVAS_WIDTH * 0.6;
+        const y = CONSTANTS.GROUND_Y;
+        this.enemies.push(new Enemy('elite', x, y, mod * 1.5));
+    }
+
+    nextStage() {
+        this.subStage++;
+        if (this.subStage > 3) {
+            this.stage++;
+            this.subStage = 1;
+        }
+        this.start();
+    }
+
+    getStageName() {
+        return `${this.stage}-${this.subStage}`;
+    }
+}
+
+// ============================================================
+// Renderer
+// ============================================================
+class Renderer {
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.particles = [];
+        this.floatingTexts = [];
+        this.shakeTimer = 0;
+        this.shakeIntensity = 0;
+        this.bgStars = [];
+        for (let i = 0; i < 50; i++) {
+            this.bgStars.push({
+                x: Math.random() * CONSTANTS.CANVAS_WIDTH,
+                y: Math.random() * CONSTANTS.GROUND_Y,
+                size: Math.random() * 2 + 0.5,
+                speed: Math.random() * 0.5 + 0.1,
+                brightness: Math.random(),
+            });
+        }
+    }
+
+    resize() {
+        this.canvas.width = CONSTANTS.CANVAS_WIDTH;
+        this.canvas.height = CONSTANTS.CANVAS_HEIGHT;
+    }
+
+    addParticle(x, y, color, count = 8, speed = 8) {
+        for (let i = 0; i < count; i++) {
+            const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+            const vel = Math.random() * speed + 2;
+            this.particles.push({
+                x, y,
+                vx: Math.cos(angle) * vel,
+                vy: Math.sin(angle) * vel - 3,
+                life: 0.6 + Math.random() * 0.4,
+                maxLife: 1,
+                color,
+                size: 3 + Math.random() * 4,
+                gravity: 0.2,
+            });
+        }
+    }
+
+    addFloatingText(x, y, text, color, size = 22) {
+        this.floatingTexts.push({ x, y, text, color, size, life: 1, vy: -2.5, alpha: 1 });
+    }
+
+    shake(intensity = 6, duration = 0.25) {
+        this.shakeTimer = duration;
+        this.shakeIntensity = intensity;
+    }
+
+    render(game) {
+        const ctx = this.ctx;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const scrollX = game.stage.scrollX;
+
+        let sx = 0, sy = 0;
+        if (this.shakeTimer > 0) {
+            sx = (Math.random() - 0.5) * this.shakeIntensity;
+            sy = (Math.random() - 0.5) * this.shakeIntensity;
+            this.shakeTimer -= 1/60;
+        }
+
+        ctx.save();
+        ctx.translate(sx, sy);
+
+        // Background
+        ctx.fillStyle = '#080818';
+        ctx.fillRect(0, 0, w, h);
+
+        // Stars
+        this.bgStars.forEach(star => {
+            star.x = (star.x - star.speed + w) % w;
+            const flicker = 0.5 + Math.sin(Date.now() * 0.003 + star.x) * 0.5;
+            ctx.fillStyle = `rgba(255,255,255,${star.brightness * flicker * 0.6})`;
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Parallax layers
+        this.renderBackground(ctx, scrollX, w, h);
+
+        // Ground
+        ctx.fillStyle = '#121225';
+        ctx.fillRect(0, CONSTANTS.GROUND_Y, w, h - CONSTANTS.GROUND_Y);
+        ctx.fillStyle = '#1a1a35';
+        ctx.fillRect(0, CONSTANTS.GROUND_Y, w, 4);
+
+        // Ground detail lines
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+        ctx.lineWidth = 1;
+        for (let i = -scrollX % 100; i < w; i += 100) {
+            ctx.beginPath();
+            ctx.moveTo(i, CONSTANTS.GROUND_Y + 10);
+            ctx.lineTo(i + 50, CONSTANTS.GROUND_Y + 10);
+            ctx.stroke();
+        }
+
+        // Render enemies
+        game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX));
+
+        // Render players
+        game.players.forEach(p => this.renderPlayer(ctx, p, scrollX));
+
+        // Particles
+        this.renderParticles(ctx);
+
+        // Floating texts
+        this.renderFloatingTexts(ctx);
+
+        // Rhythm UI
+        if (game.state === 'playing') {
+            this.renderRhythmUI(ctx, game);
+        }
+
+        // Distance progress bar at bottom
+        if (game.state === 'playing') {
+            const progress = game.stage.distance / game.stage.maxDistance;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(w/2 - 150, h - 12, 300, 6);
+            ctx.fillStyle = '#ff6b35';
+            ctx.fillRect(w/2 - 150, h - 12, 300 * progress, 6);
+        }
+
+        ctx.restore();
+    }
+
+    renderBackground(ctx, scrollX, w, h) {
+        // Distant mountains
+        ctx.fillStyle = '#0c0c20';
+        ctx.beginPath();
+        ctx.moveTo(0, CONSTANTS.GROUND_Y);
+        const mtnOffset = scrollX * 0.15;
+        for (let x = 0; x <= w + 100; x += 40) {
+            const h = 80 + Math.sin((x + mtnOffset) * 0.008) * 40 + Math.sin((x + mtnOffset) * 0.015) * 25;
+            ctx.lineTo(x, CONSTANTS.GROUND_Y - h);
+        }
+        ctx.lineTo(w, CONSTANTS.GROUND_Y);
+        ctx.closePath();
+        ctx.fill();
+
+        // Midground structures
+        ctx.fillStyle = '#0f0f28';
+        const structOffset = scrollX * 0.4;
+        for (let x = -structOffset % 250; x < w + 250; x += 250) {
+            const bw = 60 + Math.sin(x * 0.01) * 30;
+            const bh = 120 + Math.cos(x * 0.007) * 60;
+            ctx.fillRect(x, CONSTANTS.GROUND_Y - bh, bw, bh);
+            // Window lights
+            ctx.fillStyle = 'rgba(255,200,100,0.15)';
+            for (let wy = CONSTANTS.GROUND_Y - bh + 15; wy < CONSTANTS.GROUND_Y - 15; wy += 25) {
+                if (Math.random() > 0.3) {
+                    ctx.fillRect(x + 10, wy, 8, 12);
+                }
+            }
+            ctx.fillStyle = '#0f0f28';
+        }
+
+        // Foreground pillars
+        ctx.fillStyle = '#141430';
+        const pillarOffset = scrollX * 0.7;
+        for (let x = -pillarOffset % 180; x < w + 180; x += 180) {
+            ctx.fillRect(x, CONSTANTS.GROUND_Y - 80, 20, 80);
+            ctx.fillStyle = '#1a1a40';
+            ctx.fillRect(x + 2, CONSTANTS.GROUND_Y - 78, 16, 5);
+            ctx.fillStyle = '#141430';
+        }
+    }
+
+    renderPlayer(ctx, p, scrollX) {
+        const x = p.x - scrollX;
+        const y = p.y;
+        const onScreen = x > -60 && x < CONSTANTS.CANVAS_WIDTH + 60;
+        if (!onScreen) return;
+
+        const hb = p.getHitbox();
+        const px = x - hb.w/2;
+        const py = y - hb.h;
+
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.beginPath();
+        ctx.ellipse(x, y + 2, 18, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Flash when hit
+        if (p.flashTimer > 0) {
+            ctx.fillStyle = `rgba(255,255,255,${p.flashTimer * 2})`;
+            ctx.fillRect(px - 5, py - 5, hb.w + 10, hb.h + 10);
+        }
+
+        // Body
+        ctx.fillStyle = p.char.color;
+        ctx.fillRect(px + 8, py + 25, hb.w - 16, hb.h - 25);
+
+        // Body detail
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(px + 8, py + 25, hb.w - 16, 8);
+
+        // Head
+        ctx.fillStyle = '#ffdbac';
+        ctx.beginPath();
+        ctx.arc(x, py + 18, 11, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Eyes
+        ctx.fillStyle = '#222';
+        const eyeDir = p.facing > 0 ? 4 : -4;
+        ctx.beginPath();
+        ctx.arc(x + eyeDir, py + 16, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Hair
+        ctx.fillStyle = p.char.color;
+        ctx.beginPath();
+        ctx.arc(x, py + 12, 12, Math.PI, Math.PI * 2);
+        ctx.fill();
+
+        // Weapon effects
+        if (p.isAttacking) {
+            ctx.strokeStyle = '#ff6b35';
+            ctx.lineWidth = 4;
+            ctx.shadowColor = '#ff6b35';
+            ctx.shadowBlur = 15;
+            ctx.beginPath();
+            const arcDir = p.facing > 0 ? 1 : -1;
+            ctx.arc(x, y - 35, 45, -0.6 * arcDir, 0.6 * arcDir, arcDir < 0);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            ctx.fillStyle = 'rgba(255,107,53,0.25)';
+            ctx.beginPath();
+            ctx.arc(x + arcDir * 50, y - 35, 25, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (p.isCountering) {
+            ctx.strokeStyle = '#e74c3c';
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#e74c3c';
+            ctx.shadowBlur = 20;
+            ctx.beginPath();
+            ctx.arc(x, y - 30, 40, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            ctx.fillStyle = 'rgba(231,76,60,0.15)';
+            ctx.beginPath();
+            ctx.arc(x, y - 30, 35, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (p.isUsingAbility) {
+            ctx.fillStyle = 'rgba(74,144,217,0.3)';
+            ctx.shadowColor = '#4a90d9';
+            ctx.shadowBlur = 25;
+            ctx.beginPath();
+            ctx.arc(x, y - 30, 55, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Particles around ability
+            const time = Date.now() * 0.005;
+            for (let i = 0; i < 6; i++) {
+                const angle = time + (Math.PI * 2 / 6) * i;
+                const dist = 50 + Math.sin(time * 2 + i) * 10;
+                ctx.fillStyle = 'rgba(74,144,217,0.6)';
+                ctx.beginPath();
+                ctx.arc(x + Math.cos(angle) * dist, y - 30 + Math.sin(angle) * dist, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        if (p.invincible > 0) {
+            ctx.globalAlpha = 0.4 + Math.sin(Date.now() * 0.015) * 0.3;
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(px - 3, py - 3, hb.w + 6, hb.h + 6);
+            ctx.globalAlpha = 1;
+        }
+
+        // HP bar
+        if (p.hp < p.maxHp) {
+            const barW = 50;
+            const barH = 5;
+            const barX = x - barW/2;
+            const barY = py - 12;
+            ctx.fillStyle = '#222';
+            ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+            const hpRatio = p.hp / p.maxHp;
+            ctx.fillStyle = hpRatio > 0.5 ? '#2ecc71' : hpRatio > 0.25 ? '#f39c12' : '#e74c3c';
+            ctx.fillRect(barX, barY, barW * hpRatio, barH);
+        }
+
+        // Name tag for multiplayer
+        if (game.network && game.network.isConnected && game.players.length > 1) {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.font = '10px sans-serif';
+            const name = p.isLocal ? 'YOU' : `P${p.id}`;
+            const tw = ctx.measureText(name).width;
+            ctx.fillRect(x - tw/2 - 4, py - 24, tw + 8, 14);
+            ctx.fillStyle = p.isLocal ? '#ff6b35' : '#aaa';
+            ctx.textAlign = 'center';
+            ctx.fillText(name, x, py - 14);
+        }
+    }
+
+    renderEnemy(ctx, e, scrollX) {
+        const x = e.x - scrollX;
+        const y = e.y;
+        const onScreen = x > -80 && x < CONSTANTS.CANVAS_WIDTH + 80;
+        if (!onScreen || e.dead) return;
+
+        const s = e.data.size;
+
+        // Shadow
+        if (!e.flying) {
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.beginPath();
+            ctx.ellipse(x, y + 2, s/2, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Body
+        ctx.fillStyle = e.data.color;
+        if (e.data.elite) {
+            ctx.shadowColor = e.data.color;
+            ctx.shadowBlur = 15;
+        }
+
+        if (e.type === 'normal') {
+            // Slime shape
+            ctx.beginPath();
+            ctx.arc(x, y - s/2, s/2, Math.PI, 0);
+            ctx.lineTo(x + s/2, y);
+            ctx.quadraticCurveTo(x, y + 5, x - s/2, y);
+            ctx.closePath();
+            ctx.fill();
+        } else if (e.type === 'flying') {
+            // Bat wings
+            ctx.beginPath();
+            ctx.ellipse(x, y - s/2, s/2, s/3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Wings
+            const wingFlap = Math.sin(Date.now() * 0.01) * 0.3;
+            ctx.beginPath();
+            ctx.moveTo(x - s/2, y - s/2);
+            ctx.lineTo(x - s, y - s + wingFlap * s);
+            ctx.lineTo(x - s/2, y - s/2 + 5);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(x + s/2, y - s/2);
+            ctx.lineTo(x + s, y - s + wingFlap * s);
+            ctx.lineTo(x + s/2, y - s/2 + 5);
+            ctx.fill();
+        } else if (e.type === 'defense') {
+            // Shield shape
+            ctx.fillRect(x - s/2, y - s, s, s);
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillRect(x - s/2, y - s, s, 8);
+            // Shield icon
+            ctx.fillStyle = '#5dade2';
+            ctx.beginPath();
+            ctx.moveTo(x, y - s + 12);
+            ctx.lineTo(x - 8, y - s + 20);
+            ctx.lineTo(x, y - s + 28);
+            ctx.lineTo(x + 8, y - s + 20);
+            ctx.closePath();
+            ctx.fill();
+        } else {
+            // Default rectangle
+            ctx.fillRect(x - s/2, y - s, s, s);
+        }
+
+        ctx.shadowBlur = 0;
+
+        // Eyes
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(x - 4, y - s/2 - 3, 3, 0, Math.PI * 2);
+        ctx.arc(x + 4, y - s/2 - 3, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.arc(x - 4, y - s/2 - 3, 1.5, 0, Math.PI * 2);
+        ctx.arc(x + 4, y - s/2 - 3, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Attack warning
+        if (e.attackWarning) {
+            ctx.strokeStyle = '#e74c3c';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(x, y - s/2, s + 10 + Math.sin(Date.now() * 0.02) * 5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Counter indicator
+            ctx.fillStyle = '#e74c3c';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('COUNTER!', x, y - s - 15);
+        }
+
+        // Stun indicator
+        if (e.stunTimer > 0) {
+            ctx.fillStyle = '#ffd700';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('★', x, y - s - 10);
+        }
+
+        // HP bar
+        const hpRatio = e.hp / e.data.hp;
+        const barW = s + 10;
+        const barH = 4;
+        ctx.fillStyle = '#222';
+        ctx.fillRect(x - barW/2, y - s - 8, barW, barH);
+        ctx.fillStyle = hpRatio > 0.5 ? '#2ecc71' : hpRatio > 0.25 ? '#f39c12' : '#e74c3c';
+        ctx.fillRect(x - barW/2, y - s - 8, barW * hpRatio, barH);
+
+        // Resistance indicator
+        if (Object.keys(e.resistances).length > 0) {
+            ctx.fillStyle = '#9b59b6';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('RESIST', x, y + 12);
+        }
+    }
+
+    renderParticles(ctx) {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.life -= 1/60;
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += p.gravity || 0.1;
+            p.vx *= 0.98;
+
+            if (p.life <= 0) {
+                this.particles.splice(i, 1);
+                continue;
+            }
+
+            const alpha = p.life / p.maxLife;
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    renderFloatingTexts(ctx) {
+        for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+            const t = this.floatingTexts[i];
+            t.life -= 1/60;
+            t.y += t.vy;
+            t.alpha = Math.max(0, t.life);
+
+            if (t.life <= 0) {
+                this.floatingTexts.splice(i, 1);
+                continue;
+            }
+
+            ctx.globalAlpha = t.alpha;
+            ctx.fillStyle = t.color;
+            ctx.font = `bold ${t.size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(t.text, t.x, t.y);
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    renderRhythmUI(ctx, game) {
+        const barX = 0;
+        const barY = CONSTANTS.CANVAS_HEIGHT - 90;
+        const barW = CONSTANTS.CANVAS_WIDTH;
+        const barH = 90;
+
+        // Beat bar background
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX, barY, barW, barH);
+
+        // Target line (center)
+        const targetX = barW / 2;
+        ctx.strokeStyle = '#ff6b35';
+        ctx.lineWidth = 3;
+        ctx.shadowColor = '#ff6b35';
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.moveTo(targetX, barY + 5);
+        ctx.lineTo(targetX, barY + barH - 5);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Target glow
+        ctx.fillStyle = 'rgba(255,107,53,0.1)';
+        ctx.fillRect(targetX - 25, barY + 5, 50, barH - 10);
+
+        // Beat markers
+        const currentBeat = game.audio.getCurrentBeat();
+        const beatInterval = 60 / game.audio.bpm;
+        const pixelsPerBeat = CONSTANTS.NOTE_SPEED * beatInterval;
+
+        // Grid lines
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1;
+        for (let i = -2; i < 6; i++) {
+            const beatPos = targetX + i * pixelsPerBeat;
+            if (beatPos > 0 && beatPos < barW) {
+                ctx.beginPath();
+                ctx.moveTo(beatPos, barY + 10);
+                ctx.lineTo(beatPos, barY + barH - 10);
+                ctx.stroke();
+            }
+        }
+
+        // Notes
+        const notes = game.rhythm.getNotesForRender();
+        notes.forEach(note => {
+            const nx = targetX + (note.x - 300);
+            if (nx < -50 || nx > barW + 50) return;
+
+            const ny = barY + barH/2;
+            const size = 35;
+
+            if (note.type === 'sword') {
+                ctx.fillStyle = '#ff6b35';
+                ctx.shadowColor = '#ff6b35';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(nx, ny, size/2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Z', nx, ny);
+            } else if (note.type === 'ability') {
+                ctx.fillStyle = '#4a90d9';
+                ctx.shadowColor = '#4a90d9';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(nx, ny, size/2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('X', nx, ny);
+            } else if (note.type === 'counter') {
+                ctx.fillStyle = '#e74c3c';
+                ctx.shadowColor = '#e74c3c';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.moveTo(nx, ny - size/2);
+                ctx.lineTo(nx + size/2, ny);
+                ctx.lineTo(nx, ny + size/2);
+                ctx.lineTo(nx - size/2, ny);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('C', nx, ny);
+            }
+        });
+
+        ctx.textBaseline = 'alphabetic';
+    }
+}
+
+// ============================================================
+// Main Game Class
+// ============================================================
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.renderer = new Renderer(this.canvas);
+        this.audio = new AudioSystem();
+        this.rhythm = new RhythmSystem(this.audio);
+        this.stage = new StageManager();
+        this.network = { isConnected: false, isHost: false, players: [] };
+
+        this.players = [];
+        this.localPlayer = null;
+        this.selectedChar = 'swordsman';
+
+        this.state = 'menu'; // menu, playing, paused, gameover, upgrade
+        this.input = { left: false, right: false, z: false, x: false, c: false };
+        this.lastInput = { z: false, x: false, c: false };
+
+        this.lastTime = 0;
+        this.gameTime = 0;
+        this.abilityCooldown = 0;
+        this.counterWindow = 0;
+
+        this.setupInput();
+        this.setupUI();
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        // Start loop
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    resize() {
+        const container = document.getElementById('gameContainer');
+        this.canvas.width = CONSTANTS.CANVAS_WIDTH;
+        this.canvas.height = CONSTANTS.CANVAS_HEIGHT;
+        this.renderer.resize();
+    }
+
+    setupInput() {
+        window.addEventListener('keydown', (e) => {
+            if (this.state !== 'playing') return;
+
+            switch(e.key.toLowerCase()) {
+                case 'arrowleft': case 'a': this.input.left = true; break;
+                case 'arrowright': case 'd': this.input.right = true; break;
+                case 'z': case 'j':
+                    if (!this.lastInput.z) this.handleSwordAttack();
+                    this.input.z = true;
+                    break;
+                case 'x': case 'k':
+                    if (!this.lastInput.x) this.handleAbility();
+                    this.input.x = true;
+                    break;
+                case 'c': case 'l':
+                    if (!this.lastInput.c) this.handleCounter();
+                    this.input.c = true;
+                    break;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            switch(e.key.toLowerCase()) {
+                case 'arrowleft': case 'a': this.input.left = false; break;
+                case 'arrowright': case 'd': this.input.right = false; break;
+                case 'z': case 'j': this.input.z = false; break;
+                case 'x': case 'k': this.input.x = false; break;
+                case 'c': case 'l': this.input.c = false; break;
+            }
+        });
+    }
+
+    setupUI() {
+        // Build character select
+        const charSelect = document.getElementById('charSelect');
+        charSelect.innerHTML = '';
+        CHARACTERS.forEach((char, idx) => {
+            const div = document.createElement('div');
+            div.className = 'char-card' + (idx === 0 ? ' selected' : '');
+            div.dataset.id = char.id;
+            div.innerHTML = `
+                <div class="char-name">${char.name}</div>
+                <div class="diff-stars">${'★'.repeat(char.diff)}${'☆'.repeat(8-char.diff)}</div>
+                <div class="char-diff">難易度 ${char.diff}</div>
+                <div class="char-desc">${char.desc}</div>
+                <div style="margin-top:8px;font-size:0.75em;color:#888;">
+                    <div>HP: ${char.hp} | ATK: ${char.atk}</div>
+                    <div style="color:#4a90d9;margin-top:2px;">${char.ability}</div>
+                </div>
+            `;
+            div.onclick = () => {
+                document.querySelectorAll('.char-card').forEach(c => c.classList.remove('selected'));
+                div.classList.add('selected');
+                this.selectedChar = char.id;
+            };
+            charSelect.appendChild(div);
+        });
+    }
+
+    // ==================== UI Navigation ====================
+
+    showMenu() {
+        this.state = 'menu';
+        this.hideAllScreens();
+        document.getElementById('menuScreen').classList.remove('hidden');
+        this.audio.stop();
+    }
+
+    showModeSelect() {
+        this.hideAllScreens();
+        document.getElementById('modeScreen').classList.remove('hidden');
+    }
+
+    showCharSelect() {
+        this.hideAllScreens();
+        document.getElementById('charScreen').classList.remove('hidden');
+    }
+
+    showLobby() {
+        this.hideAllScreens();
+        document.getElementById('lobbyScreen').classList.remove('hidden');
+        document.getElementById('hostPanel').classList.add('hidden');
+        document.getElementById('joinPanel').classList.add('hidden');
+        document.getElementById('lobbyContent').classList.remove('hidden');
+    }
+
+    showJoin() {
+        document.getElementById('lobbyContent').classList.add('hidden');
+        document.getElementById('joinPanel').classList.remove('hidden');
+        document.getElementById('hostPanel').classList.add('hidden');
+    }
+
+    showHowToPlay() {
+        this.hideAllScreens();
+        document.getElementById('howToScreen').classList.remove('hidden');
+    }
+
+    hideAllScreens() {
+        document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
+        document.getElementById('hud').classList.add('hidden');
+        document.getElementById('comboDisplay').classList.add('hidden');
+        document.getElementById('beatBar').classList.add('hidden');
+        document.getElementById('tutorialBox').classList.add('hidden');
+    }
+
+    // ==================== Game Flow ====================
+
+    startSinglePlayer() {
+        this.showCharSelect();
+    }
+
+    confirmChar() {
+        this.players = [];
+        this.localPlayer = new Player('p1', this.selectedChar, true);
+        this.players.push(this.localPlayer);
+
+        this.startGame();
+    }
+
+    createHost() {
+        this.network.isHost = true;
+        this.network.isConnected = true;
+        document.getElementById('lobbyContent').classList.add('hidden');
+        document.getElementById('hostPanel').classList.remove('hidden');
+        document.getElementById('connStatus').classList.remove('hidden');
+        document.getElementById('connStatus').classList.add('host');
+        document.getElementById('connStatus').textContent = 'HOST';
+
+        // Simulate local IP display
+        document.getElementById('hostIP').textContent = '127.0.0.1';
+        this.updatePlayerList();
+    }
+
+    joinHost() {
+        const ip = document.getElementById('joinIP').value;
+        document.getElementById('joinStatus').textContent = `接続中... ${ip}:8080`;
+
+        // Simulate connection
+        setTimeout(() => {
+            this.network.isConnected = true;
+            this.network.isHost = false;
+            document.getElementById('joinStatus').textContent = '接続成功！';
+            document.getElementById('joinStatus').style.color = '#2ecc71';
+            document.getElementById('connStatus').classList.remove('hidden');
+            document.getElementById('connStatus').classList.add('online');
+            document.getElementById('connStatus').textContent = 'ONLINE';
+
+            // Show character select for multiplayer
+            setTimeout(() => this.showCharSelect(), 500);
+        }, 800);
+    }
+
+    startMultiplayer() {
+        this.players = [];
+        this.localPlayer = new Player('host', this.selectedChar, true);
+        this.players.push(this.localPlayer);
+        this.startGame();
+    }
+
+    updatePlayerList() {
+        const list = document.getElementById('playerList');
+        list.innerHTML = '<div class="player-tag">Host (YOU)</div>';
+        document.getElementById('startMultiBtn').textContent = `ゲーム開始 (1/${CONSTANTS.MAX_PLAYERS})`;
+        document.getElementById('startMultiBtn').disabled = false;
+    }
+
+    startGame() {
+        this.state = 'playing';
+        this.hideAllScreens();
+        document.getElementById('hud').classList.remove('hidden');
+        document.getElementById('comboDisplay').classList.remove('hidden');
+        document.getElementById('beatBar').classList.remove('hidden');
+        document.getElementById('tutorialBox').classList.remove('hidden');
+
+        this.stage = new StageManager();
+        this.stage.start();
+        this.rhythm.reset();
+        this.gameTime = 0;
+        this.abilityCooldown = 0;
+
+        // Reset player positions
+        this.players.forEach(p => {
+            p.x = 200;
+            p.y = CONSTANTS.GROUND_Y;
+            p.hp = p.maxHp;
+            p.vx = 0;
+            p.invincible = 0;
+        });
+
+        // Start BGM
+        const bpm = this.stage.getBPM();
+        this.audio.startBGM(bpm);
+
+        // Generate initial notes
+        this.rhythm.generateSwordNotes(4, 32, 0.8);
+
+        // Beat callback for spawning notes
+        this.audio.beatCallbacks = [];
+        this.audio.onBeat = (beat, time) => {
+            if (this.state !== 'playing') return;
+
+            // Generate notes ahead
+            const currentBeat = this.audio.getCurrentBeat();
+            const ahead = 4;
+            if (beat % 2 === 0) {
+                this.rhythm.generateSwordNotes(beat + ahead, beat + ahead + 2, 0.7);
+            }
+
+            // Enemy attack warnings -> counter notes
+            this.stage.enemies.forEach(e => {
+                if (e.attackWarning && !e.counterNoteSpawned) {
+                    this.rhythm.generateCounterNote(beat + 2);
+                    e.counterNoteSpawned = true;
+                }
+            });
+        };
+
+        // Rhythm judge callback
+        this.rhythm.onJudge = (judge, points, combo) => {
+            this.showJudgeEffect(judge, points, combo);
+        };
+
+        this.lastTime = performance.now();
+    }
+
+    // ==================== Input Handling ====================
+
+    handleSwordAttack() {
+        const result = this.rhythm.checkInput('sword');
+        if (!result) return;
+
+        this.localPlayer.attack();
+        this.audio.playSwordSound();
+
+        if (result.judge !== 'miss') {
+            const dmg = this.localPlayer.getDamage(10, result.judge);
+
+            // Hit enemies in range
+            let hitCount = 0;
+            this.stage.enemies.forEach(e => {
+                if (e.dead) return;
+                const pBox = this.localPlayer.getAttackHitbox();
+                const eBox = e.getHitbox();
+                if (this.checkCollision(pBox, eBox)) {
+                    const actualDmg = e.takeDamage(dmg, 'sword');
+                    hitCount++;
+
+                    // Visual effects
+                    this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, e.data.color, 10);
+                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, 
+                        `${actualDmg}`, '#fff', 18);
+
+                    // Lifesteal
+                    if (this.localPlayer.upgrades.lifesteal > 0) {
+                        const heal = Math.floor(actualDmg * this.localPlayer.upgrades.lifesteal);
+                        this.localPlayer.heal(heal);
+                    }
+
+                    if (e.dead) {
+                        this.stage.totalScore += e.data.score;
+                        this.renderer.shake(4, 0.15);
+                        this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#ffd700', 20, 12);
+                        this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size - 30,
+                            `+${e.data.score}pts`, '#ffd700', 16);
+                    }
+                }
+            });
+
+            if (hitCount > 0) {
+                this.renderer.shake(3, 0.1);
+            }
+        }
+
+        this.lastInput.z = true;
+    }
+
+    handleAbility() {
+        if (this.abilityCooldown > 0) return;
+
+        this.localPlayer.useAbility();
+        this.audio.playAbilitySound();
+        this.rhythm.startAbility(4);
+        this.abilityCooldown = 8;
+    }
+
+    handleCounter() {
+        const result = this.rhythm.checkInput('counter');
+        if (!result) return;
+
+        this.localPlayer.counter();
+        this.audio.playCounterSound();
+
+        if (result.judge !== 'miss') {
+            // Counter all attacking enemies
+            this.stage.enemies.forEach(e => {
+                if (e.counterable && e.attackWarning) {
+                    const dmg = this.localPlayer.getDamage(20, result.judge) * this.localPlayer.upgrades.counter;
+                    e.takeDamage(dmg, 'counter');
+                    e.stunTimer = 2;
+                    e.counterable = false;
+                    this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#e74c3c', 15, 10);
+                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size - 40,
+                        'COUNTER!', '#e74c3c', 22);
+                    this.renderer.shake(6, 0.2);
+                }
+            });
+        }
+
+        this.lastInput.c = true;
+    }
+
+    checkCollision(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    showJudgeEffect(judge, points, combo) {
+        const container = document.getElementById('gameContainer');
+        const el = document.createElement('div');
+        el.className = `hit-effect judge-${judge}`;
+        el.textContent = judge === 'perfect' ? 'PERFECT!' : judge === 'great' ? 'GREAT!' : 
+                        judge === 'good' ? 'GOOD' : 'MISS';
+        el.style.left = '50%';
+        el.style.top = '45%';
+        el.style.transform = 'translateX(-50%)';
+        container.appendChild(el);
+        setTimeout(() => el.remove(), 800);
+
+        // Update combo display
+        document.getElementById('comboCount').textContent = combo;
+        document.getElementById('comboDisplay').style.opacity = combo > 0 ? '1' : '0.3';
+    }
+
+    // ==================== Upgrade System ====================
+
+    showUpgrade() {
+        this.state = 'upgrade';
+        this.audio.stop();
+
+        const choices = document.getElementById('upgradeChoices');
+        choices.innerHTML = '';
+
+        // Pick 3 random upgrades
+        const shuffled = [...UPGRADES].sort(() => Math.random() - 0.5);
+        const selected = shuffled.slice(0, 3);
+
+        selected.forEach(upg => {
+            const div = document.createElement('div');
+            div.className = 'upgrade-card';
+            div.innerHTML = `
+                <div class="upgrade-name">${upg.name}</div>
+                <div class="upgrade-desc">${upg.desc}</div>
+                <div class="upgrade-rarity rarity-${upg.rarity}">${upg.rarity.toUpperCase()}</div>
+            `;
+            div.onclick = () => {
+                this.localPlayer.applyUpgrade(upg);
+                this.nextStage();
+            };
+            choices.appendChild(div);
+        });
+
+        document.getElementById('upgradeScreen').classList.remove('hidden');
+    }
+
+    nextStage() {
+        this.stage.nextStage();
+        this.startGame();
+    }
+
+    // ==================== Game Loop ====================
+
+    loop(timestamp) {
+        const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
+        this.lastTime = timestamp;
+
+        if (this.state === 'playing') {
+            this.update(dt);
+        }
+
+        this.renderer.render(this);
+
+        // Update last input
+        this.lastInput.z = this.input.z;
+        this.lastInput.x = this.input.x;
+        this.lastInput.c = this.input.c;
+
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    update(dt) {
+        this.gameTime += dt;
+        if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
+
+        // Update players
+        this.players.forEach(p => {
+            const input = p.isLocal ? this.input : null;
+            p.update(input, dt, this.stage.scrollX);
+        });
+
+        // Update stage
+        this.stage.update(dt, this.players);
+
+        // Update rhythm
+        const abilityResult = this.rhythm.update();
+        if (abilityResult && abilityResult.type === 'ability_complete') {
+            const ratio = abilityResult.hitCount / abilityResult.total;
+            const dmg = Math.floor(30 * this.localPlayer.upgrades.ability * (0.5 + ratio * 0.5));
+
+            this.stage.enemies.forEach(e => {
+                if (e.dead) return;
+                e.takeDamage(dmg, 'ability');
+                this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#4a90d9', 8);
+                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size,
+                    `${dmg}`, '#4a90d9', 18);
+            });
+
+            this.renderer.shake(5, 0.2);
+            this.audio.playAbilitySound();
+        }
+
+        // Enemy attacks on players (non-counterable)
+        this.stage.enemies.forEach(e => {
+            if (e.dead || e.stunTimer > 0) return;
+            const eBox = e.getHitbox();
+            this.players.forEach(p => {
+                if (!p.isAlive() || p.invincible > 0) return;
+                const pBox = p.getHitbox();
+                if (this.checkCollision(eBox, pBox)) {
+                    if (!e.isAttacking) {
+                        p.takeDamage(e.atk * 0.5);
+                        this.renderer.addFloatingText(p.x - this.stage.scrollX, p.y - 70,
+                            `-${Math.floor(e.atk * 0.5)}`, '#e74c3c', 16);
+                    }
+                }
+            });
+        });
+
+        // Check game over
+        const alivePlayers = this.players.filter(p => p.isAlive());
+        if (alivePlayers.length === 0) {
+            this.gameOver();
+            return;
+        }
+
+        // Check stage clear
+        if (this.stage.completed) {
+            this.showStageClear();
+            return;
+        }
+
+        // Update HUD
+        this.updateHUD();
+    }
+
+    updateHUD() {
+        document.getElementById('scoreValue').textContent = this.rhythm.score + this.stage.totalScore;
+        document.getElementById('stageValue').textContent = this.stage.getStageName();
+        document.getElementById('bpmValue').textContent = Math.round(this.audio.bpm);
+
+        if (this.localPlayer) {
+            const hpRatio = this.localPlayer.hp / this.localPlayer.maxHp;
+            document.getElementById('hpValue').textContent = `${Math.ceil(this.localPlayer.hp)}/${this.localPlayer.maxHp}`;
+            const hpBar = document.getElementById('hpBar');
+            hpBar.style.width = `${hpRatio * 100}%`;
+            hpBar.className = 'hp-fill ' + (hpRatio > 0.5 ? 'high' : hpRatio > 0.25 ? 'mid' : 'low');
+        }
+    }
+
+    showStageClear() {
+        this.audio.stop();
+        const container = document.getElementById('gameContainer');
+        const el = document.createElement('div');
+        el.className = 'stage-clear';
+        el.textContent = 'STAGE CLEAR!';
+        container.appendChild(el);
+
+        setTimeout(() => {
+            el.remove();
+            this.showUpgrade();
+        }, 1500);
+    }
+
+    gameOver() {
+        this.state = 'gameover';
+        this.audio.stop();
+
+        const totalScore = this.rhythm.score + this.stage.totalScore;
+        document.getElementById('gameOverTitle').textContent = 'ゲームオーバー';
+        document.getElementById('gameOverStats').innerHTML = `
+            スコア: ${totalScore}<br>
+            ステージ: ${this.stage.getStageName()}<br>
+            Maxコンボ: ${this.rhythm.maxCombo}<br>
+            Perfect: ${this.rhythm.judges.perfect} | Great: ${this.rhythm.judges.great} | Good: ${this.rhythm.judges.good} | Miss: ${this.rhythm.judges.miss}
+        `;
+
+        document.getElementById('gameOverScreen').classList.remove('hidden');
+    }
+
+    restart() {
+        this.showCharSelect();
+    }
+}
+
+// ============================================================
+// Initialize
+// ============================================================
+let game;
+window.addEventListener('load', () => {
+    game = new Game();
+});
+
+// Expose Game to window for onclick handlers
+window.Game = {
+    showMenu: () => game.showMenu(),
+    showModeSelect: () => game.showModeSelect(),
+    showLobby: () => game.showLobby(),
+    showHowToPlay: () => game.showHowToPlay(),
+    startSinglePlayer: () => game.startSinglePlayer(),
+    confirmChar: () => game.confirmChar(),
+    createHost: () => game.createHost(),
+    showJoin: () => game.showJoin(),
+    joinHost: () => game.joinHost(),
+    startMultiplayer: () => game.startMultiplayer(),
+    restart: () => game.restart(),
+};
+</script>
+</body>
+</html>
