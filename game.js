@@ -753,6 +753,15 @@ class Enemy {
         return dmg;
     }
 
+    resolveCounter(dmg) {
+        this.takeDamage(dmg, 'counter');
+        this.stunTimer = 2;
+        this.counterable = false;
+        this.isAttacking = false;
+        this.attackWarning = false;
+        this.attackCooldown = 2 + Math.random() * 2;
+    }
+
     getHitbox() {
         const s = this.data.size;
         return { x: this.x - s/2, y: this.y - s, w: s, h: s };
@@ -1807,9 +1816,7 @@ class Game {
             this.stage.enemies.forEach(e => {
                 if (e.counterable && e.attackWarning) {
                     const dmg = this.localPlayer.getDamage(20, result.judge) * this.localPlayer.upgrades.counter;
-                    e.takeDamage(dmg, 'counter');
-                    e.stunTimer = 2;
-                    e.counterable = false;
+                    e.resolveCounter(dmg);
                     this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#e74c3c', 15, 10);
                     this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size - 40,
                         'COUNTER!', '#e74c3c', 22);
