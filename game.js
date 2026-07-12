@@ -79,6 +79,62 @@ const computeStageMaxDistance = function(trackDurationSeconds, scrollSpeed) {
     return trackDurationSeconds * scrollSpeed * 60;
 };
 
+const IMAGE_MANIFEST = {
+    charSprites: {
+        swordsman: '剣士.png',
+        archer: '弓士.png',
+        thief: '盗賊.png',
+        fighter: '拳士.png',
+        beast: '獣人.png',
+        mage: '魔法使い.png',
+    },
+    charAccessories: {
+        archer: '弓.png',
+        mage: '魔法使いの杖.png',
+    },
+    enemySprites: {
+        normal: '通常敵.png',
+        flying: '飛行敵.png',
+        ranged: '弓敵.png',
+        defense: '盾敵.png',
+        large: '大型敵.png',
+        elite: '大型敵.png',
+        suicide: '自爆敵.png',
+        healer: 'ヒーラー敵.png',
+    },
+    background: {
+        groundSky: '地面と空.png',
+        sun: '太陽.png',
+        tree: '木.png',
+    },
+    weapons: {
+        swordIcon: '剣.png',
+        arrow: '矢.png',
+    },
+};
+
+function loadImage(path) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = encodeURI(path);
+    });
+}
+
+async function loadAllImages(manifest) {
+    const files = new Set();
+    Object.values(manifest).forEach(group => {
+        Object.values(group).forEach(file => files.add(file));
+    });
+    const entries = await Promise.all(
+        Array.from(files).map(async (file) => [file, await loadImage(file)])
+    );
+    const map = {};
+    entries.forEach(([file, img]) => { map[file] = img; });
+    return map;
+}
+
 // ============================================================
 // Audio System (Web Audio API)
 // ============================================================
@@ -1026,7 +1082,7 @@ class Renderer {
         });
 
         // Parallax layers
-        this.renderBackground(ctx, scrollX, w, h);
+        this.renderBackground(ctx, scrollX, w, h, game.images);
 
         // Ground
         ctx.fillStyle = '#121225';
@@ -1045,10 +1101,10 @@ class Renderer {
         }
 
         // Render enemies
-        game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX));
+        game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX, game.images));
 
         // Render players
-        game.players.forEach(p => this.renderPlayer(ctx, p, scrollX));
+        game.players.forEach(p => this.renderPlayer(ctx, p, scrollX, game.images));
 
         // Particles
         this.renderParticles(ctx);
@@ -1073,7 +1129,33 @@ class Renderer {
         ctx.restore();
     }
 
-    renderBackground(ctx, scrollX, w, h) {
+    renderBackground(ctx, scrollX, w, h, images) {
+        const groundSky = images && images[IMAGE_MANIFEST.background.groundSky];
+        const sun = images && images[IMAGE_MANIFEST.background.sun];
+        const tree = images && images[IMAGE_MANIFEST.background.tree];
+
+        if (groundSky) {
+            const tileW = groundSky.width * (h / groundSky.height) * 0.6;
+            const offset = -(scrollX * 0.2) % tileW;
+            for (let x = offset - tileW; x < w + tileW; x += tileW) {
+                ctx.drawImage(groundSky, x, 0, tileW, h);
+            }
+            if (sun) {
+                const sunW = 140, sunH = sunW * (sun.height / sun.width);
+                ctx.drawImage(sun, w - sunW - 80, 40, sunW, sunH);
+            }
+            if (tree) {
+                const treeW = 90, treeH = treeW * (tree.height / tree.width);
+                const spacing = 220;
+                const toffset = -(scrollX * 0.5) % spacing;
+                for (let x = toffset - spacing; x < w + spacing; x += spacing) {
+                    ctx.drawImage(tree, x, CONSTANTS.GROUND_Y - treeH, treeW, treeH);
+                }
+            }
+            return;
+        }
+
+        // 画像未読み込み時のフォールバック(既存のベクター背景)
         // Distant mountains
         ctx.fillStyle = '#0c0c20';
         ctx.beginPath();
@@ -1115,7 +1197,7 @@ class Renderer {
         }
     }
 
-    renderPlayer(ctx, p, scrollX) {
+    renderPlayer(ctx, p, scrollX, images) {
         const x = p.x - scrollX;
         const y = p.y;
         const onScreen = x > -60 && x < CONSTANTS.CANVAS_WIDTH + 60;
@@ -1137,32 +1219,57 @@ class Renderer {
             ctx.fillRect(px - 5, py - 5, hb.w + 10, hb.h + 10);
         }
 
-        // Body
-        ctx.fillStyle = p.char.color;
-        ctx.fillRect(px + 8, py + 25, hb.w - 16, hb.h - 25);
+        const spriteFile = IMAGE_MANIFEST.charSprites[p.charId];
+        const sprite = images && images[spriteFile];
 
-        // Body detail
-        ctx.fillStyle = 'rgba(255,255,255,0.15)';
-        ctx.fillRect(px + 8, py + 25, hb.w - 16, 8);
+        if (sprite) {
+            const drawH = hb.h + 20;
+            const drawW = drawH * (sprite.width / sprite.height);
+            ctx.save();
+            ctx.translate(x, y);
+            if (p.facing < 0) ctx.scale(-1, 1);
+            ctx.drawImage(sprite, -drawW / 2, -drawH, drawW, drawH);
+            ctx.restore();
 
-        // Head
-        ctx.fillStyle = '#ffdbac';
-        ctx.beginPath();
-        ctx.arc(x, py + 18, 11, 0, Math.PI * 2);
-        ctx.fill();
+            const accessoryFile = IMAGE_MANIFEST.charAccessories[p.charId];
+            const accessory = images && images[accessoryFile];
+            if (accessory) {
+                const accH = drawH * 0.6;
+                const accW = accH * (accessory.width / accessory.height);
+                ctx.save();
+                ctx.translate(x, y - drawH * 0.5);
+                if (p.facing < 0) ctx.scale(-1, 1);
+                ctx.drawImage(accessory, drawW * 0.25, -accH / 2, accW, accH);
+                ctx.restore();
+            }
+        } else {
+            // Body
+            ctx.fillStyle = p.char.color;
+            ctx.fillRect(px + 8, py + 25, hb.w - 16, hb.h - 25);
 
-        // Eyes
-        ctx.fillStyle = '#222';
-        const eyeDir = p.facing > 0 ? 4 : -4;
-        ctx.beginPath();
-        ctx.arc(x + eyeDir, py + 16, 2, 0, Math.PI * 2);
-        ctx.fill();
+            // Body detail
+            ctx.fillStyle = 'rgba(255,255,255,0.15)';
+            ctx.fillRect(px + 8, py + 25, hb.w - 16, 8);
 
-        // Hair
-        ctx.fillStyle = p.char.color;
-        ctx.beginPath();
-        ctx.arc(x, py + 12, 12, Math.PI, Math.PI * 2);
-        ctx.fill();
+            // Head
+            ctx.fillStyle = '#ffdbac';
+            ctx.beginPath();
+            ctx.arc(x, py + 18, 11, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Eyes
+            ctx.fillStyle = '#222';
+            const eyeDir = p.facing > 0 ? 4 : -4;
+            ctx.beginPath();
+            ctx.arc(x + eyeDir, py + 16, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Hair
+            ctx.fillStyle = p.char.color;
+            ctx.beginPath();
+            ctx.arc(x, py + 12, 12, Math.PI, Math.PI * 2);
+            ctx.fill();
+        }
 
         // Weapon effects
         if (p.isAttacking) {
@@ -1252,7 +1359,7 @@ class Renderer {
         }
     }
 
-    renderEnemy(ctx, e, scrollX) {
+    renderEnemy(ctx, e, scrollX, images) {
         const x = e.x - scrollX;
         const y = e.y;
         const onScreen = x > -80 && x < CONSTANTS.CANVAS_WIDTH + 80;
@@ -1268,58 +1375,72 @@ class Renderer {
             ctx.fill();
         }
 
-        // Body
-        ctx.fillStyle = e.data.color;
-        if (e.data.elite) {
-            ctx.shadowColor = e.data.color;
-            ctx.shadowBlur = 15;
-        }
+        const spriteFile = IMAGE_MANIFEST.enemySprites[e.type];
+        const sprite = images && images[spriteFile];
 
-        if (e.type === 'normal') {
-            // Slime shape
-            ctx.beginPath();
-            ctx.arc(x, y - s/2, s/2, Math.PI, 0);
-            ctx.lineTo(x + s/2, y);
-            ctx.quadraticCurveTo(x, y + 5, x - s/2, y);
-            ctx.closePath();
-            ctx.fill();
-        } else if (e.type === 'flying') {
-            // Bat wings
-            ctx.beginPath();
-            ctx.ellipse(x, y - s/2, s/2, s/3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Wings
-            const wingFlap = Math.sin(Date.now() * 0.01) * 0.3;
-            ctx.beginPath();
-            ctx.moveTo(x - s/2, y - s/2);
-            ctx.lineTo(x - s, y - s + wingFlap * s);
-            ctx.lineTo(x - s/2, y - s/2 + 5);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.moveTo(x + s/2, y - s/2);
-            ctx.lineTo(x + s, y - s + wingFlap * s);
-            ctx.lineTo(x + s/2, y - s/2 + 5);
-            ctx.fill();
-        } else if (e.type === 'defense') {
-            // Shield shape
-            ctx.fillRect(x - s/2, y - s, s, s);
-            ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.fillRect(x - s/2, y - s, s, 8);
-            // Shield icon
-            ctx.fillStyle = '#5dade2';
-            ctx.beginPath();
-            ctx.moveTo(x, y - s + 12);
-            ctx.lineTo(x - 8, y - s + 20);
-            ctx.lineTo(x, y - s + 28);
-            ctx.lineTo(x + 8, y - s + 20);
-            ctx.closePath();
-            ctx.fill();
+        if (sprite) {
+            const drawH = s * 2.2;
+            const drawW = drawH * (sprite.width / sprite.height);
+            ctx.save();
+            if (e.type === 'elite') {
+                ctx.filter = 'saturate(2.2) hue-rotate(-20deg) brightness(0.9)';
+                ctx.shadowColor = '#ff3b30';
+                ctx.shadowBlur = 20;
+            }
+            ctx.translate(x, y);
+            ctx.scale(-1, 1);
+            ctx.drawImage(sprite, -drawW / 2, -drawH, drawW, drawH);
+            ctx.restore();
+            ctx.filter = 'none';
+            ctx.shadowBlur = 0;
         } else {
-            // Default rectangle
-            ctx.fillRect(x - s/2, y - s, s, s);
-        }
+            // Body (フォールバック)
+            ctx.fillStyle = e.data.color;
+            if (e.data.elite) {
+                ctx.shadowColor = e.data.color;
+                ctx.shadowBlur = 15;
+            }
 
-        ctx.shadowBlur = 0;
+            if (e.type === 'normal') {
+                ctx.beginPath();
+                ctx.arc(x, y - s/2, s/2, Math.PI, 0);
+                ctx.lineTo(x + s/2, y);
+                ctx.quadraticCurveTo(x, y + 5, x - s/2, y);
+                ctx.closePath();
+                ctx.fill();
+            } else if (e.type === 'flying') {
+                ctx.beginPath();
+                ctx.ellipse(x, y - s/2, s/2, s/3, 0, 0, Math.PI * 2);
+                ctx.fill();
+                const wingFlap = Math.sin(Date.now() * 0.01) * 0.3;
+                ctx.beginPath();
+                ctx.moveTo(x - s/2, y - s/2);
+                ctx.lineTo(x - s, y - s + wingFlap * s);
+                ctx.lineTo(x - s/2, y - s/2 + 5);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(x + s/2, y - s/2);
+                ctx.lineTo(x + s, y - s + wingFlap * s);
+                ctx.lineTo(x + s/2, y - s/2 + 5);
+                ctx.fill();
+            } else if (e.type === 'defense') {
+                ctx.fillRect(x - s/2, y - s, s, s);
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.fillRect(x - s/2, y - s, s, 8);
+                ctx.fillStyle = '#5dade2';
+                ctx.beginPath();
+                ctx.moveTo(x, y - s + 12);
+                ctx.lineTo(x - 8, y - s + 20);
+                ctx.lineTo(x, y - s + 28);
+                ctx.lineTo(x + 8, y - s + 20);
+                ctx.closePath();
+                ctx.fill();
+            } else {
+                ctx.fillRect(x - s/2, y - s, s, s);
+            }
+
+            ctx.shadowBlur = 0;
+        }
 
         // Eyes
         ctx.fillStyle = '#fff';
@@ -1485,11 +1606,16 @@ class Renderer {
                 ctx.arc(nx, ny, size/2, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
-                ctx.fillStyle = '#fff';
-                ctx.font = 'bold 14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('Z', nx, ny);
+                const swordImg = game.images && game.images[IMAGE_MANIFEST.weapons.swordIcon];
+                if (swordImg) {
+                    ctx.drawImage(swordImg, nx - size * 0.35, ny - size * 0.35, size * 0.7, size * 0.7);
+                } else {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('Z', nx, ny);
+                }
             } else if (note.type === 'ability') {
                 ctx.fillStyle = '#4a90d9';
                 ctx.shadowColor = '#4a90d9';
@@ -1539,6 +1665,8 @@ class Game {
         this.rhythm = new RhythmSystem(this.audio);
         this.stage = new StageManager();
         this.network = { isConnected: false, isHost: false, players: [] };
+        this.images = {};
+        loadAllImages(IMAGE_MANIFEST).then((map) => { this.images = map; });
 
         this.players = [];
         this.localPlayer = null;
@@ -2116,7 +2244,7 @@ if (typeof window !== 'undefined') {
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeStageMaxDistance,
-    applyAbility,
+    IMAGE_MANIFEST, applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, Game,
 };
 if (typeof globalThis !== 'undefined') {
