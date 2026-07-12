@@ -99,15 +99,6 @@ class AudioSystem {
         this.masterGain.connect(this.ctx.destination);
     }
 
-    startBGM(bpm) {
-        if (!this.ctx) this.init();
-        this.bpm = bpm || this.bpm;
-        this.startTime = this.ctx.currentTime;
-        this.beatCount = 0;
-        this.isPlaying = true;
-        this.scheduleBeats();
-    }
-
     scheduleBeats() {
         const beatInterval = 60 / this.bpm;
         const lookahead = 0.15;
@@ -119,7 +110,6 @@ class AudioSystem {
             while (this.startTime + (this.beatCount + 1) * beatInterval < currentTime + lookahead) {
                 this.beatCount++;
                 const beatTime = this.startTime + this.beatCount * beatInterval;
-                this.playBeatSound(beatTime);
                 if (this.onBeat) this.onBeat(this.beatCount, beatTime);
                 this.beatCallbacks.forEach(cb => cb(this.beatCount));
             }
@@ -129,52 +119,33 @@ class AudioSystem {
         schedule();
     }
 
-    playBeatSound(time) {
-        const beatInBar = (this.beatCount % 4) + 1;
+    async loadTrack(track) {
+        if (!this.ctx) this.init();
+        this._bufferCache = this._bufferCache || {};
+        if (this._bufferCache[track.file]) return this._bufferCache[track.file];
+        const response = await fetch(encodeURI(track.file));
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+        this._bufferCache[track.file] = audioBuffer;
+        return audioBuffer;
+    }
 
-        // Kick on beats 1 and 3
-        if (beatInBar === 1 || beatInBar === 3) {
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            osc.connect(gain);
-            gain.connect(this.masterGain);
-            osc.frequency.setValueAtTime(150, time);
-            osc.frequency.exponentialRampToValueAtTime(40, time + 0.1);
-            gain.gain.setValueAtTime(0.5, time);
-            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.15);
-            osc.start(time);
-            osc.stop(time + 0.15);
+    async startBGM(track) {
+        if (!this.ctx) this.init();
+        const buffer = await this.loadTrack(track);
+        this.bpm = track.bpm;
+        if (this.source) {
+            try { this.source.stop(); } catch (e) {}
         }
-
-        // Snare on beats 2 and 4
-        if (beatInBar === 2 || beatInBar === 4) {
-            const noise = this.ctx.createBufferSource();
-            const bufferSize = this.ctx.sampleRate * 0.1;
-            const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-            const data = buffer.getChannelData(0);
-            for (let i = 0; i < bufferSize; i++) {
-                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.05));
-            }
-            noise.buffer = buffer;
-            const gain = this.ctx.createGain();
-            noise.connect(gain);
-            gain.connect(this.masterGain);
-            gain.gain.setValueAtTime(0.3, time);
-            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.08);
-            noise.start(time);
-        }
-
-        // Hi-hat on all beats
-        const hihat = this.ctx.createOscillator();
-        const hihatGain = this.ctx.createGain();
-        hihat.type = 'square';
-        hihat.connect(hihatGain);
-        hihatGain.connect(this.masterGain);
-        hihat.frequency.setValueAtTime(12000, time);
-        hihatGain.gain.setValueAtTime(0.03, time);
-        hihatGain.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
-        hihat.start(time);
-        hihat.stop(time + 0.03);
+        this.source = this.ctx.createBufferSource();
+        this.source.buffer = buffer;
+        this.source.loop = true;
+        this.source.connect(this.masterGain);
+        this.startTime = this.ctx.currentTime;
+        this.beatCount = 0;
+        this.isPlaying = true;
+        this.source.start(this.startTime);
+        this.scheduleBeats();
     }
 
     getCurrentBeat() {
@@ -285,6 +256,10 @@ class AudioSystem {
 
     stop() {
         this.isPlaying = false;
+        if (this.source) {
+            try { this.source.stop(); } catch (e) {}
+            this.source = null;
+        }
     }
 }
 
@@ -784,10 +759,6 @@ class StageManager {
 
     getStageMod() {
         return 1 + (this.stage - 1) * 0.3 + (this.subStage - 1) * 0.1;
-    }
-
-    getBPM() {
-        return CONSTANTS.BASE_BPM + (this.stage - 1) * 12 + (this.subStage - 1) * 6;
     }
 
     start() {
@@ -1672,7 +1643,7 @@ class Game {
         document.getElementById('startMultiBtn').disabled = false;
     }
 
-    startGame() {
+    async startGame() {
         this.state = 'playing';
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
@@ -1695,9 +1666,11 @@ class Game {
             p.invincible = 0;
         });
 
-        // Start BGM
-        const bpm = this.stage.getBPM();
-        this.audio.startBGM(bpm);
+        // ランダムにBGMを選び、曲の長さからステージ距離を算出してから再生開始する
+        const track = pickRandomTrack();
+        const buffer = await this.audio.loadTrack(track);
+        this.stage.maxDistance = computeStageMaxDistance(buffer.duration, this.stage.scrollSpeed);
+        this.audio.startBGM(track);
 
         // Generate initial notes
         this.rhythm.generateSwordNotes(4, 32, 0.8);
