@@ -56,6 +56,27 @@ const ENEMY_TYPES = {
     elite: { name: 'エリート', hp: 200, atk: 20, speed: 1.2, size: 45, color: '#e74c3c', score: 100, flying: false, ranged: true, defense: true, elite: true },
 };
 
+const BGM_TRACKS = [
+    { file: '79拍:分1.mp3', bpm: 79 },
+    { file: '79拍:分2.mp3', bpm: 79 },
+    { file: '90拍:分.mp3', bpm: 90 },
+    { file: '110拍:分.mp3', bpm: 110 },
+];
+
+const bpmFromTrackFilename = function(filename) {
+    const match = filename.match(/(\d+)拍/);
+    if (!match) throw new Error(`BPMを解析できません: ${filename}`);
+    return parseInt(match[1], 10);
+};
+
+const pickRandomTrack = function() {
+    return BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
+};
+
+const computeStageMaxDistance = function(trackDurationSeconds, scrollSpeed) {
+    return trackDurationSeconds * scrollSpeed * 60;
+};
+
 // ============================================================
 // Audio System (Web Audio API)
 // ============================================================
@@ -2017,6 +2038,7 @@ if (typeof window !== 'undefined') {
 // ============================================================
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
+    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeStageMaxDistance,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, Game,
 };
 if (typeof globalThis !== 'undefined') {
