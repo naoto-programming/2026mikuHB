@@ -1656,7 +1656,7 @@ class Renderer {
 // ============================================================
 // Main Game Class
 // ============================================================
-class Game {
+class GameController {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
@@ -2219,7 +2219,7 @@ class Game {
 let game;
 if (typeof window !== 'undefined') {
     window.addEventListener('load', () => {
-        game = new Game();
+        game = new GameController();
     });
 
     // Expose Game to window for onclick handlers
@@ -2245,7 +2245,7 @@ const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeStageMaxDistance,
     IMAGE_MANIFEST, applyAbility,
-    AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, Game,
+    AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;
