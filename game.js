@@ -74,8 +74,8 @@ const pickRandomTrack = function() {
     return BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
 };
 
-const computeStageMaxDistance = function(trackDurationSeconds, scrollSpeed) {
-    return trackDurationSeconds * scrollSpeed * 60;
+const computeTotalWaves = function(trackDurationSeconds, waveIntervalSeconds) {
+    return Math.max(1, Math.floor(trackDurationSeconds / waveIntervalSeconds));
 };
 
 const IMAGE_MANIFEST = {
@@ -765,7 +765,7 @@ class Enemy {
             this.attackCooldown -= dt;
         }
 
-        if (this.x < scrollX - 150) this.dead = true;
+        if (this.x < scrollX - 300 || this.x > scrollX + CONSTANTS.CANVAS_WIDTH + 300) this.dead = true;
     }
 
     startAttack() {
@@ -844,11 +844,11 @@ class StageManager {
         this.stage = 1;
         this.subStage = 1;
         this.scrollX = 0;
-        this.scrollSpeed = 2;
-        this.distance = 0;
-        this.maxDistance = CONSTANTS.STAGE_LENGTH;
         this.enemies = [];
-        this.spawnTimer = 0;
+        this.totalWaves = 1;
+        this.currentWave = 0;
+        this.waveTimer = 0;
+        this.waveIntervalSeconds = 15;
         this.eliteSpawned = false;
         this.completed = false;
         this.totalScore = 0;
@@ -858,10 +858,11 @@ class StageManager {
         return 1 + (this.stage - 1) * 0.3 + (this.subStage - 1) * 0.1;
     }
 
-    start() {
-        this.distance = 0;
+    start(trackDurationSeconds) {
         this.enemies = [];
-        this.spawnTimer = 1;
+        this.totalWaves = computeTotalWaves(trackDurationSeconds || 90, this.waveIntervalSeconds);
+        this.currentWave = 0;
+        this.waveTimer = 1;
         this.eliteSpawned = false;
         this.completed = false;
         this.scrollX = 0;
@@ -870,33 +871,27 @@ class StageManager {
     update(dt, players) {
         if (this.completed) return;
 
-        this.scrollX += this.scrollSpeed;
-        this.distance += this.scrollSpeed;
+        this.waveTimer -= dt;
+        if (this.waveTimer <= 0 && this.enemies.length === 0 && this.currentWave < this.totalWaves) {
+            this.spawnWave();
+            this.currentWave++;
+            this.waveTimer = this.waveIntervalSeconds;
 
-        players.forEach(p => {
-            if (p.x < this.scrollX + 50) p.x = this.scrollX + 50;
-        });
-
-        this.spawnTimer -= dt;
-        if (this.spawnTimer <= 0 && this.distance < this.maxDistance - 300) {
-            this.spawnEnemy();
-            this.spawnTimer = Math.max(0.4, 1.8 - this.getStageMod() * 0.15);
-        }
-
-        if (this.distance > this.maxDistance * 0.85 && !this.eliteSpawned) {
-            this.spawnElite();
-            this.eliteSpawned = true;
+            if (this.currentWave === this.totalWaves && !this.eliteSpawned) {
+                this.spawnElite();
+                this.eliteSpawned = true;
+            }
         }
 
         this.enemies.forEach(e => e.update(dt, players, this.scrollX, this.enemies));
-        this.enemies = this.enemies.filter(e => !e.dead);
+        this.enemies = this.enemies.filter(e => !e.dead || e.knockbackTimer > 0);
 
-        if (this.distance >= this.maxDistance && this.enemies.length === 0) {
+        if (this.currentWave >= this.totalWaves && this.enemies.length === 0) {
             this.completed = true;
         }
     }
 
-    spawnEnemy() {
+    spawnWave() {
         const mod = this.getStageMod();
         const types = ['normal'];
         if (this.stage >= 1) types.push('flying');
@@ -906,29 +901,21 @@ class StageManager {
         if (this.stage >= 3) types.push('healer');
         if (this.stage >= 4) types.push('large');
 
-        const type = types[Math.floor(Math.random() * types.length)];
-        const x = this.scrollX + CONSTANTS.CANVAS_WIDTH + 80 + Math.random() * 150;
-        const y = ENEMY_TYPES[type].flying ? CONSTANTS.GROUND_Y - 80 - Math.random() * 40 : CONSTANTS.GROUND_Y;
-
-        this.enemies.push(new Enemy(type, x, y, mod));
-
-        if (this.stage >= 2 && Math.random() < 0.25) {
-            const type2 = types[Math.floor(Math.random() * types.length)];
-            const x2 = x + 80 + Math.random() * 100;
-            const y2 = ENEMY_TYPES[type2].flying ? CONSTANTS.GROUND_Y - 80 : CONSTANTS.GROUND_Y;
-            this.enemies.push(new Enemy(type2, x2, y2, mod));
-        }
-        if (this.stage >= 4 && Math.random() < 0.15) {
-            const type3 = types[Math.floor(Math.random() * types.length)];
-            const x3 = x + 160 + Math.random() * 100;
-            const y3 = ENEMY_TYPES[type3].flying ? CONSTANTS.GROUND_Y - 80 : CONSTANTS.GROUND_Y;
-            this.enemies.push(new Enemy(type3, x3, y3, mod));
+        const waveSize = Math.min(16, 6 + Math.floor(this.getStageMod() * 2));
+        for (let i = 0; i < waveSize; i++) {
+            const type = types[Math.floor(Math.random() * types.length)];
+            const fromLeft = Math.random() < 0.5;
+            const x = fromLeft
+                ? -60 - Math.random() * 150
+                : CONSTANTS.CANVAS_WIDTH + 60 + Math.random() * 150;
+            const y = ENEMY_TYPES[type].flying ? CONSTANTS.GROUND_Y - 80 - Math.random() * 40 : CONSTANTS.GROUND_Y;
+            this.enemies.push(new Enemy(type, x, y, mod));
         }
     }
 
     spawnElite() {
         const mod = this.getStageMod();
-        const x = this.scrollX + CONSTANTS.CANVAS_WIDTH * 0.6;
+        const x = CONSTANTS.CANVAS_WIDTH / 2;
         const y = CONSTANTS.GROUND_Y;
         this.enemies.push(new Enemy('elite', x, y, mod * 1.5));
     }
@@ -939,7 +926,6 @@ class StageManager {
             this.stage++;
             this.subStage = 1;
         }
-        this.start();
     }
 
     getStageName() {
@@ -1067,9 +1053,9 @@ class Renderer {
             this.renderRhythmUI(ctx, game);
         }
 
-        // Distance progress bar at bottom
+        // Wave progress bar at bottom
         if (game.state === 'playing') {
-            const progress = game.stage.distance / game.stage.maxDistance;
+            const progress = game.stage.currentWave / game.stage.totalWaves;
             ctx.fillStyle = 'rgba(0,0,0,0.6)';
             ctx.fillRect(w/2 - 150, h - 12, 300, 6);
             ctx.fillStyle = '#ff6b35';
@@ -1709,6 +1695,7 @@ class GameController {
         this.players = [];
         this.localPlayer = new Player('p1', this.selectedChar, true);
         this.players.push(this.localPlayer);
+        this.stage = new StageManager();
 
         this.startGame();
     }
@@ -1750,6 +1737,7 @@ class GameController {
         this.players = [];
         this.localPlayer = new Player('host', this.selectedChar, true);
         this.players.push(this.localPlayer);
+        this.stage = new StageManager();
         this.startGame();
     }
 
@@ -1768,8 +1756,6 @@ class GameController {
         document.getElementById('beatBar').classList.remove('hidden');
         document.getElementById('tutorialBox').classList.remove('hidden');
 
-        this.stage = new StageManager();
-        this.stage.start();
         this.rhythm.reset();
         this.gameTime = 0;
         this.abilityCooldown = 0;
@@ -1785,10 +1771,10 @@ class GameController {
             p.invincible = 0;
         });
 
-        // ランダムにBGMを選び、曲の長さからステージ距離を算出してから再生開始する
+        // ランダムにBGMを選び、曲の長さから総ウェーブ数を算出してから再生開始する
         const track = pickRandomTrack();
         const buffer = await this.audio.loadTrack(track);
-        this.stage.maxDistance = computeStageMaxDistance(buffer.duration, this.stage.scrollSpeed);
+        this.stage.start(buffer.duration);
         this.audio.startBGM(track);
 
         // Beat callback for spawning notes
@@ -2099,7 +2085,7 @@ if (typeof window !== 'undefined') {
 // ============================================================
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
-    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeStageMaxDistance,
+    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves,
     IMAGE_MANIFEST, applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
 };
