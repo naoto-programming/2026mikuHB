@@ -20,7 +20,7 @@ const CONSTANTS = {
 };
 
 const CHARACTERS = [
-    { id: 'swordsman', name: '剣士', diff: 1, desc: '初心者向け・安定型', color: '#e74c3c', 
+    { id: 'swordsman', name: '剣士', diff: 1, desc: '初心者向け・安定型', color: '#e74c3c',
       ability: '斬鉄剣', abilityDesc: '前方広範囲攻撃', hp: 120, atk: 10, speed: 1.0 },
     { id: 'archer', name: '弓士', diff: 2, desc: '遠距離型', color: '#2ecc71',
       ability: '連射', abilityDesc: '遠距離複数射撃', hp: 90, atk: 12, speed: 1.1 },
@@ -32,10 +32,6 @@ const CHARACTERS = [
       ability: '獣王撃', abilityDesc: '超高威力一撃', hp: 110, atk: 20, speed: 0.85 },
     { id: 'mage', name: '魔法使い', diff: 6, desc: '能力重視型', color: '#3498db',
       ability: 'メテオ', abilityDesc: '広範囲魔法攻撃', hp: 70, atk: 5, speed: 0.8 },
-    { id: 'spirit', name: '精霊騎士', diff: 7, desc: '複数要素管理型', color: '#1abc9c',
-      ability: '精霊召喚', abilityDesc: '自動攻撃+回復', hp: 95, atk: 11, speed: 1.0 },
-    { id: 'dragon', name: '竜騎士', diff: 8, desc: '最高火力・最高難易度', color: '#c0392b',
-      ability: '竜破斬', abilityDesc: '全画面壊滅攻撃', hp: 130, atk: 25, speed: 0.75 },
 ];
 
 const UPGRADES = [
@@ -1531,7 +1527,7 @@ class Game {
             div.dataset.id = char.id;
             div.innerHTML = `
                 <div class="char-name">${char.name}</div>
-                <div class="diff-stars">${'★'.repeat(char.diff)}${'☆'.repeat(8-char.diff)}</div>
+                <div class="diff-stars">${'★'.repeat(char.diff)}${'☆'.repeat(6-char.diff)}</div>
                 <div class="char-diff">難易度 ${char.diff}</div>
                 <div class="char-desc">${char.desc}</div>
                 <div style="margin-top:8px;font-size:0.75em;color:#888;">
