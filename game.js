@@ -54,6 +54,8 @@ const ENEMY_TYPES = {
     defense: { name: '盾兵', hp: 60, atk: 6, speed: 0.5, size: 35, color: '#34495e', score: 25, flying: false, ranged: false, defense: true, shield: true },
     large: { name: 'オーガ', hp: 150, atk: 15, speed: 0.6, size: 50, color: '#c0392b', score: 50, flying: false, ranged: false, defense: false, elite: true },
     elite: { name: 'エリート', hp: 200, atk: 20, speed: 1.2, size: 45, color: '#e74c3c', score: 100, flying: false, ranged: true, defense: true, elite: true },
+    suicide: { name: '自爆兵', hp: 15, atk: 25, speed: 2.5, size: 26, color: '#d35400', score: 20, flying: false, ranged: false, defense: false, suicide: true },
+    healer: { name: 'ヒーラー', hp: 40, atk: 0, speed: 0.7, size: 30, color: '#27ae60', score: 30, flying: false, ranged: true, defense: false, healer: true, range: 320, healAmount: 25 },
 };
 
 const BGM_TRACKS = [
@@ -639,32 +641,37 @@ class Enemy {
         }
     }
 
-    update(dt, players, scrollX) {
+    update(dt, players, scrollX, allEnemies) {
         if (this.dead) return;
         if (this.stunTimer > 0) { this.stunTimer -= dt; return; }
 
         this.animTimer += dt;
         if (this.animTimer > 0.15) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
 
-        let nearest = null, nearestDist = Infinity;
-        players.forEach(p => {
-            if (!p.isAlive()) return;
-            const dist = Math.abs(p.x - this.x);
-            if (dist < nearestDist) { nearestDist = dist; nearest = p; }
-        });
+        if (this.data.healer) {
+            this.x += Math.sign(this.vx) * Math.abs(this.vx) * 0.4;
+            if (!this.isAttacking && this.attackCooldown <= 0) this.startAttack();
+        } else {
+            let nearest = null, nearestDist = Infinity;
+            players.forEach(p => {
+                if (!p.isAlive()) return;
+                const dist = Math.abs(p.x - this.x);
+                if (dist < nearestDist) { nearestDist = dist; nearest = p; }
+            });
 
-        if (nearest) {
-            const dist = nearest.x - this.x;
-            const attackRange = this.data.ranged ? (this.data.range || 250) : 70;
+            if (nearest) {
+                const dist = nearest.x - this.x;
+                const attackRange = this.data.ranged ? (this.data.range || 250) : 70;
 
-            if (Math.abs(dist) < attackRange && !this.isAttacking && this.attackCooldown <= 0) {
-                this.startAttack();
-            } else if (!this.isAttacking) {
-                if (this.flying) {
-                    this.x += Math.sign(dist) * Math.abs(this.vx) * 0.5;
-                    this.y = this.groundY + Math.sin(this.animTimer * 3) * 25;
-                } else {
-                    this.x += Math.sign(dist) * Math.abs(this.vx);
+                if (Math.abs(dist) < attackRange && !this.isAttacking && this.attackCooldown <= 0) {
+                    this.startAttack();
+                } else if (!this.isAttacking) {
+                    if (this.flying) {
+                        this.x += Math.sign(dist) * Math.abs(this.vx) * 0.5;
+                        this.y = this.groundY + Math.sin(this.animTimer * 3) * 25;
+                    } else {
+                        this.x += Math.sign(dist) * Math.abs(this.vx);
+                    }
                 }
             }
         }
@@ -672,7 +679,7 @@ class Enemy {
         if (this.isAttacking) {
             this.attackTimer -= dt;
             if (this.attackTimer <= 0) {
-                this.executeAttack(players);
+                this.executeAttack(players, allEnemies);
                 this.isAttacking = false;
                 this.attackWarning = false;
                 this.counterable = false;
@@ -694,7 +701,12 @@ class Enemy {
         this.state = 'attack';
     }
 
-    executeAttack(players) {
+    executeAttack(players, allEnemies) {
+        if (this.data.healer) {
+            this.executeHeal(allEnemies);
+            return;
+        }
+
         const hitbox = this.getAttackHitbox();
         players.forEach(p => {
             if (!p.isAlive()) return;
@@ -708,6 +720,23 @@ class Enemy {
                 }
             }
         });
+
+        if (this.data.suicide) {
+            this.dead = true;
+        }
+    }
+
+    executeHeal(allEnemies) {
+        let target = null;
+        let lowestRatio = 1;
+        (allEnemies || []).forEach(e => {
+            if (e === this || e.dead || e.hp >= e.maxHp) return;
+            const ratio = e.hp / e.maxHp;
+            if (ratio < lowestRatio) { lowestRatio = ratio; target = e; }
+        });
+        if (target) {
+            target.hp = Math.min(target.maxHp, target.hp + this.data.healAmount);
+        }
     }
 
     takeDamage(dmg, type = 'normal') {
@@ -791,7 +820,7 @@ class StageManager {
             this.eliteSpawned = true;
         }
 
-        this.enemies.forEach(e => e.update(dt, players, this.scrollX));
+        this.enemies.forEach(e => e.update(dt, players, this.scrollX, this.enemies));
         this.enemies = this.enemies.filter(e => !e.dead);
 
         if (this.distance >= this.maxDistance && this.enemies.length === 0) {
@@ -804,7 +833,9 @@ class StageManager {
         const types = ['normal'];
         if (this.stage >= 1) types.push('flying');
         if (this.stage >= 2) types.push('ranged');
+        if (this.stage >= 2) types.push('suicide');
         if (this.stage >= 3) types.push('defense');
+        if (this.stage >= 3) types.push('healer');
         if (this.stage >= 4) types.push('large');
 
         const type = types[Math.floor(Math.random() * types.length)];
