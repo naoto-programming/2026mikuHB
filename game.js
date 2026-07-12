@@ -457,6 +457,59 @@ class RhythmSystem {
 }
 
 // ============================================================
+// キャラ別固有能力
+// ============================================================
+// Declared as `const ... = function` (not `function applyAbility(){}`)
+// because this file is loaded via a top-level `eval()` in the JXA test
+// runner (tests/abilities.test.js). Under Annex B semantics, a plain
+// function declaration inside a direct eval leaks into the caller's scope,
+// which then collides with the test's `const { applyAbility } = ...`
+// destructure of the same name ("Can't create duplicate variable in eval").
+const applyAbility = function(charId, ratio, player, enemies) {
+    const power = 0.4 + ratio * 0.6; // 全Miss:40%, 全成功:100%
+    const alive = enemies.filter(e => !e.dead);
+    const result = { charId, power, hits: [], buff: null };
+
+    function hit(enemy, dmg) {
+        enemy.takeDamage(dmg, 'ability');
+        result.hits.push({ enemy, dmg });
+    }
+
+    switch (charId) {
+        case 'swordsman':
+            alive.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
+            break;
+        case 'archer':
+            alive.slice(0, 5).forEach(e => hit(e, Math.floor(14 * player.upgrades.ability * power)));
+            break;
+        case 'thief':
+            result.buff = { type: 'haste', duration: 3 + 4 * power, noteRateBonus: 0.5 * power };
+            break;
+        case 'fighter': {
+            const target = alive[0];
+            if (target) {
+                const hits = Math.max(1, Math.round(4 * power));
+                for (let i = 0; i < hits; i++) hit(target, Math.floor(12 * player.upgrades.ability));
+            }
+            break;
+        }
+        case 'beast': {
+            let target = null, highestHp = -1;
+            alive.forEach(e => { if (e.hp > highestHp) { highestHp = e.hp; target = e; } });
+            if (target) hit(target, Math.floor(90 * player.upgrades.ability * power));
+            break;
+        }
+        case 'mage':
+            alive.forEach(e => hit(e, Math.floor(45 * player.upgrades.ability * power)));
+            break;
+        default:
+            alive.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
+    }
+
+    return result;
+};
+
+// ============================================================
 // Player
 // ============================================================
 class Player {
@@ -1499,6 +1552,8 @@ class Game {
         this.gameTime = 0;
         this.abilityCooldown = 0;
         this.counterWindow = 0;
+        this.hasteTimer = 0;
+        this.hasteNoteRateBonus = 0;
 
         this.setupInput();
         this.setupUI();
@@ -1724,7 +1779,8 @@ class Game {
             const currentBeat = this.audio.getCurrentBeat();
             const ahead = 4;
             if (beat % 2 === 0) {
-                this.rhythm.generateSwordNotes(beat + ahead, beat + ahead + 2, 0.7);
+                const density = Math.min(1, 0.7 + this.hasteNoteRateBonus);
+                this.rhythm.generateSwordNotes(beat + ahead, beat + ahead + 2, density);
             }
 
             // Enemy attack warnings -> counter notes
@@ -1922,18 +1978,26 @@ class Game {
         const abilityResult = this.rhythm.update();
         if (abilityResult && abilityResult.type === 'ability_complete') {
             const ratio = abilityResult.hitCount / abilityResult.total;
-            const dmg = Math.floor(30 * this.localPlayer.upgrades.ability * (0.5 + ratio * 0.5));
+            const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies);
 
-            this.stage.enemies.forEach(e => {
-                if (e.dead) return;
-                e.takeDamage(dmg, 'ability');
-                this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#4a90d9', 8);
-                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size,
+            outcome.hits.forEach(({ enemy, dmg }) => {
+                this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
+                this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
                     `${dmg}`, '#4a90d9', 18);
             });
 
+            if (outcome.buff && outcome.buff.type === 'haste') {
+                this.hasteTimer = outcome.buff.duration;
+                this.hasteNoteRateBonus = outcome.buff.noteRateBonus;
+            }
+
             this.renderer.shake(5, 0.2);
             this.audio.playAbilitySound();
+        }
+
+        if (this.hasteTimer > 0) {
+            this.hasteTimer -= dt;
+            if (this.hasteTimer <= 0) this.hasteNoteRateBonus = 0;
         }
 
         // Enemy attacks on players (non-counterable)
@@ -2050,6 +2114,7 @@ if (typeof window !== 'undefined') {
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeStageMaxDistance,
+    applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, Game,
 };
 if (typeof globalThis !== 'undefined') {
