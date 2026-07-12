@@ -1751,6 +1751,8 @@ class Game {
         this.rhythm.reset();
         this.gameTime = 0;
         this.abilityCooldown = 0;
+        this.hasteTimer = 0;
+        this.hasteNoteRateBonus = 0;
 
         // Reset player positions
         this.players.forEach(p => {
