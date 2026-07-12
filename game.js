@@ -39,7 +39,6 @@ const UPGRADES = [
     { name: '攻撃力UP', desc: '攻撃力+25%', type: 'atk', value: 0.25, rarity: 'common' },
     { name: '攻撃速度UP', desc: 'ノーツ速度+15%', type: 'speed', value: 0.15, rarity: 'common' },
     { name: 'Perfect効果強化', desc: 'Perfect時ダメージ+50%', type: 'perfect', value: 0.5, rarity: 'rare' },
-    { name: 'カウンター強化', desc: 'カウンター威力+40%', type: 'counter', value: 0.4, rarity: 'rare' },
     { name: 'コンボ強化', desc: 'コンボ倍率+0.1', type: 'combo', value: 0.1, rarity: 'rare' },
     { name: '能力威力UP', desc: '能力ダメージ+60%', type: 'ability', value: 0.6, rarity: 'epic' },
     { name: 'HP回復', desc: '最大HPの50%回復', type: 'heal', value: 0.5, rarity: 'common' },
@@ -296,22 +295,6 @@ class AudioSystem {
         osc.stop(now + 0.4);
     }
 
-    playCounterSound() {
-        if (!this.ctx) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'square';
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.frequency.setValueAtTime(200, now);
-        osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
-        gain.gain.setValueAtTime(0.3, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-        osc.start(now);
-        osc.stop(now + 0.2);
-    }
-
     stop() {
         this.isPlaying = false;
         if (this.source) {
@@ -371,16 +354,6 @@ class RhythmSystem {
         }
     }
 
-    generateCounterNote(beat) {
-        this.notes.push({
-            id: this.noteId++,
-            beat: beat,
-            type: 'counter',
-            hit: false,
-            missed: false,
-        });
-    }
-
     update() {
         const currentBeat = this.audio.getCurrentBeat();
 
@@ -420,7 +393,7 @@ class RhythmSystem {
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
 
-        let searchPool = inputType === 'ability' && this.abilityActive ? this.abilityNotes : this.notes;
+        let searchPool = inputType === 'ability' ? this.abilityNotes : this.notes;
 
         let nearest = null;
         let nearestDist = Infinity;
@@ -586,8 +559,6 @@ class Player {
         this.isGrounded = true;
         this.isAttacking = false;
         this.attackTimer = 0;
-        this.isCountering = false;
-        this.counterTimer = 0;
         this.isUsingAbility = false;
         this.abilityTimer = 0;
         this.invincible = 0;
@@ -597,7 +568,7 @@ class Player {
         this.flashTimer = 0;
 
         this.upgrades = {
-            range: 1, atk: 1, speed: 1, perfect: 1, counter: 1,
+            range: 1, atk: 1, speed: 1, perfect: 1,
             combo: 0, ability: 1, lifesteal: 0, invincible: 0,
         };
     }
@@ -606,8 +577,8 @@ class Player {
         if (upgrade.type === 'heal') {
             this.hp = Math.min(this.hp + this.maxHp * upgrade.value, this.maxHp);
         } else if (this.upgrades[upgrade.type] !== undefined) {
-            if (upgrade.type === 'range' || upgrade.type === 'atk' || upgrade.type === 'speed' || 
-                upgrade.type === 'perfect' || upgrade.type === 'counter' || upgrade.type === 'ability' || 
+            if (upgrade.type === 'range' || upgrade.type === 'atk' || upgrade.type === 'speed' ||
+                upgrade.type === 'perfect' || upgrade.type === 'ability' ||
                 upgrade.type === 'invincible') {
                 this.upgrades[upgrade.type] += upgrade.value;
             } else if (upgrade.type === 'combo' || upgrade.type === 'lifesteal') {
@@ -639,9 +610,9 @@ class Player {
             else if (input.right) { this.vx = CONSTANTS.PLAYER_SPEED * this.char.speed; this.facing = 1; }
             else { this.vx *= 0.8; }
 
-            if (Math.abs(this.vx) > 0.5 && !this.isAttacking && !this.isCountering && !this.isUsingAbility) 
+            if (Math.abs(this.vx) > 0.5 && !this.isAttacking && !this.isUsingAbility)
                 this.state = 'run';
-            else if (!this.isAttacking && !this.isCountering && !this.isUsingAbility) 
+            else if (!this.isAttacking && !this.isUsingAbility)
                 this.state = 'idle';
         }
 
@@ -657,10 +628,6 @@ class Player {
             this.attackTimer -= dt;
             if (this.attackTimer <= 0) { this.isAttacking = false; this.state = 'idle'; }
         }
-        if (this.isCountering) {
-            this.counterTimer -= dt;
-            if (this.counterTimer <= 0) { this.isCountering = false; this.state = 'idle'; }
-        }
         if (this.isUsingAbility) {
             this.abilityTimer -= dt;
             if (this.abilityTimer <= 0) { this.isUsingAbility = false; this.state = 'idle'; }
@@ -671,12 +638,6 @@ class Player {
         this.isAttacking = true;
         this.attackTimer = 0.25;
         this.state = 'attack';
-    }
-
-    counter() {
-        this.isCountering = true;
-        this.counterTimer = 0.4;
-        this.state = 'counter';
     }
 
     useAbility() {
@@ -736,8 +697,6 @@ class Enemy {
         this.attackTimer = 0;
         this.attackCooldown = 1.5 + Math.random() * 2;
         this.isAttacking = false;
-        this.attackWarning = false;
-        this.counterable = false;
         this.stunTimer = 0;
         this.dead = false;
         this.flying = this.data.flying;
@@ -745,7 +704,7 @@ class Enemy {
         this.resistances = {};
 
         if (Math.random() < 0.25 * stageMod) {
-            const types = ['sword', 'ability', 'counter'];
+            const types = ['sword', 'ability'];
             this.resistances[types[Math.floor(Math.random() * types.length)]] = 0.5;
         }
     }
@@ -790,12 +749,7 @@ class Enemy {
             if (this.attackTimer <= 0) {
                 this.executeAttack(players, allEnemies);
                 this.isAttacking = false;
-                this.attackWarning = false;
-                this.counterable = false;
                 this.attackCooldown = 2 + Math.random() * 2;
-            } else if (this.attackTimer < 0.6 && !this.attackWarning) {
-                this.attackWarning = true;
-                this.counterable = true;
             }
         } else {
             this.attackCooldown -= dt;
@@ -821,12 +775,7 @@ class Enemy {
             if (!p.isAlive()) return;
             const pBox = p.getHitbox();
             if (this.checkCollision(hitbox, pBox)) {
-                if (p.isCountering && this.counterable) {
-                    this.takeDamage(p.getDamage(p.atk * 3, 'perfect'), 'counter');
-                    this.stunTimer = 1.5;
-                } else {
-                    p.takeDamage(this.atk);
-                }
+                p.takeDamage(this.atk);
             }
         });
 
@@ -860,15 +809,6 @@ class Enemy {
             return dmg + this.data.score;
         }
         return dmg;
-    }
-
-    resolveCounter(dmg) {
-        this.takeDamage(dmg, 'counter');
-        this.stunTimer = 2;
-        this.counterable = false;
-        this.isAttacking = false;
-        this.attackWarning = false;
-        this.attackCooldown = 2 + Math.random() * 2;
     }
 
     getHitbox() {
@@ -1289,22 +1229,6 @@ class Renderer {
             ctx.fill();
         }
 
-        if (p.isCountering) {
-            ctx.strokeStyle = '#e74c3c';
-            ctx.lineWidth = 3;
-            ctx.shadowColor = '#e74c3c';
-            ctx.shadowBlur = 20;
-            ctx.beginPath();
-            ctx.arc(x, y - 30, 40, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-
-            ctx.fillStyle = 'rgba(231,76,60,0.15)';
-            ctx.beginPath();
-            ctx.arc(x, y - 30, 35, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
         if (p.isUsingAbility) {
             ctx.fillStyle = 'rgba(74,144,217,0.3)';
             ctx.shadowColor = '#4a90d9';
@@ -1453,23 +1377,6 @@ class Renderer {
         ctx.arc(x - 4, y - s/2 - 3, 1.5, 0, Math.PI * 2);
         ctx.arc(x + 4, y - s/2 - 3, 1.5, 0, Math.PI * 2);
         ctx.fill();
-
-        // Attack warning
-        if (e.attackWarning) {
-            ctx.strokeStyle = '#e74c3c';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            ctx.arc(x, y - s/2, s + 10 + Math.sin(Date.now() * 0.02) * 5, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Counter indicator
-            ctx.fillStyle = '#e74c3c';
-            ctx.font = 'bold 12px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('COUNTER!', x, y - s - 15);
-        }
 
         // Stun indicator
         if (e.stunTimer > 0) {
@@ -1629,23 +1536,6 @@ class Renderer {
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText('X', nx, ny);
-            } else if (note.type === 'counter') {
-                ctx.fillStyle = '#e74c3c';
-                ctx.shadowColor = '#e74c3c';
-                ctx.shadowBlur = 15;
-                ctx.beginPath();
-                ctx.moveTo(nx, ny - size/2);
-                ctx.lineTo(nx + size/2, ny);
-                ctx.lineTo(nx, ny + size/2);
-                ctx.lineTo(nx - size/2, ny);
-                ctx.closePath();
-                ctx.fill();
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = '#fff';
-                ctx.font = 'bold 14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('C', nx, ny);
             }
         });
 
@@ -1673,13 +1563,12 @@ class GameController {
         this.selectedChar = 'swordsman';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
-        this.input = { left: false, right: false, z: false, x: false, c: false };
-        this.lastInput = { z: false, x: false, c: false };
+        this.input = { left: false, right: false, z: false, x: false };
+        this.lastInput = { z: false, x: false };
 
         this.lastTime = 0;
         this.gameTime = 0;
         this.abilityCooldown = 0;
-        this.counterWindow = 0;
         this.hasteTimer = 0;
         this.hasteNoteRateBonus = 0;
 
@@ -1714,10 +1603,6 @@ class GameController {
                     if (!this.lastInput.x) this.handleAbility();
                     this.input.x = true;
                     break;
-                case 'c': case 'l':
-                    if (!this.lastInput.c) this.handleCounter();
-                    this.input.c = true;
-                    break;
             }
         });
 
@@ -1727,7 +1612,6 @@ class GameController {
                 case 'arrowright': case 'd': this.input.right = false; break;
                 case 'z': case 'j': this.input.z = false; break;
                 case 'x': case 'k': this.input.x = false; break;
-                case 'c': case 'l': this.input.c = false; break;
             }
         });
     }
@@ -1913,13 +1797,6 @@ class GameController {
                 this.rhythm.generateSwordNotes(beat + ahead, beat + ahead + 2, density);
             }
 
-            // Enemy attack warnings -> counter notes
-            this.stage.enemies.forEach(e => {
-                if (e.attackWarning && !e.counterNoteSpawned) {
-                    this.rhythm.generateCounterNote(beat + 2);
-                    e.counterNoteSpawned = true;
-                }
-            });
         };
 
         // Rhythm judge callback
@@ -1988,30 +1865,6 @@ class GameController {
         this.audio.playAbilitySound();
         this.rhythm.startAbility(4);
         this.abilityCooldown = 8;
-    }
-
-    handleCounter() {
-        const result = this.rhythm.checkInput('counter');
-        if (!result) return;
-
-        this.localPlayer.counter();
-        this.audio.playCounterSound();
-
-        if (result.judge !== 'miss') {
-            // Counter all attacking enemies
-            this.stage.enemies.forEach(e => {
-                if (e.counterable && e.attackWarning) {
-                    const dmg = this.localPlayer.getDamage(20, result.judge) * this.localPlayer.upgrades.counter;
-                    e.resolveCounter(dmg);
-                    this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#e74c3c', 15, 10);
-                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size - 40,
-                        'COUNTER!', '#e74c3c', 22);
-                    this.renderer.shake(6, 0.2);
-                }
-            });
-        }
-
-        this.lastInput.c = true;
     }
 
     checkCollision(a, b) {
@@ -2086,7 +1939,6 @@ class GameController {
         // Update last input
         this.lastInput.z = this.input.z;
         this.lastInput.x = this.input.x;
-        this.lastInput.c = this.input.c;
 
         requestAnimationFrame((t) => this.loop(t));
     }
@@ -2130,7 +1982,7 @@ class GameController {
             if (this.hasteTimer <= 0) this.hasteNoteRateBonus = 0;
         }
 
-        // Enemy attacks on players (non-counterable)
+        // Enemy attacks on players (passive contact damage)
         this.stage.enemies.forEach(e => {
             if (e.dead || e.stunTimer > 0) return;
             const eBox = e.getHitbox();
