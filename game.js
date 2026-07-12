@@ -310,7 +310,10 @@ class AudioSystem {
 class RhythmSystem {
     constructor(audio) {
         this.audio = audio;
-        this.notes = [];
+        this.swordNotes = [];
+        this.swordBurstActive = false;
+        this.swordBurstStartBeat = 0;
+        this.swordBurstLength = 0;
         this.combo = 0;
         this.maxCombo = 0;
         this.score = 0;
@@ -323,17 +326,19 @@ class RhythmSystem {
         this.abilityLength = 0;
     }
 
-    generateSwordNotes(beatStart, beatEnd, density = 1) {
-        for (let i = beatStart; i <= beatEnd; i++) {
-            if (Math.random() < density) {
-                this.notes.push({
-                    id: this.noteId++,
-                    beat: i,
-                    type: 'sword',
-                    hit: false,
-                    missed: false,
-                });
-            }
+    startSwordBurst(beats) {
+        this.swordBurstActive = true;
+        this.swordBurstStartBeat = Math.ceil(this.audio.getCurrentBeat());
+        this.swordBurstLength = beats;
+        this.swordNotes = [];
+        for (let i = 0; i < beats; i++) {
+            this.swordNotes.push({
+                id: this.noteId++,
+                beat: this.swordBurstStartBeat + i,
+                type: 'sword',
+                hit: false,
+                missed: false,
+            });
         }
     }
 
@@ -358,7 +363,7 @@ class RhythmSystem {
         const currentBeat = this.audio.getCurrentBeat();
 
         // Mark missed notes
-        [...this.notes, ...this.abilityNotes].forEach(note => {
+        [...this.swordNotes, ...this.abilityNotes].forEach(note => {
             if (!note.hit && !note.missed && currentBeat > note.beat + CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60)) {
                 note.missed = true;
                 if (note.type !== 'ability') {
@@ -380,11 +385,13 @@ class RhythmSystem {
             }
         }
 
-        // Remove old notes
-        this.notes = this.notes.filter(n => {
-            if (n.hit) return currentBeat - n.beat < 2;
-            return currentBeat - n.beat < 3;
-        });
+        // Check sword burst completion (次のZ入力で新しいバーストを開始できるようにする)
+        if (this.swordBurstActive) {
+            const allDone = this.swordNotes.every(n => n.hit || n.missed);
+            if (allDone || currentBeat > this.swordBurstStartBeat + this.swordBurstLength + 1) {
+                this.swordBurstActive = false;
+            }
+        }
 
         return null;
     }
@@ -393,7 +400,7 @@ class RhythmSystem {
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
 
-        let searchPool = inputType === 'ability' ? this.abilityNotes : this.notes;
+        let searchPool = inputType === 'ability' ? this.abilityNotes : this.swordNotes;
 
         let nearest = null;
         let nearestDist = Infinity;
@@ -460,7 +467,7 @@ class RhythmSystem {
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = 4;
 
-        const allNotes = [...this.notes];
+        const allNotes = [...this.swordNotes];
         if (this.abilityActive) {
             allNotes.push(...this.abilityNotes);
         }
@@ -475,7 +482,10 @@ class RhythmSystem {
     }
 
     reset() {
-        this.notes = [];
+        this.swordNotes = [];
+        this.swordBurstActive = false;
+        this.swordBurstStartBeat = 0;
+        this.swordBurstLength = 0;
         this.abilityNotes = [];
         this.abilityActive = false;
         this.combo = 0;
@@ -1781,22 +1791,10 @@ class GameController {
         this.stage.maxDistance = computeStageMaxDistance(buffer.duration, this.stage.scrollSpeed);
         this.audio.startBGM(track);
 
-        // Generate initial notes
-        this.rhythm.generateSwordNotes(4, 32, 0.8);
-
         // Beat callback for spawning notes
         this.audio.beatCallbacks = [];
         this.audio.onBeat = (beat, time) => {
             if (this.state !== 'playing') return;
-
-            // Generate notes ahead
-            const currentBeat = this.audio.getCurrentBeat();
-            const ahead = 4;
-            if (beat % 2 === 0) {
-                const density = Math.min(1, 0.7 + this.hasteNoteRateBonus);
-                this.rhythm.generateSwordNotes(beat + ahead, beat + ahead + 2, density);
-            }
-
         };
 
         // Rhythm judge callback
@@ -1810,6 +1808,9 @@ class GameController {
     // ==================== Input Handling ====================
 
     handleSwordAttack() {
+        if (!this.rhythm.swordBurstActive) {
+            this.rhythm.startSwordBurst(4);
+        }
         const result = this.rhythm.checkInput('sword');
         if (!result) return;
 
@@ -1859,12 +1860,15 @@ class GameController {
     }
 
     handleAbility() {
-        if (this.abilityCooldown > 0) return;
-
-        this.localPlayer.useAbility();
-        this.audio.playAbilitySound();
-        this.rhythm.startAbility(4);
-        this.abilityCooldown = 8;
+        if (!this.rhythm.abilityActive) {
+            if (this.abilityCooldown > 0) return;
+            this.localPlayer.useAbility();
+            this.audio.playAbilitySound();
+            this.rhythm.startAbility(4);
+            this.abilityCooldown = 8;
+            return;
+        }
+        this.rhythm.checkInput('ability');
     }
 
     checkCollision(a, b) {
