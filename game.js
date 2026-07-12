@@ -712,6 +712,8 @@ class Enemy {
         this.flying = this.data.flying;
         this.groundY = y;
         this.resistances = {};
+        this.knockbackTimer = 0;
+        this.knockbackDir = 1;
 
         if (Math.random() < 0.25 * stageMod) {
             const types = ['sword', 'ability'];
@@ -720,7 +722,14 @@ class Enemy {
     }
 
     update(dt, players, scrollX, allEnemies) {
-        if (this.dead) return;
+        if (this.dead) {
+            if (this.knockbackTimer > 0) {
+                this.knockbackTimer -= dt;
+                this.x += this.knockbackDir * 14;
+                this.y -= 3;
+            }
+            return;
+        }
         if (this.stunTimer > 0) { this.stunTimer -= dt; return; }
 
         this.animTimer += dt;
@@ -816,6 +825,8 @@ class Enemy {
         if (this.hp <= 0) {
             this.hp = 0;
             this.dead = true;
+            this.knockbackTimer = 0.5;
+            this.knockbackDir = Math.random() < 0.5 ? -1 : 1;
             return dmg + this.data.score;
         }
         return dmg;
@@ -1283,7 +1294,30 @@ class Renderer {
         const x = e.x - scrollX;
         const y = e.y;
         const onScreen = x > -80 && x < CONSTANTS.CANVAS_WIDTH + 80;
-        if (!onScreen || e.dead) return;
+        if (!onScreen) return;
+        if (e.dead && e.knockbackTimer <= 0) return;
+
+        if (e.dead && e.knockbackTimer > 0) {
+            const t = 1 - (e.knockbackTimer / 0.5);
+            const s = e.data.size;
+            const spriteFile = IMAGE_MANIFEST.enemySprites[e.type];
+            const sprite = images && images[spriteFile];
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, 1 - t);
+            ctx.translate(x, y);
+            ctx.rotate(e.knockbackDir * t * 4);
+            ctx.scale(1 - t * 0.6, 1 - t * 0.6);
+            if (sprite) {
+                const drawH = s * 2.2;
+                const drawW = drawH * (sprite.width / sprite.height);
+                ctx.drawImage(sprite, -drawW / 2, -drawH, drawW, drawH);
+            } else {
+                ctx.fillStyle = e.data.color;
+                ctx.fillRect(-s / 2, -s, s, s);
+            }
+            ctx.restore();
+            return;
+        }
 
         const s = e.data.size;
 
