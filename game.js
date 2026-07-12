@@ -1714,9 +1714,7 @@ class GameController {
     hideAllScreens() {
         document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
         document.getElementById('hud').classList.add('hidden');
-        document.getElementById('comboDisplay').classList.add('hidden');
-        document.getElementById('beatBar').classList.add('hidden');
-        document.getElementById('tutorialBox').classList.add('hidden');
+        document.getElementById('bottomHud').classList.add('hidden');
     }
 
     // ==================== Game Flow ====================
@@ -1786,9 +1784,7 @@ class GameController {
         this.state = 'playing';
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
-        document.getElementById('comboDisplay').classList.remove('hidden');
-        document.getElementById('beatBar').classList.remove('hidden');
-        document.getElementById('tutorialBox').classList.remove('hidden');
+        document.getElementById('bottomHud').classList.remove('hidden');
 
         this.rhythm.reset();
         this.gameTime = 0;

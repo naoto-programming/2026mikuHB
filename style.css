@@ -189,14 +189,22 @@
         .hp-fill.mid { background: #f39c12; }
         .hp-fill.low { background: #e74c3c; }
 
-        .combo-display {
+        #bottomHud {
             position: absolute;
-            bottom: 140px;
             left: 50%;
+            bottom: 20px;
             transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            z-index: 15;
+            width: 600px;
+            max-width: 92%;
+        }
+        .combo-display {
             text-align: center;
             pointer-events: none;
-            z-index: 15;
         }
         .combo-count {
             font-size: 3em;
@@ -208,17 +216,12 @@
         .combo-label { font-size: 1em; color: #ffaa77; letter-spacing: 3px; }
 
         #beatBar {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 600px;
+            width: 100%;
             height: 90px;
             background: rgba(0,0,0,0.8);
             border: 2px solid #333;
             border-radius: 12px;
             overflow: hidden;
-            z-index: 15;
         }
         .beat-target {
             position: absolute;
@@ -242,17 +245,12 @@
         }
 
         .tutorial-box {
-            position: absolute;
-            bottom: 120px;
-            left: 50%;
-            transform: translateX(-50%);
             background: rgba(0,0,0,0.85);
             padding: 10px 20px;
             border-radius: 8px;
             font-size: 0.85em;
             color: #aaa;
             border: 1px solid #444;
-            z-index: 15;
             white-space: nowrap;
         }
         .tutorial-box span { font-weight: bold; }
