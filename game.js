@@ -677,9 +677,9 @@ class Player {
     getAttackHitbox() {
         const range = this.getAttackRange();
         return {
-            x: this.facing > 0 ? this.x : this.x - range,
+            x: this.x - range,
             y: this.y - 50,
-            w: range,
+            w: range * 2,
             h: 50,
         };
     }
