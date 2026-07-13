@@ -919,7 +919,7 @@ class StageManager {
         if (this.stage >= 3) types.push('healer');
         if (this.stage >= 4) types.push('large');
 
-        const waveSize = Math.min(16, 6 + Math.floor(this.getStageMod() * 2));
+        const waveSize = Math.min(50, 35 + Math.floor(this.getStageMod() * 8));
         for (let i = 0; i < waveSize; i++) {
             const type = types[Math.floor(Math.random() * types.length)];
             const fromLeft = Math.random() < 0.5;
@@ -927,7 +927,9 @@ class StageManager {
                 ? -60 - Math.random() * 150
                 : CONSTANTS.CANVAS_WIDTH + 60 + Math.random() * 150;
             const y = CONSTANTS.GROUND_Y;
-            this.enemies.push(new Enemy(type, x, y, mod));
+            const enemy = new Enemy(type, x, y, mod);
+            enemy.atk *= 0.35;
+            this.enemies.push(enemy);
         }
     }
 
