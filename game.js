@@ -608,20 +608,37 @@ class Player {
         return Math.floor(dmg * (this.char.atk / 10));
     }
 
-    update(input, dt, scrollX) {
+    update(dt, scrollX, enemies) {
         this.animTimer += dt;
         if (this.invincible > 0) this.invincible -= dt;
         if (this.flashTimer > 0) this.flashTimer -= dt;
 
-        if (this.isLocal && input) {
-            if (input.left) { this.vx = -CONSTANTS.PLAYER_SPEED * this.char.speed; this.facing = -1; }
-            else if (input.right) { this.vx = CONSTANTS.PLAYER_SPEED * this.char.speed; this.facing = 1; }
-            else { this.vx *= 0.8; }
+        if (!this.isAttacking && !this.isUsingAbility) {
+            let nearest = null, nearestDist = Infinity;
+            (enemies || []).forEach(e => {
+                if (e.dead) return;
+                const dist = Math.abs(e.x - this.x);
+                if (dist < nearestDist) { nearestDist = dist; nearest = e; }
+            });
 
-            if (Math.abs(this.vx) > 0.5 && !this.isAttacking && !this.isUsingAbility)
-                this.state = 'run';
-            else if (!this.isAttacking && !this.isUsingAbility)
+            if (nearest) {
+                const dist = nearest.x - this.x;
+                const holdRange = this.getAttackRange() * 0.6;
+                if (Math.abs(dist) > holdRange) {
+                    this.vx = Math.sign(dist) * CONSTANTS.PLAYER_SPEED * this.char.speed;
+                    this.facing = Math.sign(dist) || this.facing;
+                    this.state = 'run';
+                } else {
+                    this.vx *= 0.8;
+                    this.facing = Math.sign(dist) || this.facing;
+                    this.state = 'idle';
+                }
+            } else {
+                this.vx *= 0.8;
                 this.state = 'idle';
+            }
+        } else {
+            this.vx *= 0.8;
         }
 
         this.x += this.vx;
@@ -1547,7 +1564,7 @@ class GameController {
         this.selectedChar = 'swordsman';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
-        this.input = { left: false, right: false, z: false, x: false };
+        this.input = { z: false, x: false };
         this.lastInput = { z: false, x: false };
 
         this.lastTime = 0;
@@ -1577,8 +1594,6 @@ class GameController {
             if (this.state !== 'playing') return;
 
             switch(e.key.toLowerCase()) {
-                case 'arrowleft': case 'a': this.input.left = true; break;
-                case 'arrowright': case 'd': this.input.right = true; break;
                 case 'z': case 'j':
                     if (!this.lastInput.z) this.handleSwordAttack();
                     this.input.z = true;
@@ -1592,8 +1607,6 @@ class GameController {
 
         window.addEventListener('keyup', (e) => {
             switch(e.key.toLowerCase()) {
-                case 'arrowleft': case 'a': this.input.left = false; break;
-                case 'arrowright': case 'd': this.input.right = false; break;
                 case 'z': case 'j': this.input.z = false; break;
                 case 'x': case 'k': this.input.x = false; break;
             }
@@ -1778,9 +1791,6 @@ class GameController {
     // ==================== Input Handling ====================
 
     handleSwordAttack() {
-        if (!this.rhythm.swordBurstActive) {
-            this.rhythm.startSwordBurst(4);
-        }
         const result = this.rhythm.checkInput('sword');
         if (!result) return;
 
@@ -1830,14 +1840,6 @@ class GameController {
     }
 
     handleAbility() {
-        if (!this.rhythm.abilityActive) {
-            if (this.abilityCooldown > 0) return;
-            this.localPlayer.useAbility();
-            this.audio.playAbilitySound();
-            this.rhythm.startAbility(4);
-            this.abilityCooldown = 8;
-            return;
-        }
         this.rhythm.checkInput('ability');
     }
 
@@ -1921,14 +1923,30 @@ class GameController {
         this.gameTime += dt;
         if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
-        // Update players
+        // Update players (movement is AI-controlled)
         this.players.forEach(p => {
-            const input = p.isLocal ? this.input : null;
-            p.update(input, dt, this.stage.scrollX);
+            p.update(dt, this.stage.scrollX, this.stage.enemies);
         });
 
         // Update stage
         this.stage.update(dt, this.players);
+
+        // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
+        if (!this.rhythm.swordBurstActive) {
+            const inRange = this.stage.enemies.some(e => !e.dead &&
+                Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
+            if (inRange) {
+                this.rhythm.startSwordBurst(4);
+            }
+        }
+
+        // 能力バーストをクールダウン明けに自動開始する
+        if (!this.rhythm.abilityActive && this.abilityCooldown <= 0) {
+            this.localPlayer.useAbility();
+            this.audio.playAbilitySound();
+            this.rhythm.startAbility(4);
+            this.abilityCooldown = 8;
+        }
 
         // Update rhythm
         const abilityResult = this.rhythm.update();
