@@ -1220,41 +1220,11 @@ class Renderer {
 
         // Weapon effects
         if (p.isAttacking) {
-            ctx.strokeStyle = '#ff6b35';
-            ctx.lineWidth = 4;
-            ctx.shadowColor = '#ff6b35';
-            ctx.shadowBlur = 15;
-            ctx.beginPath();
-            const arcDir = p.facing > 0 ? 1 : -1;
-            ctx.arc(x, y - 35, 45, -0.6 * arcDir, 0.6 * arcDir, arcDir < 0);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-
-            ctx.fillStyle = 'rgba(255,107,53,0.25)';
-            ctx.beginPath();
-            ctx.arc(x + arcDir * 50, y - 35, 25, 0, Math.PI * 2);
-            ctx.fill();
+            this.renderAttackEffect(ctx, p, x, y, images);
         }
 
         if (p.isUsingAbility) {
-            ctx.fillStyle = 'rgba(74,144,217,0.3)';
-            ctx.shadowColor = '#4a90d9';
-            ctx.shadowBlur = 25;
-            ctx.beginPath();
-            ctx.arc(x, y - 30, 55, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-
-            // Particles around ability
-            const time = Date.now() * 0.005;
-            for (let i = 0; i < 6; i++) {
-                const angle = time + (Math.PI * 2 / 6) * i;
-                const dist = 50 + Math.sin(time * 2 + i) * 10;
-                ctx.fillStyle = 'rgba(74,144,217,0.6)';
-                ctx.beginPath();
-                ctx.arc(x + Math.cos(angle) * dist, y - 30 + Math.sin(angle) * dist, 3, 0, Math.PI * 2);
-                ctx.fill();
-            }
+            this.renderAbilityEffect(ctx, p, x, y);
         }
 
         if (p.invincible > 0) {
@@ -1287,6 +1257,202 @@ class Renderer {
             ctx.fillStyle = p.isLocal ? '#ff6b35' : '#aaa';
             ctx.textAlign = 'center';
             ctx.fillText(name, x, py - 14);
+        }
+    }
+
+    renderAttackEffect(ctx, p, x, y, images) {
+        const arcDir = p.facing > 0 ? 1 : -1;
+        const color = p.char.color;
+
+        switch (p.charId) {
+            case 'swordsman': {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 5;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.arc(x, y - 35, 48, -0.7 * arcDir, 0.7 * arcDir, arcDir < 0);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = 'rgba(231,76,60,0.3)';
+                ctx.beginPath();
+                ctx.arc(x + arcDir * 52, y - 35, 28, 0, Math.PI * 2);
+                ctx.fill();
+                break;
+            }
+            case 'archer': {
+                const arrowImg = images && images[IMAGE_MANIFEST.weapons.arrow];
+                const ax = x + arcDir * 60;
+                if (arrowImg) {
+                    ctx.save();
+                    ctx.translate(ax, y - 40);
+                    ctx.rotate(arcDir > 0 ? 0 : Math.PI);
+                    ctx.drawImage(arrowImg, -20, -10, 40, 20);
+                    ctx.restore();
+                }
+                ctx.strokeStyle = '#2ecc71';
+                ctx.lineWidth = 2;
+                ctx.shadowColor = '#2ecc71';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(x, y - 40);
+                ctx.lineTo(ax, y - 40);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'thief': {
+                ctx.strokeStyle = '#e0e0e0';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#fff';
+                ctx.shadowBlur = 15;
+                [-10, 10].forEach(offset => {
+                    ctx.beginPath();
+                    ctx.moveTo(x - 32 * arcDir, y - 50 + offset);
+                    ctx.lineTo(x + 32 * arcDir, y - 20 + offset);
+                    ctx.stroke();
+                });
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'fighter': {
+                ctx.strokeStyle = '#f39c12';
+                ctx.lineWidth = 4;
+                ctx.shadowColor = '#f39c12';
+                ctx.shadowBlur = 18;
+                for (let r = 15; r <= 45; r += 15) {
+                    ctx.globalAlpha = 1 - r / 60;
+                    ctx.beginPath();
+                    ctx.arc(x + arcDir * 30, y - 35, r, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'beast': {
+                ctx.strokeStyle = '#e67e22';
+                ctx.lineWidth = 4;
+                ctx.shadowColor = '#e67e22';
+                ctx.shadowBlur = 15;
+                [-14, 0, 14].forEach(offset => {
+                    ctx.beginPath();
+                    ctx.moveTo(x - 25 * arcDir, y - 55 + offset);
+                    ctx.lineTo(x + 35 * arcDir, y - 15 + offset);
+                    ctx.stroke();
+                });
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'mage': {
+                ctx.fillStyle = 'rgba(155,89,182,0.5)';
+                ctx.shadowColor = '#9b59b6';
+                ctx.shadowBlur = 25;
+                ctx.beginPath();
+                ctx.arc(x + arcDir * 35, y - 45, 22, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                for (let i = 0; i < 8; i++) {
+                    const angle = (Math.PI * 2 / 8) * i + Date.now() * 0.01;
+                    ctx.fillStyle = '#c39bd3';
+                    ctx.beginPath();
+                    ctx.arc(x + arcDir * 35 + Math.cos(angle) * 26, y - 45 + Math.sin(angle) * 26, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                break;
+            }
+        }
+    }
+
+    renderAbilityEffect(ctx, p, x, y) {
+        const color = p.char.color;
+        const time = Date.now() * 0.005;
+
+        switch (p.charId) {
+            case 'swordsman': {
+                for (let r = 20; r <= 80; r += 20) {
+                    ctx.globalAlpha = 1 - r / 100;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 4;
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 12;
+                    ctx.beginPath();
+                    ctx.arc(x, y - 30, r, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'archer': {
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI * 2 / 6) * i + time;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 3;
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y - 30);
+                    ctx.lineTo(x + Math.cos(angle) * 70, y - 30 + Math.sin(angle) * 70);
+                    ctx.stroke();
+                }
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'thief': {
+                for (let i = 0; i < 10; i++) {
+                    const a = time * 3 + i * 0.6;
+                    ctx.fillStyle = `rgba(155,89,182,${Math.max(0, 0.6 - i * 0.05)})`;
+                    ctx.beginPath();
+                    ctx.arc(x - Math.cos(a) * i * 8, y - 30, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                break;
+            }
+            case 'fighter': {
+                for (let i = 0; i < 4; i++) {
+                    const r = 15 + i * 18 + ((time * 40) % 18);
+                    ctx.globalAlpha = Math.max(0, 1 - r / 90);
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 5;
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 15;
+                    ctx.beginPath();
+                    ctx.arc(x, y - 30, r, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'beast': {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 8;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(x, y - 30, 70 + Math.sin(time * 4) * 8, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                break;
+            }
+            case 'mage': {
+                ctx.fillStyle = 'rgba(52,152,219,0.35)';
+                ctx.shadowColor = '#3498db';
+                ctx.shadowBlur = 35;
+                ctx.beginPath();
+                ctx.arc(x, y - 90, 45, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                for (let i = 0; i < 10; i++) {
+                    const angle = time * 2 + (Math.PI * 2 / 10) * i;
+                    ctx.fillStyle = 'rgba(74,144,217,0.7)';
+                    ctx.beginPath();
+                    ctx.arc(x + Math.cos(angle) * 60, y - 30 + Math.sin(angle) * 20, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                break;
+            }
         }
     }
 
