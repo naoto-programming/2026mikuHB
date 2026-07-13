@@ -215,36 +215,7 @@
         }
         .combo-label { font-size: 1em; color: #ffaa77; letter-spacing: 3px; }
 
-        #beatBar {
-            width: 100%;
-            height: 90px;
-            background: rgba(0,0,0,0.8);
-            border: 2px solid #333;
-            border-radius: 12px;
-            overflow: hidden;
-        }
-        .beat-target {
-            position: absolute;
-            left: 50%;
-            top: 0; bottom: 0;
-            width: 4px;
-            background: #ff6b35;
-            box-shadow: 0 0 15px rgba(255,107,53,0.9);
-            z-index: 5;
-            transform: translateX(-50%);
-        }
-        .beat-target::before {
-            content: '';
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 20px; height: 20px;
-            border: 2px solid #ff6b35;
-            border-radius: 50%;
-            opacity: 0.5;
-        }
-
-        .tutorial-box {
+.tutorial-box {
             background: rgba(0,0,0,0.85);
             padding: 10px 20px;
             border-radius: 8px;
