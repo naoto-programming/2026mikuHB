@@ -48,7 +48,6 @@ const UPGRADES = [
 
 const ENEMY_TYPES = {
     normal: { name: 'スライム', hp: 30, atk: 5, speed: 1, size: 30, color: '#2ecc71', score: 10, flying: false, ranged: false, defense: false },
-    flying: { name: 'バット', hp: 20, atk: 8, speed: 2, size: 25, color: '#9b59b6', score: 15, flying: true, ranged: false, defense: false },
     ranged: { name: 'ゴブリン射手', hp: 25, atk: 10, speed: 0.8, size: 28, color: '#e67e22', score: 20, flying: false, ranged: true, defense: false, range: 300 },
     defense: { name: '盾兵', hp: 60, atk: 6, speed: 0.5, size: 35, color: '#34495e', score: 25, flying: false, ranged: false, defense: true, shield: true },
     large: { name: 'オーガ', hp: 150, atk: 15, speed: 0.6, size: 50, color: '#c0392b', score: 50, flying: false, ranged: false, defense: false, elite: true },
@@ -93,7 +92,6 @@ const IMAGE_MANIFEST = {
     },
     enemySprites: {
         normal: '通常敵.png',
-        flying: '飛行敵.png',
         ranged: '弓敵.png',
         defense: '盾敵.png',
         large: '大型敵.png',
@@ -709,8 +707,6 @@ class Enemy {
         this.isAttacking = false;
         this.stunTimer = 0;
         this.dead = false;
-        this.flying = this.data.flying;
-        this.groundY = y;
         this.resistances = {};
         this.knockbackTimer = 0;
         this.knockbackDir = 1;
@@ -753,12 +749,7 @@ class Enemy {
                 if (Math.abs(dist) < attackRange && !this.isAttacking && this.attackCooldown <= 0) {
                     this.startAttack();
                 } else if (!this.isAttacking) {
-                    if (this.flying) {
-                        this.x += Math.sign(dist) * Math.abs(this.vx) * 0.5;
-                        this.y = this.groundY + Math.sin(this.animTimer * 3) * 25;
-                    } else {
-                        this.x += Math.sign(dist) * Math.abs(this.vx);
-                    }
+                    this.x += Math.sign(dist) * Math.abs(this.vx);
                 }
             }
         }
@@ -905,7 +896,6 @@ class StageManager {
     spawnWave() {
         const mod = this.getStageMod();
         const types = ['normal'];
-        if (this.stage >= 1) types.push('flying');
         if (this.stage >= 2) types.push('ranged');
         if (this.stage >= 2) types.push('suicide');
         if (this.stage >= 3) types.push('defense');
@@ -919,7 +909,7 @@ class StageManager {
             const x = fromLeft
                 ? -60 - Math.random() * 150
                 : CONSTANTS.CANVAS_WIDTH + 60 + Math.random() * 150;
-            const y = ENEMY_TYPES[type].flying ? CONSTANTS.GROUND_Y - 80 - Math.random() * 40 : CONSTANTS.GROUND_Y;
+            const y = CONSTANTS.GROUND_Y;
             this.enemies.push(new Enemy(type, x, y, mod));
         }
     }
@@ -1204,13 +1194,6 @@ class Renderer {
             ctx.arc(x, py + 18, 11, 0, Math.PI * 2);
             ctx.fill();
 
-            // Eyes
-            ctx.fillStyle = '#222';
-            const eyeDir = p.facing > 0 ? 4 : -4;
-            ctx.beginPath();
-            ctx.arc(x + eyeDir, py + 16, 2, 0, Math.PI * 2);
-            ctx.fill();
-
             // Hair
             ctx.fillStyle = p.char.color;
             ctx.beginPath();
@@ -1322,12 +1305,10 @@ class Renderer {
         const s = e.data.size;
 
         // Shadow
-        if (!e.flying) {
-            ctx.fillStyle = 'rgba(0,0,0,0.2)';
-            ctx.beginPath();
-            ctx.ellipse(x, y + 2, s/2, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.beginPath();
+        ctx.ellipse(x, y + 2, s/2, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
 
         const spriteFile = IMAGE_MANIFEST.enemySprites[e.type];
         const sprite = images && images[spriteFile];
@@ -1362,21 +1343,6 @@ class Renderer {
                 ctx.quadraticCurveTo(x, y + 5, x - s/2, y);
                 ctx.closePath();
                 ctx.fill();
-            } else if (e.type === 'flying') {
-                ctx.beginPath();
-                ctx.ellipse(x, y - s/2, s/2, s/3, 0, 0, Math.PI * 2);
-                ctx.fill();
-                const wingFlap = Math.sin(Date.now() * 0.01) * 0.3;
-                ctx.beginPath();
-                ctx.moveTo(x - s/2, y - s/2);
-                ctx.lineTo(x - s, y - s + wingFlap * s);
-                ctx.lineTo(x - s/2, y - s/2 + 5);
-                ctx.fill();
-                ctx.beginPath();
-                ctx.moveTo(x + s/2, y - s/2);
-                ctx.lineTo(x + s, y - s + wingFlap * s);
-                ctx.lineTo(x + s/2, y - s/2 + 5);
-                ctx.fill();
             } else if (e.type === 'defense') {
                 ctx.fillRect(x - s/2, y - s, s, s);
                 ctx.fillStyle = 'rgba(255,255,255,0.2)';
@@ -1395,18 +1361,6 @@ class Renderer {
 
             ctx.shadowBlur = 0;
         }
-
-        // Eyes
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(x - 4, y - s/2 - 3, 3, 0, Math.PI * 2);
-        ctx.arc(x + 4, y - s/2 - 3, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        ctx.arc(x - 4, y - s/2 - 3, 1.5, 0, Math.PI * 2);
-        ctx.arc(x + 4, y - s/2 - 3, 1.5, 0, Math.PI * 2);
-        ctx.fill();
 
         // Stun indicator
         if (e.stunTimer > 0) {
