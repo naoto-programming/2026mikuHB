@@ -305,6 +305,13 @@ class AudioSystem {
 // ============================================================
 // Rhythm System
 // ============================================================
+const BURST_PATTERNS = [
+    [0, 1, 2, 3],
+    [0, 0.5, 1.5, 2.5],
+    [0, 1, 1.5, 3],
+    [0, 2, 2.5, 3],
+];
+
 class RhythmSystem {
     constructor(audio) {
         this.audio = audio;
@@ -327,34 +334,30 @@ class RhythmSystem {
     startSwordBurst(beats) {
         this.swordBurstActive = true;
         this.swordBurstStartBeat = Math.ceil(this.audio.getCurrentBeat());
-        this.swordBurstLength = beats;
-        this.swordNotes = [];
-        for (let i = 0; i < beats; i++) {
-            this.swordNotes.push({
-                id: this.noteId++,
-                beat: this.swordBurstStartBeat + i,
-                type: 'sword',
-                hit: false,
-                missed: false,
-            });
-        }
+        const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
+        this.swordBurstLength = pattern[pattern.length - 1] + 1;
+        this.swordNotes = pattern.map(offset => ({
+            id: this.noteId++,
+            beat: this.swordBurstStartBeat + offset,
+            type: 'sword',
+            hit: false,
+            missed: false,
+        }));
     }
 
     startAbility(beats) {
         this.abilityActive = true;
         this.abilityStartBeat = Math.ceil(this.audio.getCurrentBeat());
-        this.abilityLength = beats;
-        this.abilityNotes = [];
-        for (let i = 0; i < beats; i++) {
-            this.abilityNotes.push({
-                id: this.noteId++,
-                beat: this.abilityStartBeat + i,
-                type: 'ability',
-                hit: false,
-                missed: false,
-                index: i,
-            });
-        }
+        const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
+        this.abilityLength = pattern[pattern.length - 1] + 1;
+        this.abilityNotes = pattern.map((offset, index) => ({
+            id: this.noteId++,
+            beat: this.abilityStartBeat + offset,
+            type: 'ability',
+            hit: false,
+            missed: false,
+            index,
+        }));
     }
 
     update() {
@@ -2258,6 +2261,7 @@ const GameLogic = {
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves,
     IMAGE_MANIFEST, applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
+    BURST_PATTERNS,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;
