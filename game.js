@@ -516,10 +516,13 @@ class RhythmSystem {
         return allNotes.filter(n => {
             const dist = n.beat - currentBeat;
             return dist > -0.5 && dist < visibleBeats && !n.hit;
-        }).map(n => ({
-            ...n,
-            x: 300 + (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * beatInterval),
-        }));
+        }).map(n => {
+            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * beatInterval);
+            return {
+                ...n,
+                x: n.type === 'defend' ? 300 - offset : 300 + offset,
+            };
+        });
     }
 
     reset() {
@@ -839,7 +842,7 @@ class Enemy {
                 this.isAttacking = false;
                 this.attackWarning = false;
                 this.attackCooldown = 2 + Math.random() * 2;
-            } else if (this.attackTimer < 0.6 && !this.attackWarning) {
+            } else if (this.attackTimer < 2.5 && !this.attackWarning) {
                 this.attackWarning = true;
             }
         } else {
@@ -851,7 +854,7 @@ class Enemy {
 
     startAttack() {
         this.isAttacking = true;
-        this.attackTimer = 1.0;
+        this.attackTimer = 2.5;
         this.attackWarning = false;
         this.defendNoteSpawned = false;
         this.state = 'attack';
