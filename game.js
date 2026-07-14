@@ -1190,11 +1190,15 @@ class Renderer {
             ctx.stroke();
         }
 
+        // 拍に連動した縦揺れ量（拍の頭でしゃがみ、拍の半分で最も浮く）
+        const beatPhase = game.audio.isPlaying ? (game.audio.getCurrentBeat() % 1) : 0;
+        const beatBob = Math.sin(beatPhase * Math.PI) * 4;
+
         // Render enemies
-        game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX, game.images));
+        game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX, game.images, beatBob));
 
         // Render players
-        game.players.forEach(p => this.renderPlayer(ctx, p, scrollX, game.images));
+        game.players.forEach(p => this.renderPlayer(ctx, p, scrollX, game.images, beatBob));
 
         // Particles
         this.renderParticles(ctx);
@@ -1287,9 +1291,9 @@ class Renderer {
         }
     }
 
-    renderPlayer(ctx, p, scrollX, images) {
+    renderPlayer(ctx, p, scrollX, images, beatBob) {
         const x = p.x - scrollX;
-        const y = p.y;
+        const y = p.y - (beatBob || 0);
         const onScreen = x > -60 && x < CONSTANTS.CANVAS_WIDTH + 60;
         if (!onScreen) return;
 
@@ -1592,9 +1596,9 @@ class Renderer {
         }
     }
 
-    renderEnemy(ctx, e, scrollX, images) {
+    renderEnemy(ctx, e, scrollX, images, beatBob) {
         const x = e.x - scrollX;
-        const y = e.y;
+        const y = e.y - (e.dead ? 0 : (beatBob || 0));
         const onScreen = x > -80 && x < CONSTANTS.CANVAS_WIDTH + 80;
         if (!onScreen) return;
         if (e.dead && e.knockbackTimer <= 0) return;
