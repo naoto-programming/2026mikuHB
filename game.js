@@ -388,6 +388,10 @@ class RhythmSystem {
         });
     }
 
+    findDefendNoteAtBeat(beat) {
+        return this.defendNotes.find(n => !n.hit && !n.missed && n.beat === beat);
+    }
+
     update() {
         const currentBeat = this.audio.getCurrentBeat();
 
@@ -2210,11 +2214,19 @@ class GameController {
         // Update stage
         this.stage.update(dt, this.players);
 
-        // 敵の攻撃予兆に対して防御ノーツを生成する（実際の攻撃解決タイミングに合わせた拍で発生させる）
+        // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
         this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
-                const beatsUntilResolve = e.attackTimer * (this.audio.bpm / 60);
-                this.rhythm.generateDefendNote(this.audio.getCurrentBeat() + beatsUntilResolve);
+                const currentBeat = this.audio.getCurrentBeat();
+                const beatInterval = 60 / this.audio.bpm;
+                const rawTargetBeat = currentBeat + e.attackTimer * (this.audio.bpm / 60);
+                const quantizedBeat = Math.max(Math.round(rawTargetBeat), Math.ceil(currentBeat));
+
+                if (!this.rhythm.findDefendNoteAtBeat(quantizedBeat)) {
+                    this.rhythm.generateDefendNote(quantizedBeat);
+                }
+
+                e.attackTimer = (quantizedBeat - currentBeat) * beatInterval;
                 e.defendNoteSpawned = true;
             }
         });
