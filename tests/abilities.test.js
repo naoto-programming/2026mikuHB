@@ -18,15 +18,25 @@ function makePlayer(charId) {
 {
     const player = makePlayer('swordsman');
     const enemies = [new Enemy('normal', 0, 0, 1), new Enemy('normal', 0, 0, 1)];
-    const outcome = applyAbility('swordsman', 1, player, enemies);
+    const outcome = applyAbility('swordsman', 1, player, enemies, 0);
     if (outcome.hits.length !== 2) throw new Error('swordsman ability should hit all alive enemies');
+}
+
+// 剣士: 範囲外の敵にはヒットしない
+{
+    const player = makePlayer('swordsman');
+    const near = new Enemy('normal', 100, 0, 1);
+    const far = new Enemy('normal', 1000, 0, 1);
+    const outcome = applyAbility('swordsman', 1, player, [near, far], 100);
+    if (outcome.hits.length !== 1) throw new Error('swordsman ability should only hit enemies within range, got ' + outcome.hits.length);
+    if (outcome.hits[0].enemy !== near) throw new Error('swordsman ability hit the wrong enemy');
 }
 
 // 弓士: 最大5体まで
 {
     const player = makePlayer('archer');
     const enemies = Array.from({ length: 8 }, () => new Enemy('normal', 0, 0, 1));
-    const outcome = applyAbility('archer', 1, player, enemies);
+    const outcome = applyAbility('archer', 1, player, enemies, 0);
     if (outcome.hits.length !== 5) throw new Error('archer ability should cap at 5 targets, got ' + outcome.hits.length);
 }
 
@@ -34,7 +44,7 @@ function makePlayer(charId) {
 {
     const player = makePlayer('thief');
     const enemies = [new Enemy('normal', 0, 0, 1)];
-    const outcome = applyAbility('thief', 1, player, enemies);
+    const outcome = applyAbility('thief', 1, player, enemies, 0);
     if (outcome.hits.length !== 0) throw new Error('thief ability should not deal direct damage');
     if (!outcome.buff || outcome.buff.type !== 'haste') throw new Error('thief ability should grant a haste buff');
 }
@@ -43,7 +53,7 @@ function makePlayer(charId) {
 {
     const player = makePlayer('fighter');
     const target = new Enemy('large', 0, 0, 1);
-    const outcome = applyAbility('fighter', 1, player, [target]);
+    const outcome = applyAbility('fighter', 1, player, [target], 0);
     if (outcome.hits.length < 2) throw new Error('fighter ability should hit the same target multiple times');
     if (outcome.hits.some(h => h.enemy !== target)) throw new Error('fighter ability should only hit the single target');
 }
@@ -53,7 +63,7 @@ function makePlayer(charId) {
     const player = makePlayer('beast');
     const weak = new Enemy('normal', 0, 0, 1);
     const strong = new Enemy('large', 0, 0, 1);
-    const outcome = applyAbility('beast', 1, player, [weak, strong]);
+    const outcome = applyAbility('beast', 1, player, [weak, strong], 0);
     if (outcome.hits.length !== 1) throw new Error('beast ability should hit exactly one target');
     if (outcome.hits[0].enemy !== strong) throw new Error('beast ability should target the highest-HP enemy');
 }
@@ -62,7 +72,7 @@ function makePlayer(charId) {
 {
     const player = makePlayer('swordsman');
     const enemies = [new Enemy('normal', 0, 0, 1)];
-    const outcome = applyAbility('swordsman', 0, player, enemies);
+    const outcome = applyAbility('swordsman', 0, player, enemies, 0);
     if (outcome.hits[0].dmg <= 0) throw new Error('all-miss ability should still deal reduced (non-zero) damage');
 }
 

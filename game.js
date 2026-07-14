@@ -505,9 +505,10 @@ class RhythmSystem {
 // function declaration inside a direct eval leaks into the caller's scope,
 // which then collides with the test's `const { applyAbility } = ...`
 // destructure of the same name ("Can't create duplicate variable in eval").
-const applyAbility = function(charId, ratio, player, enemies) {
+const applyAbility = function(charId, ratio, player, enemies, playerX) {
     const power = 0.4 + ratio * 0.6; // 全Miss:40%, 全成功:100%
     const alive = enemies.filter(e => !e.dead);
+    const nearby = alive.filter(e => Math.abs(e.x - playerX) < 250);
     const result = { charId, power, hits: [], buff: null };
 
     function hit(enemy, dmg) {
@@ -517,7 +518,7 @@ const applyAbility = function(charId, ratio, player, enemies) {
 
     switch (charId) {
         case 'swordsman':
-            alive.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
+            nearby.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
             break;
         case 'archer':
             alive.slice(0, 5).forEach(e => hit(e, Math.floor(14 * player.upgrades.ability * power)));
@@ -540,7 +541,7 @@ const applyAbility = function(charId, ratio, player, enemies) {
             break;
         }
         case 'mage':
-            alive.forEach(e => hit(e, Math.floor(45 * player.upgrades.ability * power)));
+            nearby.forEach(e => hit(e, Math.floor(45 * player.upgrades.ability * power)));
             break;
         default:
             alive.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
@@ -2123,7 +2124,7 @@ class GameController {
         const abilityResult = this.rhythm.update();
         if (abilityResult && abilityResult.type === 'ability_complete') {
             const ratio = abilityResult.hitCount / abilityResult.total;
-            const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies);
+            const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
 
             outcome.hits.forEach(({ enemy, dmg }) => {
                 this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
