@@ -39,8 +39,13 @@
             </div>
 
             <div class="tutorial-box" id="tutorialBox">
-                <span style="color:#ff6b35">Z</span> 剣攻撃 | <span style="color:#4a90d9">X</span> 能力
+                <span style="color:#ff6b35">R</span> 剣攻撃 | <span style="color:#4a90d9">O</span> 能力 | <span style="color:#e74c3c">R+O</span> 防御
             </div>
+        </div>
+        <div id="tapControls" class="hidden">
+            <button class="tap-btn tap-attack" onclick="Game.tapAttack()">攻撃</button>
+            <button class="tap-btn tap-ability" onclick="Game.tapAbility()">能力</button>
+            <button class="tap-btn tap-defend" onclick="Game.tapDefend()">防御</button>
         </div>
 
         <div class="connection-status hidden" id="connStatus">OFFLINE</div>
@@ -124,8 +129,9 @@
             <h2>遊び方</h2>
             <div class="howto-text">
                 <p><strong>基本操作:</strong></p>
-                <p>• <strong>Zキー</strong> - 剣攻撃（リズムに合わせて）</p>
-                <p>• <strong>Xキー</strong> - 固有能力発動</p>
+                <p>• <strong>Rキー</strong> - 剣攻撃（リズムに合わせて）</p>
+                <p>• <strong>Oキー</strong> - 固有能力発動</p>
+                <p>• <strong>R+O同時押し</strong> - 防御（カウンター/回避）</p>
                 <p><strong>リズムシステム:</strong></p>
                 <p>BGMの拍に合わせてノーツが流れてきます。タイミングよくキーを押して攻撃！</p>
                 <p>Perfect > Great > Good > Miss の判定があります。</p>

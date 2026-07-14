@@ -1738,8 +1738,8 @@ class GameController {
         this.selectedChar = 'swordsman';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
-        this.input = { z: false, x: false };
-        this.lastInput = { z: false, x: false };
+        this.input = { r: false, o: false };
+        this.lastInput = { r: false, o: false };
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -1768,21 +1768,27 @@ class GameController {
             if (this.state !== 'playing') return;
 
             switch(e.key.toLowerCase()) {
-                case 'z': case 'j':
-                    if (!this.lastInput.z) this.handleSwordAttack();
-                    this.input.z = true;
+                case 'r':
+                    if (!this.lastInput.r) {
+                        if (this.input.o) this.handleDefend();
+                        else this.handleSwordAttack();
+                    }
+                    this.input.r = true;
                     break;
-                case 'x': case 'k':
-                    if (!this.lastInput.x) this.handleAbility();
-                    this.input.x = true;
+                case 'o':
+                    if (!this.lastInput.o) {
+                        if (this.input.r) this.handleDefend();
+                        else this.handleAbility();
+                    }
+                    this.input.o = true;
                     break;
             }
         });
 
         window.addEventListener('keyup', (e) => {
             switch(e.key.toLowerCase()) {
-                case 'z': case 'j': this.input.z = false; break;
-                case 'x': case 'k': this.input.x = false; break;
+                case 'r': this.input.r = false; break;
+                case 'o': this.input.o = false; break;
             }
         });
     }
@@ -1856,6 +1862,7 @@ class GameController {
         document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
         document.getElementById('hud').classList.add('hidden');
         document.getElementById('bottomHud').classList.add('hidden');
+        document.getElementById('tapControls').classList.add('hidden');
     }
 
     // ==================== Game Flow ====================
@@ -1926,6 +1933,7 @@ class GameController {
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
         document.getElementById('bottomHud').classList.remove('hidden');
+        document.getElementById('tapControls').classList.remove('hidden');
 
         this.rhythm.reset();
         this.gameTime = 0;
@@ -2017,6 +2025,10 @@ class GameController {
         this.rhythm.checkInput('ability');
     }
 
+    tapAttack() { this.handleSwordAttack(); }
+    tapAbility() { this.handleAbility(); }
+    tapDefend() { this.handleDefend(); }
+
     checkCollision(a, b) {
         return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
     }
@@ -2087,8 +2099,8 @@ class GameController {
         this.renderer.render(this);
 
         // Update last input
-        this.lastInput.z = this.input.z;
-        this.lastInput.x = this.input.x;
+        this.lastInput.r = this.input.r;
+        this.lastInput.o = this.input.o;
 
         requestAnimationFrame((t) => this.loop(t));
     }
@@ -2253,6 +2265,9 @@ if (typeof window !== 'undefined') {
         joinHost: () => game.joinHost(),
         startMultiplayer: () => game.startMultiplayer(),
         restart: () => game.restart(),
+        tapAttack: () => game.tapAttack(),
+        tapAbility: () => game.tapAbility(),
+        tapDefend: () => game.tapDefend(),
     };
 }
 
