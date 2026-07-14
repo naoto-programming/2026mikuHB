@@ -625,18 +625,20 @@ class Player {
                 if (dist < nearestDist) { nearestDist = dist; nearest = e; }
             });
 
+            const centerX = scrollX + CONSTANTS.CANVAS_WIDTH / 2;
+            const attackRange = this.getAttackRange();
+            let targetX = centerX;
+            if (nearest && nearestDist < attackRange * 4) {
+                targetX = this.x + Math.sign(nearest.x - this.x) * attackRange * 0.5;
+            }
             if (nearest) {
-                const dist = nearest.x - this.x;
-                const holdRange = this.getAttackRange() * 0.6;
-                if (Math.abs(dist) > holdRange) {
-                    this.vx = Math.sign(dist) * CONSTANTS.PLAYER_SPEED * this.char.speed;
-                    this.facing = Math.sign(dist) || this.facing;
-                    this.state = 'run';
-                } else {
-                    this.vx *= 0.8;
-                    this.facing = Math.sign(dist) || this.facing;
-                    this.state = 'idle';
-                }
+                this.facing = Math.sign(nearest.x - this.x) || this.facing;
+            }
+
+            const toTarget = targetX - this.x;
+            if (Math.abs(toTarget) > 10) {
+                this.vx = Math.sign(toTarget) * CONSTANTS.PLAYER_SPEED * this.char.speed * 0.6;
+                this.state = 'run';
             } else {
                 this.vx *= 0.8;
                 this.state = 'idle';
