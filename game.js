@@ -321,6 +321,7 @@ class AudioSystem {
 // ============================================================
 // Rhythm System
 // ============================================================
+const LOOKAHEAD_BEATS = 4;
 const BURST_PATTERNS = [
     [0, 1, 2, 3],
     [0, 0.5, 1.5, 2.5],
@@ -350,7 +351,7 @@ class RhythmSystem {
 
     startSwordBurst(beats) {
         this.swordBurstActive = true;
-        this.swordBurstStartBeat = Math.ceil(this.audio.getCurrentBeat());
+        this.swordBurstStartBeat = Math.ceil(this.audio.getCurrentBeat()) + LOOKAHEAD_BEATS;
         const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
         this.swordBurstLength = pattern[pattern.length - 1] + 1;
         this.swordNotes = pattern.map(offset => ({
@@ -364,7 +365,7 @@ class RhythmSystem {
 
     startAbility(beats) {
         this.abilityActive = true;
-        this.abilityStartBeat = Math.ceil(this.audio.getCurrentBeat());
+        this.abilityStartBeat = Math.ceil(this.audio.getCurrentBeat()) + LOOKAHEAD_BEATS;
         const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
         this.abilityLength = pattern[pattern.length - 1] + 1;
         this.abilityNotes = pattern.map((offset, index) => ({
@@ -495,7 +496,7 @@ class RhythmSystem {
     getNotesForRender() {
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
-        const visibleBeats = 4;
+        const visibleBeats = LOOKAHEAD_BEATS + 1;
 
         const allNotes = [...this.swordNotes, ...this.defendNotes];
         if (this.abilityActive) {
@@ -2380,7 +2381,7 @@ const GameLogic = {
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves,
     IMAGE_MANIFEST, applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
-    BURST_PATTERNS,
+    BURST_PATTERNS, LOOKAHEAD_BEATS,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;

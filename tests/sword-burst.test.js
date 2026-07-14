@@ -10,10 +10,11 @@ const { RhythmSystem, AudioSystem } = globalThis.GameLogic;
 const audio = new AudioSystem();
 audio.bpm = 120;
 audio.isPlaying = true;
-// Minimal Web Audio API stub: with startSwordBurst/checkInput implemented
-// correctly, checkInput('sword') below lands exactly on beat 0 (currentBeat
-// is 0 in this stub), which is a genuine Perfect hit -- not a miss. A real
-// hit calls AudioSystem.playHitSound(), which calls into ctx.createOscillator
+// Minimal Web Audio API stub. Notes are now scheduled LOOKAHEAD_BEATS ahead
+// of the current beat, so checkInput('sword') below (currentBeat is 0 in
+// this stub) lands far from the first note's beat and legitimately misses
+// (see the null check below) -- that's expected, not a bug. A real hit
+// calls AudioSystem.playHitSound(), which calls into ctx.createOscillator
 // etc. These no-op stubs let that code path run without touching real Web
 // Audio (unavailable under osascript -l JavaScript).
 function audioNodeStub() {
