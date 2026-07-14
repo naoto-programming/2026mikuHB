@@ -1772,12 +1772,6 @@ class Renderer {
                 const swordImg = game.images && game.images[IMAGE_MANIFEST.weapons.swordIcon];
                 if (swordImg) {
                     ctx.drawImage(swordImg, nx - size * 0.35, ny - size * 0.35, size * 0.7, size * 0.7);
-                } else {
-                    ctx.fillStyle = '#fff';
-                    ctx.font = 'bold 14px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText('R', nx, ny);
                 }
             } else if (note.type === 'ability') {
                 ctx.fillStyle = '#4a90d9';
@@ -1787,11 +1781,6 @@ class Renderer {
                 ctx.arc(nx, ny, size/2, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
-                ctx.fillStyle = '#fff';
-                ctx.font = 'bold 14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('O', nx, ny);
             } else if (note.type === 'defend') {
                 ctx.fillStyle = '#e74c3c';
                 ctx.shadowColor = '#e74c3c';
@@ -1804,11 +1793,6 @@ class Renderer {
                 ctx.closePath();
                 ctx.fill();
                 ctx.shadowBlur = 0;
-                ctx.fillStyle = '#fff';
-                ctx.font = 'bold 12px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('R+O', nx, ny);
             }
         });
 
