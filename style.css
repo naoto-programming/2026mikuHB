@@ -202,28 +202,6 @@
             width: 600px;
             max-width: 92%;
         }
-        #tapControls {
-            position: absolute;
-            right: 15px;
-            bottom: 15%;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            z-index: 16;
-        }
-        .tap-btn {
-            width: 84px;
-            height: 84px;
-            border-radius: 50%;
-            border: 2px solid #ff6b35;
-            background: rgba(0,0,0,0.6);
-            color: #ff6b35;
-            font-size: 0.9em;
-            font-family: inherit;
-            touch-action: manipulation;
-        }
-        .tap-btn:active { background: rgba(255,107,53,0.4); }
-        .tap-defend { border-color: #e74c3c; color: #e74c3c; }
         .combo-display {
             text-align: center;
             pointer-events: none;

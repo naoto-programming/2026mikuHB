@@ -503,6 +503,33 @@ class RhythmSystem {
         }
     }
 
+    checkInputAny() {
+        const currentBeat = this.audio.getCurrentBeat();
+        const beatInterval = 60 / this.audio.bpm;
+        const pools = [
+            { type: 'sword', notes: this.swordNotes },
+            { type: 'ability', notes: this.abilityActive ? this.abilityNotes : [] },
+            { type: 'defend', notes: this.defendNotes },
+        ];
+
+        let bestType = null;
+        let bestDist = Infinity;
+        pools.forEach(({ type, notes }) => {
+            notes.forEach(note => {
+                if (!note.hit && !note.missed) {
+                    const dist = Math.abs(note.beat - currentBeat) * beatInterval;
+                    if (dist < bestDist && dist < CONSTANTS.GOOD_WINDOW) {
+                        bestDist = dist;
+                        bestType = type;
+                    }
+                }
+            });
+        });
+
+        if (!bestType) return null;
+        return this.checkInput(bestType);
+    }
+
     getNotesForRender() {
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
@@ -1820,8 +1847,8 @@ class GameController {
         this.selectedChar = 'swordsman';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
-        this.input = { r: false, o: false };
-        this.lastInput = { r: false, o: false };
+        this.input = { any: false };
+        this.lastInput = { any: false };
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -1848,30 +1875,17 @@ class GameController {
     setupInput() {
         window.addEventListener('keydown', (e) => {
             if (this.state !== 'playing') return;
-
-            switch(e.key.toLowerCase()) {
-                case 'r':
-                    if (!this.lastInput.r) {
-                        if (this.input.o) this.handleDefend();
-                        else this.handleSwordAttack();
-                    }
-                    this.input.r = true;
-                    break;
-                case 'o':
-                    if (!this.lastInput.o) {
-                        if (this.input.r) this.handleDefend();
-                        else this.handleAbility();
-                    }
-                    this.input.o = true;
-                    break;
-            }
+            if (!this.lastInput.any) this.handleUniversalInput();
+            this.input.any = true;
         });
 
-        window.addEventListener('keyup', (e) => {
-            switch(e.key.toLowerCase()) {
-                case 'r': this.input.r = false; break;
-                case 'o': this.input.o = false; break;
-            }
+        window.addEventListener('keyup', () => {
+            this.input.any = false;
+        });
+
+        document.getElementById('gameContainer').addEventListener('pointerdown', () => {
+            if (this.state !== 'playing') return;
+            this.handleUniversalInput();
         });
     }
 
@@ -1944,7 +1958,6 @@ class GameController {
         document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
         document.getElementById('hud').classList.add('hidden');
         document.getElementById('bottomHud').classList.add('hidden');
-        document.getElementById('tapControls').classList.add('hidden');
     }
 
     // ==================== Game Flow ====================
@@ -2015,7 +2028,6 @@ class GameController {
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
         document.getElementById('bottomHud').classList.remove('hidden');
-        document.getElementById('tapControls').classList.remove('hidden');
 
         this.rhythm.reset();
         this.gameTime = 0;
@@ -2054,10 +2066,22 @@ class GameController {
 
     // ==================== Input Handling ====================
 
-    handleSwordAttack() {
-        const result = this.rhythm.checkInput('sword');
-        if (!result) return;
+    handleUniversalInput() {
+        const result = this.rhythm.checkInputAny();
+        if (!result || !result.note) return;
 
+        const noteType = result.note.type;
+        if (noteType === 'sword') {
+            this.resolveSwordHit(result);
+        } else if (noteType === 'defend') {
+            this.localPlayer.defend();
+            this.audio.playCounterSound();
+        }
+        // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
+        // バースト完了時の一括効果はupdate()側のability_complete処理で変更なく発動する。
+    }
+
+    resolveSwordHit(result) {
         this.localPlayer.attack();
         this.audio.playSwordSound();
 
@@ -2076,7 +2100,7 @@ class GameController {
 
                     // Visual effects
                     this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, e.data.color, 10);
-                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, 
+                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size,
                         `${actualDmg}`, '#fff', 18);
 
                     // Lifesteal
@@ -2099,25 +2123,7 @@ class GameController {
                 this.renderer.shake(3, 0.1);
             }
         }
-
-        this.lastInput.z = true;
     }
-
-    handleAbility() {
-        this.rhythm.checkInput('ability');
-    }
-
-    handleDefend() {
-        const result = this.rhythm.checkInput('defend');
-        if (!result) return;
-
-        this.localPlayer.defend();
-        this.audio.playCounterSound();
-    }
-
-    tapAttack() { this.handleSwordAttack(); }
-    tapAbility() { this.handleAbility(); }
-    tapDefend() { this.handleDefend(); }
 
     checkCollision(a, b) {
         return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -2189,8 +2195,7 @@ class GameController {
         this.renderer.render(this);
 
         // Update last input
-        this.lastInput.r = this.input.r;
-        this.lastInput.o = this.input.o;
+        this.lastInput.any = this.input.any;
 
         requestAnimationFrame((t) => this.loop(t));
     }
@@ -2372,9 +2377,6 @@ if (typeof window !== 'undefined') {
         joinHost: () => game.joinHost(),
         startMultiplayer: () => game.startMultiplayer(),
         restart: () => game.restart(),
-        tapAttack: () => game.tapAttack(),
-        tapAbility: () => game.tapAbility(),
-        tapDefend: () => game.tapDefend(),
     };
 }
 
