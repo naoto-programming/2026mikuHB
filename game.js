@@ -47,13 +47,13 @@ const UPGRADES = [
 ];
 
 const ENEMY_TYPES = {
-    normal: { name: 'スライム', hp: 30, atk: 5, speed: 1, size: 30, color: '#2ecc71', score: 10, flying: false, ranged: false, defense: false },
-    ranged: { name: 'ゴブリン射手', hp: 25, atk: 10, speed: 0.8, size: 28, color: '#e67e22', score: 20, flying: false, ranged: true, defense: false, range: 300 },
-    defense: { name: '盾兵', hp: 60, atk: 6, speed: 0.5, size: 35, color: '#34495e', score: 25, flying: false, ranged: false, defense: true, shield: true },
-    large: { name: 'オーガ', hp: 150, atk: 15, speed: 0.6, size: 50, color: '#c0392b', score: 50, flying: false, ranged: false, defense: false, elite: true },
-    elite: { name: 'エリート', hp: 200, atk: 20, speed: 1.2, size: 45, color: '#e74c3c', score: 100, flying: false, ranged: true, defense: true, elite: true },
-    suicide: { name: '自爆兵', hp: 15, atk: 25, speed: 2.5, size: 26, color: '#d35400', score: 20, flying: false, ranged: false, defense: false, suicide: true },
-    healer: { name: 'ヒーラー', hp: 40, atk: 0, speed: 0.7, size: 30, color: '#27ae60', score: 30, flying: false, ranged: true, defense: false, healer: true, range: 320, healAmount: 25 },
+    normal: { name: 'スライム', hp: 30, atk: 5, speed: 1, size: 30, color: '#2ecc71', score: 10, ranged: false, defense: false, counterable: true },
+    ranged: { name: 'ゴブリン射手', hp: 25, atk: 10, speed: 0.8, size: 28, color: '#e67e22', score: 20, ranged: true, defense: false, range: 300, counterable: false },
+    defense: { name: '盾兵', hp: 60, atk: 6, speed: 0.5, size: 35, color: '#34495e', score: 25, ranged: false, defense: true, shield: true, counterable: true },
+    large: { name: 'オーガ', hp: 150, atk: 15, speed: 0.6, size: 50, color: '#c0392b', score: 50, ranged: false, defense: false, elite: true, counterable: true },
+    elite: { name: 'エリート', hp: 200, atk: 20, speed: 1.2, size: 45, color: '#e74c3c', score: 100, ranged: true, defense: true, elite: true, counterable: false },
+    suicide: { name: '自爆兵', hp: 15, atk: 25, speed: 2.5, size: 26, color: '#d35400', score: 20, ranged: false, defense: false, suicide: true, counterable: false },
+    healer: { name: 'ヒーラー', hp: 40, atk: 0, speed: 0.7, size: 30, color: '#27ae60', score: 30, ranged: true, defense: false, healer: true, range: 320, healAmount: 25, counterable: false },
 };
 
 const BGM_TRACKS = [
@@ -254,6 +254,22 @@ class AudioSystem {
         osc.stop(now + 0.3);
     }
 
+    playCounterSound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+    }
+
     playSwordSound() {
         if (!this.ctx) return;
         const now = this.ctx.currentTime;
@@ -329,6 +345,7 @@ class RhythmSystem {
         this.abilityActive = false;
         this.abilityStartBeat = 0;
         this.abilityLength = 0;
+        this.defendNotes = [];
     }
 
     startSwordBurst(beats) {
@@ -360,11 +377,21 @@ class RhythmSystem {
         }));
     }
 
+    generateDefendNote(beat) {
+        this.defendNotes.push({
+            id: this.noteId++,
+            beat: beat,
+            type: 'defend',
+            hit: false,
+            missed: false,
+        });
+    }
+
     update() {
         const currentBeat = this.audio.getCurrentBeat();
 
         // Mark missed notes
-        [...this.swordNotes, ...this.abilityNotes].forEach(note => {
+        [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes].forEach(note => {
             if (!note.hit && !note.missed && currentBeat > note.beat + CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60)) {
                 note.missed = true;
                 if (note.type !== 'ability') {
@@ -401,7 +428,9 @@ class RhythmSystem {
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
 
-        let searchPool = inputType === 'ability' ? this.abilityNotes : this.swordNotes;
+        let searchPool = inputType === 'ability' ? this.abilityNotes
+            : inputType === 'defend' ? this.defendNotes
+            : this.swordNotes;
 
         let nearest = null;
         let nearestDist = Infinity;
@@ -468,7 +497,7 @@ class RhythmSystem {
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = 4;
 
-        const allNotes = [...this.swordNotes];
+        const allNotes = [...this.swordNotes, ...this.defendNotes];
         if (this.abilityActive) {
             allNotes.push(...this.abilityNotes);
         }
@@ -489,6 +518,7 @@ class RhythmSystem {
         this.swordBurstLength = 0;
         this.abilityNotes = [];
         this.abilityActive = false;
+        this.defendNotes = [];
         this.combo = 0;
         this.maxCombo = 0;
         this.score = 0;
@@ -573,6 +603,8 @@ class Player {
         this.attackTimer = 0;
         this.isUsingAbility = false;
         this.abilityTimer = 0;
+        this.isDefending = false;
+        this.defendTimer = 0;
         this.invincible = 0;
         this.animFrame = 0;
         this.animTimer = 0;
@@ -663,6 +695,10 @@ class Player {
             this.abilityTimer -= dt;
             if (this.abilityTimer <= 0) { this.isUsingAbility = false; this.state = 'idle'; }
         }
+        if (this.isDefending) {
+            this.defendTimer -= dt;
+            if (this.defendTimer <= 0) { this.isDefending = false; this.state = 'idle'; }
+        }
     }
 
     attack() {
@@ -675,6 +711,12 @@ class Player {
         this.isUsingAbility = true;
         this.abilityTimer = 0.6;
         this.state = 'ability';
+    }
+
+    defend() {
+        this.isDefending = true;
+        this.defendTimer = 0.5;
+        this.state = 'defend';
     }
 
     takeDamage(dmg) {
@@ -728,6 +770,8 @@ class Enemy {
         this.attackTimer = 0;
         this.attackCooldown = 1.5 + Math.random() * 2;
         this.isAttacking = false;
+        this.attackWarning = false;
+        this.defendNoteSpawned = false;
         this.stunTimer = 0;
         this.dead = false;
         this.resistances = {};
@@ -782,7 +826,10 @@ class Enemy {
             if (this.attackTimer <= 0) {
                 this.executeAttack(players, allEnemies);
                 this.isAttacking = false;
+                this.attackWarning = false;
                 this.attackCooldown = 2 + Math.random() * 2;
+            } else if (this.attackTimer < 0.6 && !this.attackWarning) {
+                this.attackWarning = true;
             }
         } else {
             this.attackCooldown -= dt;
@@ -794,6 +841,8 @@ class Enemy {
     startAttack() {
         this.isAttacking = true;
         this.attackTimer = 1.0;
+        this.attackWarning = false;
+        this.defendNoteSpawned = false;
         this.state = 'attack';
     }
 
@@ -808,7 +857,14 @@ class Enemy {
             if (!p.isAlive()) return;
             const pBox = p.getHitbox();
             if (this.checkCollision(hitbox, pBox)) {
-                p.takeDamage(this.atk);
+                if (p.isDefending) {
+                    if (this.data.counterable) {
+                        this.takeDamage(p.getDamage(p.atk * 3, 'perfect'), 'ability');
+                        this.stunTimer = 1.5;
+                    }
+                } else {
+                    p.takeDamage(this.atk);
+                }
             }
         });
 
@@ -1561,6 +1617,17 @@ class Renderer {
             ctx.fillText('★', x, y - s - 10);
         }
 
+        // Attack warning
+        if (e.attackWarning) {
+            ctx.strokeStyle = e.data.counterable ? '#e74c3c' : '#3498db';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(x, y - s/2, s + 10 + Math.sin(Date.now() * 0.02) * 5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
         // HP bar
         const hpRatio = e.hp / e.data.hp;
         const barW = s + 10;
@@ -1696,7 +1763,7 @@ class Renderer {
                     ctx.font = 'bold 14px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
-                    ctx.fillText('Z', nx, ny);
+                    ctx.fillText('R', nx, ny);
                 }
             } else if (note.type === 'ability') {
                 ctx.fillStyle = '#4a90d9';
@@ -1710,7 +1777,24 @@ class Renderer {
                 ctx.font = 'bold 14px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText('X', nx, ny);
+                ctx.fillText('O', nx, ny);
+            } else if (note.type === 'defend') {
+                ctx.fillStyle = '#e74c3c';
+                ctx.shadowColor = '#e74c3c';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.moveTo(nx, ny - size/2);
+                ctx.lineTo(nx + size/2, ny);
+                ctx.lineTo(nx, ny + size/2);
+                ctx.lineTo(nx - size/2, ny);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('R+O', nx, ny);
             }
         });
 
@@ -2025,6 +2109,14 @@ class GameController {
         this.rhythm.checkInput('ability');
     }
 
+    handleDefend() {
+        const result = this.rhythm.checkInput('defend');
+        if (!result) return;
+
+        this.localPlayer.defend();
+        this.audio.playCounterSound();
+    }
+
     tapAttack() { this.handleSwordAttack(); }
     tapAbility() { this.handleAbility(); }
     tapDefend() { this.handleDefend(); }
@@ -2116,6 +2208,15 @@ class GameController {
 
         // Update stage
         this.stage.update(dt, this.players);
+
+        // 敵の攻撃予兆に対して防御ノーツを生成する（実際の攻撃解決タイミングに合わせた拍で発生させる）
+        this.stage.enemies.forEach(e => {
+            if (e.attackWarning && !e.defendNoteSpawned) {
+                const beatsUntilResolve = e.attackTimer * (this.audio.bpm / 60);
+                this.rhythm.generateDefendNote(this.audio.getCurrentBeat() + beatsUntilResolve);
+                e.defendNoteSpawned = true;
+            }
+        });
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
         if (!this.rhythm.swordBurstActive) {
