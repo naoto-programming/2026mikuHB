@@ -322,6 +322,12 @@ class AudioSystem {
 // Rhythm System
 // ============================================================
 const LOOKAHEAD_BEATS = 4;
+const MEASURE_BEATS = 4;
+
+const snapToMeasureBeat = function(currentBeat, leadBeats) {
+    const earliest = currentBeat + leadBeats;
+    return Math.ceil(earliest / MEASURE_BEATS) * MEASURE_BEATS;
+};
 const BURST_PATTERNS = [
     [0, 1, 2, 3],
     [0, 0.5, 1.5, 2.5],
@@ -351,7 +357,7 @@ class RhythmSystem {
 
     startSwordBurst(beats) {
         this.swordBurstActive = true;
-        this.swordBurstStartBeat = Math.ceil(this.audio.getCurrentBeat()) + LOOKAHEAD_BEATS;
+        this.swordBurstStartBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
         const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
         this.swordBurstLength = pattern[pattern.length - 1] + 1;
         this.swordNotes = pattern.map(offset => ({
@@ -365,7 +371,7 @@ class RhythmSystem {
 
     startAbility(beats) {
         this.abilityActive = true;
-        this.abilityStartBeat = Math.ceil(this.audio.getCurrentBeat()) + LOOKAHEAD_BEATS;
+        this.abilityStartBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
         const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
         this.abilityLength = pattern[pattern.length - 1] + 1;
         this.abilityNotes = pattern.map((offset, index) => ({
@@ -2394,6 +2400,7 @@ const GameLogic = {
     IMAGE_MANIFEST, applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS,
+    MEASURE_BEATS, snapToMeasureBeat,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;
