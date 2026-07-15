@@ -63,6 +63,13 @@ const BGM_TRACKS = [
     { file: '110拍:分.mp3', bpm: 110 },
 ];
 
+const SFX_FILES = {
+    tick: '一拍.mp3',
+    perfectHit: 'パーフェクト.mp3',
+    ability: '能力.mp3',
+    attack: '通常攻撃.mp3',
+};
+
 const bpmFromTrackFilename = function(filename) {
     const match = filename.match(/(\d+)拍/);
     if (!match) throw new Error(`BPMを解析できません: ${filename}`);
@@ -271,42 +278,11 @@ class AudioSystem {
     }
 
     playSwordSound() {
-        if (!this.ctx) return;
-        const now = this.ctx.currentTime;
-        const bufferSize = this.ctx.sampleRate * 0.08;
-        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
-        }
-        const source = this.ctx.createBufferSource();
-        source.buffer = buffer;
-        const gain = this.ctx.createGain();
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.value = 2000;
-        source.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.masterGain);
-        gain.gain.setValueAtTime(0.3, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
-        source.start(now);
+        this.playSfx('attack');
     }
 
     playAbilitySound() {
-        if (!this.ctx) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.frequency.setValueAtTime(400, now);
-        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
-        gain.gain.setValueAtTime(0.2, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-        osc.start(now);
-        osc.stop(now + 0.4);
+        this.playSfx('ability');
     }
 
     playSuccessSound() {
@@ -326,18 +302,24 @@ class AudioSystem {
     }
 
     playMetronomeTick() {
+        this.playSfx('tick');
+    }
+
+    async loadSfx() {
+        for (const key in SFX_FILES) {
+            await this.loadTrack({ file: SFX_FILES[key] });
+        }
+    }
+
+    playSfx(key) {
         if (!this.ctx) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'square';
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.frequency.setValueAtTime(2000, now);
-        gain.gain.setValueAtTime(0.08, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
-        osc.start(now);
-        osc.stop(now + 0.04);
+        const file = SFX_FILES[key];
+        const buffer = this._bufferCache && this._bufferCache[file];
+        if (!buffer) return;
+        const source = this.ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.masterGain);
+        source.start(this.ctx.currentTime);
     }
 
     stop() {
@@ -2084,6 +2066,7 @@ class GameController {
         const buffer = await this.audio.loadTrack(track);
         this.stage.start(buffer.duration);
         this.audio.startBGM(track);
+        this.audio.loadSfx();
 
         // Beat callback for spawning notes
         this.audio.beatCallbacks = [];
@@ -2425,7 +2408,7 @@ if (typeof window !== 'undefined') {
 // ============================================================
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
-    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves,
+    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES,
     IMAGE_MANIFEST, applyAbility,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS,
