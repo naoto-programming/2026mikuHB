@@ -1904,8 +1904,7 @@ class GameController {
         this.selectedChar = 'swordsman';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
-        this.input = { any: false };
-        this.lastInput = { any: false };
+        this.heldKeys = new Set();
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -1932,12 +1931,15 @@ class GameController {
     setupInput() {
         window.addEventListener('keydown', (e) => {
             if (this.state !== 'playing') return;
-            if (!this.lastInput.any) this.handleUniversalInput();
-            this.input.any = true;
+            const key = e.key.toLowerCase();
+            if (!this.heldKeys.has(key)) {
+                this.handleUniversalInput();
+            }
+            this.heldKeys.add(key);
         });
 
-        window.addEventListener('keyup', () => {
-            this.input.any = false;
+        window.addEventListener('keyup', (e) => {
+            this.heldKeys.delete(e.key.toLowerCase());
         });
 
         document.getElementById('gameContainer').addEventListener('pointerdown', () => {
@@ -2268,9 +2270,6 @@ class GameController {
         }
 
         this.renderer.render(this);
-
-        // Update last input
-        this.lastInput.any = this.input.any;
 
         requestAnimationFrame((t) => this.loop(t));
     }
