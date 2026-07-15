@@ -664,6 +664,8 @@ class Player {
         this.animTimer = 0;
         this.state = 'idle';
         this.flashTimer = 0;
+        this.dashTimer = 0;
+        this.dashDir = 1;
 
         this.upgrades = {
             range: 1, atk: 1, speed: 1, perfect: 1,
@@ -703,7 +705,14 @@ class Player {
         if (this.invincible > 0) this.invincible -= dt;
         if (this.flashTimer > 0) this.flashTimer -= dt;
 
-        if (!this.isAttacking && !this.isUsingAbility) {
+        if (this.dashTimer > 0) {
+            this.dashTimer -= dt;
+            this.vx = this.dashDir * CONSTANTS.PLAYER_SPEED * this.char.speed * 3;
+            if (this.dashTimer <= 0) {
+                this.dashTimer = 0;
+                this.vx = 0;
+            }
+        } else if (!this.isAttacking && !this.isUsingAbility) {
             let nearest = null, nearestDist = Infinity;
             (enemies || []).forEach(e => {
                 if (e.dead) return;
@@ -771,6 +780,11 @@ class Player {
         this.isDefending = true;
         this.defendTimer = 0.5;
         this.state = 'defend';
+    }
+
+    perfectDash(dir) {
+        this.dashTimer = 0.15;
+        this.dashDir = dir || this.facing;
     }
 
     takeDamage(dmg) {
@@ -1288,6 +1302,19 @@ class Renderer {
         ctx.beginPath();
         ctx.ellipse(x, y + 2, 18, 4, 0, 0, Math.PI * 2);
         ctx.fill();
+
+        // Perfect dash glow
+        if (p.dashTimer > 0) {
+            ctx.save();
+            ctx.globalAlpha = 0.6;
+            ctx.fillStyle = '#ffd700';
+            ctx.shadowColor = '#ffd700';
+            ctx.shadowBlur = 25;
+            ctx.beginPath();
+            ctx.arc(x, y - 30, 35, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
 
         // Flash when hit
         if (p.flashTimer > 0) {
@@ -2099,7 +2126,19 @@ class GameController {
         // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
         // バースト完了時の一括効果はupdate()側のability_complete処理で変更なく発動する。
 
-        if (result.judge !== 'miss') {
+        if (noteType === 'sword' && result.judge === 'perfect') {
+            let nearestEnemy = null, nearestDist = Infinity;
+            this.stage.enemies.forEach(e => {
+                if (e.dead) return;
+                const dist = Math.abs(e.x - this.localPlayer.x);
+                if (dist < nearestDist) { nearestDist = dist; nearestEnemy = e; }
+            });
+            const dir = nearestEnemy
+                ? (Math.sign(nearestEnemy.x - this.localPlayer.x) || this.localPlayer.facing)
+                : this.localPlayer.facing;
+            this.localPlayer.perfectDash(dir);
+            this.audio.playSfx('perfectHit');
+        } else if (result.judge !== 'miss') {
             this.audio.playSuccessSound();
         }
     }
