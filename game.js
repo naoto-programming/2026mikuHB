@@ -845,6 +845,9 @@ class Enemy {
         this.resistances = {};
         this.knockbackTimer = 0;
         this.knockbackDir = 1;
+        this.spawnDelay = 0;
+        this.hueShift = 0;
+        this.brightnessShift = 1;
 
         if (Math.random() < 0.25 * stageMod) {
             const types = ['sword', 'ability'];
@@ -853,6 +856,10 @@ class Enemy {
     }
 
     update(dt, players, scrollX, allEnemies) {
+        if (this.spawnDelay > 0) {
+            this.spawnDelay -= dt;
+            return;
+        }
         if (this.dead) {
             if (this.knockbackTimer > 0) {
                 this.knockbackTimer -= dt;
@@ -1056,9 +1063,12 @@ class StageManager {
             const x = fromLeft
                 ? -60 - Math.random() * 150
                 : CONSTANTS.CANVAS_WIDTH + 60 + Math.random() * 150;
-            const y = CONSTANTS.GROUND_Y;
+            const y = CONSTANTS.GROUND_Y + (Math.random() - 0.5) * 30;
             const enemy = new Enemy(type, x, y, mod);
             enemy.atk *= 0.35;
+            enemy.spawnDelay = Math.random() * 3;
+            enemy.hueShift = (Math.random() - 0.5) * 40;
+            enemy.brightnessShift = 0.85 + Math.random() * 0.3;
             this.enemies.push(enemy);
         }
     }
@@ -1610,6 +1620,7 @@ class Renderer {
         const y = e.y - (e.dead ? 0 : (beatBob || 0));
         const onScreen = x > -80 && x < CONSTANTS.CANVAS_WIDTH + 80;
         if (!onScreen) return;
+        if (e.spawnDelay > 0) return;
         if (e.dead && e.knockbackTimer <= 0) return;
 
         if (e.dead && e.knockbackTimer > 0) {
@@ -1653,6 +1664,8 @@ class Renderer {
                 ctx.filter = 'saturate(2.2) hue-rotate(-20deg) brightness(0.9)';
                 ctx.shadowColor = '#ff3b30';
                 ctx.shadowBlur = 20;
+            } else {
+                ctx.filter = `hue-rotate(${e.hueShift || 0}deg) brightness(${e.brightnessShift || 1})`;
             }
             ctx.translate(x, y);
             ctx.scale(-1, 1);
