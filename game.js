@@ -669,6 +669,7 @@ class Player {
         this.flashTimer = 0;
         this.dashTimer = 0;
         this.dashDir = 1;
+        this.pulseTimer = 0;
 
         this.upgrades = {
             range: 1, atk: 1, speed: 1, perfect: 1,
@@ -707,6 +708,10 @@ class Player {
         this.animTimer += dt;
         if (this.invincible > 0) this.invincible -= dt;
         if (this.flashTimer > 0) this.flashTimer -= dt;
+        if (this.pulseTimer > 0) {
+            this.pulseTimer -= dt;
+            if (this.pulseTimer < 0) this.pulseTimer = 0;
+        }
 
         if (this.dashTimer > 0) {
             this.dashTimer -= dt;
@@ -715,7 +720,7 @@ class Player {
                 this.dashTimer = 0;
                 this.vx = 0;
             }
-        } else if (!this.isAttacking && !this.isUsingAbility) {
+        } else if (!this.isAttacking && !this.isUsingAbility && this.pulseTimer <= 0) {
             let nearest = null, nearestDist = Infinity;
             (enemies || []).forEach(e => {
                 if (e.dead) return;
@@ -788,6 +793,10 @@ class Player {
     perfectDash(dir) {
         this.dashTimer = 0.15;
         this.dashDir = dir || this.facing;
+    }
+
+    perfectPulse() {
+        this.pulseTimer = 0.2;
     }
 
     takeDamage(dmg) {
@@ -1329,6 +1338,22 @@ class Renderer {
             ctx.beginPath();
             ctx.arc(x, y - 30, 35, 0, Math.PI * 2);
             ctx.fill();
+            ctx.restore();
+        }
+
+        // Perfect pulse glow (ranged characters)
+        if (p.pulseTimer > 0) {
+            const t = 1 - (p.pulseTimer / 0.2);
+            const ringRadius = 20 + Math.sin(t * Math.PI) * 25;
+            ctx.save();
+            ctx.globalAlpha = 0.7 * (1 - t);
+            ctx.strokeStyle = '#66d9ff';
+            ctx.shadowColor = '#66d9ff';
+            ctx.shadowBlur = 20;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(x, y - 30, ringRadius, 0, Math.PI * 2);
+            ctx.stroke();
             ctx.restore();
         }
 
@@ -2148,16 +2173,20 @@ class GameController {
         // バースト完了時の一括効果はupdate()側のability_complete処理で変更なく発動する。
 
         if (noteType === 'sword' && result.judge === 'perfect') {
-            let nearestEnemy = null, nearestDist = Infinity;
-            this.stage.enemies.forEach(e => {
-                if (e.dead) return;
-                const dist = Math.abs(e.x - this.localPlayer.x);
-                if (dist < nearestDist) { nearestDist = dist; nearestEnemy = e; }
-            });
-            const dir = nearestEnemy
-                ? (Math.sign(nearestEnemy.x - this.localPlayer.x) || this.localPlayer.facing)
-                : this.localPlayer.facing;
-            this.localPlayer.perfectDash(dir);
+            if (this.localPlayer.char.rangeMultiplier > 1) {
+                this.localPlayer.perfectPulse();
+            } else {
+                let nearestEnemy = null, nearestDist = Infinity;
+                this.stage.enemies.forEach(e => {
+                    if (e.dead) return;
+                    const dist = Math.abs(e.x - this.localPlayer.x);
+                    if (dist < nearestDist) { nearestDist = dist; nearestEnemy = e; }
+                });
+                const dir = nearestEnemy
+                    ? (Math.sign(nearestEnemy.x - this.localPlayer.x) || this.localPlayer.facing)
+                    : this.localPlayer.facing;
+                this.localPlayer.perfectDash(dir);
+            }
             this.audio.playSfx('perfectHit');
         } else if (result.judge !== 'miss') {
             this.audio.playSuccessSound();
