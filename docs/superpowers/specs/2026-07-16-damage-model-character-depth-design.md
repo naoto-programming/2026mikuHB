@@ -74,7 +74,7 @@ const GIMMICK_NORMAL_SECONDS = 20;
 const GIMMICK_SPECIAL_SECONDS = 8;
 ```
 
-`Player`に`gimmickTimer`(現フェーズの残り秒数、初期値`GIMMICK_NORMAL_SECONDS`)、`gimmickPhase`(`'normal'`または`'special'`、初期`'normal'`)、`gimmickIndex`(次に使う固有ギミックの添字0か1、初期0)を追加する。`Player.update(dt, ...)`で`gimmickTimer -= dt`し、0以下になったら`gimmickPhase`をトグルし、`'special'`に入る時だけ`gimmickIndex = 1 - gimmickIndex`してから次のフェーズの秒数(`normal`なら20、`special`なら8)を`gimmickTimer`にセットする。`Player.getActiveGimmick()`は`gimmickPhase === 'special'`なら`CHARACTER_GIMMICKS[this.charId][this.gimmickIndex]`を、`'normal'`なら空オブジェクト`{}`を返す(すべてのパラメータが既定値扱いになる)。
+`Player`に`gimmickTimer`(現フェーズの残り秒数、初期値`GIMMICK_NORMAL_SECONDS`)、`gimmickPhase`(`'normal'`または`'special'`、初期`'normal'`)、`gimmickIndex`(次に使う固有ギミックの添字0か1、初期0)を追加する。`Player.update(dt, ...)`で`gimmickTimer -= dt`し、0以下になったら`gimmickPhase`をトグルする。`'special'`に入る瞬間は`gimmickIndex`をそのまま使い(初回は初期値の0)、`'special'`から`'normal'`に戻る瞬間にのみ`gimmickIndex = 1 - gimmickIndex`して次のspecialフェーズに備える。あわせて次のフェーズの秒数(`normal`なら20、`special`なら8)を`gimmickTimer`にセットする。`Player.getActiveGimmick()`は`gimmickPhase === 'special'`なら`CHARACTER_GIMMICKS[this.charId][this.gimmickIndex]`を、`'normal'`なら空オブジェクト`{}`を返す(すべてのパラメータが既定値扱いになる)。
 
 適用箇所: `RhythmSystem`はプレイヤーのインスタンスを知らないため、ギミックの影響を受けるメソッドはすべて呼び出し側(`GameController`)が`this.localPlayer.getActiveGimmick()`で取得したギミックオブジェクトを引数として渡す形にする。
 - `RhythmSystem.startSwordBurst(beats, gimmick)`/`startAbility(beats, gimmick)`: `pickBurstPattern(effectiveDiff)`で選んだパターンの長さに`(gimmick.burstExtra || 0)`分のノーツを末尾に追加する(パターン最後の拍間隔を維持したまま延長)。
