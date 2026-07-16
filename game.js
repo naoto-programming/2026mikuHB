@@ -642,6 +642,12 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
     return result;
 };
 
+const resolvePerfectHeal = function(player) {
+    if (Math.random() < 0.15) {
+        player.heal(Math.floor(player.maxHp * 0.02));
+    }
+};
+
 // ============================================================
 // Player
 // ============================================================
@@ -2193,6 +2199,7 @@ class GameController {
                 this.localPlayer.perfectDash(dir);
             }
             this.audio.playSfx('perfectHit');
+            resolvePerfectHeal(this.localPlayer);
         } else if (result.judge !== 'miss') {
             this.audio.playSuccessSound();
         }
@@ -2497,7 +2504,7 @@ if (typeof window !== 'undefined') {
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES,
-    IMAGE_MANIFEST, applyAbility,
+    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS,
     MEASURE_BEATS, snapToMeasureBeat,
