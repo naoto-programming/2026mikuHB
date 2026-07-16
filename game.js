@@ -322,6 +322,26 @@ class AudioSystem {
         source.start(this.ctx.currentTime);
     }
 
+    async startGameOverLoop() {
+        if (!this.ctx) this.init();
+        const buffer = await this.loadTrack({ file: 'ゲームオーバー.mp3' });
+        if (this.gameOverSource) {
+            try { this.gameOverSource.stop(); } catch (e) {}
+        }
+        this.gameOverSource = this.ctx.createBufferSource();
+        this.gameOverSource.buffer = buffer;
+        this.gameOverSource.loop = true;
+        this.gameOverSource.connect(this.masterGain);
+        this.gameOverSource.start(this.ctx.currentTime);
+    }
+
+    stopGameOverLoop() {
+        if (this.gameOverSource) {
+            try { this.gameOverSource.stop(); } catch (e) {}
+            this.gameOverSource = null;
+        }
+    }
+
     stop() {
         this.isPlaying = false;
         if (this.source) {
@@ -2059,6 +2079,7 @@ class GameController {
         document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
         document.getElementById('hud').classList.add('hidden');
         document.getElementById('bottomHud').classList.add('hidden');
+        this.audio.stopGameOverLoop();
     }
 
     // ==================== Game Flow ====================
@@ -2455,6 +2476,7 @@ class GameController {
     gameOver() {
         this.state = 'gameover';
         this.audio.stop();
+        this.audio.startGameOverLoop();
 
         const totalScore = this.rhythm.score + this.stage.totalScore;
         document.getElementById('gameOverTitle').textContent = 'ゲームオーバー';
