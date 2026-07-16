@@ -6,13 +6,13 @@ function readFile(path) {
 eval(readFile('./game.js'));
 const { StageManager, computeTotalWaves } = globalThis.GameLogic;
 
-if (computeTotalWaves(90, 15) !== 6) throw new Error('computeTotalWaves(90,15) should be 6, got ' + computeTotalWaves(90, 15));
+if (computeTotalWaves(90, 15) !== 3) throw new Error('computeTotalWaves(90,15) should be capped at 3, got ' + computeTotalWaves(90, 15));
 if (computeTotalWaves(10, 15) !== 1) throw new Error('computeTotalWaves should floor to at least 1 wave, got ' + computeTotalWaves(10, 15));
 
 const stage = new StageManager();
 stage.start(90);
 if (stage.scrollX !== 0) throw new Error('scrollX should stay 0 (no auto-scroll)');
-if (stage.totalWaves !== 6) throw new Error('expected 6 total waves for a 90s track, got ' + stage.totalWaves);
+if (stage.totalWaves !== 3) throw new Error('expected 3 total waves (capped) for a 90s track, got ' + stage.totalWaves);
 if (stage.currentWave !== 0) throw new Error('currentWave should start at 0');
 if (stage.enemies.length !== 0) throw new Error('enemies should start empty');
 

@@ -92,7 +92,7 @@ const pickRandomTrack = function() {
 };
 
 const computeTotalWaves = function(trackDurationSeconds, waveIntervalSeconds) {
-    return Math.max(1, Math.floor(trackDurationSeconds / waveIntervalSeconds));
+    return Math.min(3, Math.max(1, Math.floor(trackDurationSeconds / waveIntervalSeconds)));
 };
 
 const IMAGE_MANIFEST = {
@@ -2229,6 +2229,7 @@ class GameController {
 
     async startGame() {
         this.state = 'playing';
+        this.stage.completed = false;
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
         document.getElementById('bottomHud').classList.remove('hidden');

@@ -17,6 +17,6 @@ for (let i = 0; i < 50; i++) {
 }
 
 const waves = computeTotalWaves(90, 15);
-if (waves !== 6) throw new Error('computeTotalWaves(90,15) wrong: ' + waves);
+if (waves !== 3) throw new Error('computeTotalWaves(90,15) wrong: ' + waves);
 
 console.log('BGM LOGIC OK');
