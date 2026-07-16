@@ -412,6 +412,11 @@ class RhythmSystem {
         return this.defendNotes.find(n => !n.hit && !n.missed && n.beat === beat);
     }
 
+    hasAbilityNoteAtBeat(beat) {
+        if (!this.abilityActive) return false;
+        return this.abilityNotes.some(n => !n.hit && !n.missed && n.beat === beat);
+    }
+
     update() {
         const currentBeat = this.audio.getCurrentBeat();
         this.defendMissThisFrame = false;
@@ -2329,11 +2334,15 @@ class GameController {
                 const rawTargetBeat = currentBeat + e.attackTimer * (this.audio.bpm / 60);
                 const quantizedBeat = Math.max(Math.round(rawTargetBeat), Math.ceil(currentBeat));
 
-                if (!this.rhythm.findDefendNoteAtBeat(quantizedBeat)) {
-                    this.rhythm.generateDefendNote(quantizedBeat);
+                let defendBeat = quantizedBeat;
+                if (this.rhythm.hasAbilityNoteAtBeat(defendBeat)) {
+                    defendBeat += 0.5;
+                }
+                if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
+                    this.rhythm.generateDefendNote(defendBeat);
                 }
 
-                e.attackTimer = (quantizedBeat - currentBeat) * beatInterval;
+                e.attackTimer = (defendBeat - currentBeat) * beatInterval;
                 e.defendNoteSpawned = true;
             }
         });
