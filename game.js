@@ -2540,6 +2540,7 @@ class GameController {
 
         document.getElementById('scoreValue').textContent = this.rhythm.score + this.stage.totalScore;
         document.getElementById('stageValue').textContent = this.stage.getStageName();
+        document.getElementById('waveValue').textContent = `${Math.max(1, this.stage.currentWave)}/${this.stage.totalWaves}`;
         document.getElementById('bpmValue').textContent = Math.round(this.audio.bpm);
 
         if (this.localPlayer) {
