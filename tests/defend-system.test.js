@@ -32,7 +32,7 @@ dodgeEnemy.executeAttack([p2], []);
 if (p2.hp !== hpBefore2) throw new Error('defending against a dodge-only attack should still prevent damage');
 if (dodgeEnemy.stunTimer > 0) throw new Error('dodge-only enemy should not be stunned by a defend');
 
-// 防御しなければ通常通り被弾する
+// executeAttack自体はもう被弾ダメージを発生させない（ダメージは防御ノーツmiss時にRhythmSystem/StageManager経由でのみ発生する）
 const p3 = new Player('p1', 'swordsman', true);
 p3.x = 400; p3.y = 600;
 const plainEnemy = new Enemy('normal', 400, 600, 1);
@@ -40,6 +40,6 @@ plainEnemy.startAttack();
 plainEnemy.attackTimer = 0.01;
 const hpBefore3 = p3.hp;
 plainEnemy.executeAttack([p3], []);
-if (p3.hp === hpBefore3) throw new Error('without defending, the player should still take damage as before');
+if (p3.hp !== hpBefore3) throw new Error('executeAttack should no longer deal direct damage; damage now comes only from missed defend notes');
 
 console.log('DEFEND SYSTEM OK');

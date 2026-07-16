@@ -366,6 +366,7 @@ class RhythmSystem {
         this.abilityStartBeat = 0;
         this.abilityLength = 0;
         this.defendNotes = [];
+        this.defendMissThisFrame = false;
     }
 
     startSwordBurst(beats) {
@@ -413,6 +414,7 @@ class RhythmSystem {
 
     update() {
         const currentBeat = this.audio.getCurrentBeat();
+        this.defendMissThisFrame = false;
 
         // Mark missed notes
         [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes].forEach(note => {
@@ -423,6 +425,7 @@ class RhythmSystem {
                     this.judges.miss++;
                     if (this.onJudge) this.onJudge('miss', 0, this.combo);
                 }
+                if (note.type === 'defend') this.defendMissThisFrame = true;
             }
         });
 
@@ -931,15 +934,9 @@ class Enemy {
         players.forEach(p => {
             if (!p.isAlive()) return;
             const pBox = p.getHitbox();
-            if (this.checkCollision(hitbox, pBox)) {
-                if (p.isDefending) {
-                    if (this.data.counterable) {
-                        this.takeDamage(p.getDamage(p.atk * 3, 'perfect'), 'ability');
-                        this.stunTimer = 1.5;
-                    }
-                } else {
-                    p.takeDamage(this.atk);
-                }
+            if (this.checkCollision(hitbox, pBox) && p.isDefending && this.data.counterable) {
+                this.takeDamage(p.getDamage(p.atk * 3, 'perfect'), 'ability');
+                this.stunTimer = 1.5;
             }
         });
 
@@ -1045,6 +1042,15 @@ class StageManager {
         if (this.currentWave >= this.totalWaves && this.enemies.length === 0) {
             this.completed = true;
         }
+    }
+
+    getNearbyEnemyDamage(playerX, radius) {
+        let total = 0;
+        this.enemies.forEach(e => {
+            if (e.dead) return;
+            if (Math.abs(e.x - playerX) < radius) total += e.atk;
+        });
+        return total;
     }
 
     spawnWave() {
@@ -2346,22 +2352,15 @@ class GameController {
             if (this.hasteTimer <= 0) this.hasteNoteRateBonus = 0;
         }
 
-        // Enemy attacks on players (passive contact damage)
-        this.stage.enemies.forEach(e => {
-            if (e.dead || e.stunTimer > 0) return;
-            const eBox = e.getHitbox();
-            this.players.forEach(p => {
-                if (!p.isAlive() || p.invincible > 0) return;
-                const pBox = p.getHitbox();
-                if (this.checkCollision(eBox, pBox)) {
-                    if (!e.isAttacking) {
-                        p.takeDamage(e.atk * 0.5);
-                        this.renderer.addFloatingText(p.x - this.stage.scrollX, p.y - 70,
-                            `-${Math.floor(e.atk * 0.5)}`, '#e74c3c', 16);
-                    }
-                }
-            });
-        });
+        // 防御ノーツを取りこぼした瞬間、周囲の敵からまとめてダメージを受ける
+        if (this.rhythm.defendMissThisFrame && this.localPlayer.invincible <= 0) {
+            const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
+            if (dmg > 0) {
+                this.localPlayer.takeDamage(dmg);
+                this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
+                    `-${Math.floor(dmg)}`, '#e74c3c', 16);
+            }
+        }
 
         // Check game over
         const alivePlayers = this.players.filter(p => p.isAlive());
