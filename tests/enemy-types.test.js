@@ -4,7 +4,7 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { Enemy } = globalThis.GameLogic;
+const { Enemy, ENEMY_TYPES } = globalThis.GameLogic;
 
 // 自爆敵は命中の有無に関わらず攻撃解決時に自壊する
 const suicide = new Enemy('suicide', 500, 600, 1);
@@ -24,5 +24,14 @@ healer.attackTimer = 0;
 healer.executeAttack([], [healer, ally1, ally2]);
 if (ally2.hp <= 1) throw new Error('healer should have healed the lowest-HP ally');
 if (ally1.hp !== ally1.maxHp) throw new Error('healer should not touch the full-HP ally');
+
+
+// エリートはmod補正込みでも過剰に高いatkにならないよう緩和されている
+const eliteMod = 1.5; // spawnEliteが使うmod * 1.5相当
+const eliteBaseAtk = ENEMY_TYPES.elite.atk * eliteMod;
+const elite = new Enemy('elite', 500, 600, eliteMod);
+if (elite.atk > eliteBaseAtk * 0.7) {
+    throw new Error('elite atk should be reduced to at most 70% of its unmitigated value, got ' + elite.atk + ' vs unmitigated ' + eliteBaseAtk);
+}
 
 console.log('ENEMY TYPES OK');

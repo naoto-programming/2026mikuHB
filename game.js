@@ -939,7 +939,7 @@ class Enemy {
         this.y = y;
         this.hp = this.data.hp * stageMod;
         this.maxHp = this.hp;
-        this.atk = this.data.atk * stageMod;
+        this.atk = this.data.atk * stageMod * (type === 'elite' ? 0.6 : 1);
         this.vx = -this.data.speed * (1 + stageMod * 0.1);
         this.vy = 0;
         this.state = 'move';
