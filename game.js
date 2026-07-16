@@ -34,6 +34,17 @@ const CHARACTERS = [
       ability: 'メテオ', abilityDesc: '広範囲魔法攻撃', hp: 70, atk: 5, speed: 0.8, rangeMultiplier: 3 },
 ];
 
+const CHARACTER_GIMMICKS = {
+    swordsman: [{ judgeLineOffset: -20 }, { judgeLineOffset: 20 }],
+    archer: [{ judgeLineOffset: 80 }, { noteSpeedMult: 1.4 }],
+    thief: [{ noteSpeedMult: 1.3 }, { judgeWindowMult: 0.7 }],
+    fighter: [{ burstExtra: 2 }, { damageMult: 1.3 }],
+    beast: [{ judgeWindowMult: 0.7 }, { damageMult: 1.5 }],
+    mage: [{ burstExtra: 1 }, { abilityPulseLine: true }],
+};
+const GIMMICK_NORMAL_SECONDS = 20;
+const GIMMICK_SPECIAL_SECONDS = 8;
+
 const UPGRADES = [
     { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
     { name: '攻撃力UP', desc: '攻撃力+25%', type: 'atk', value: 0.25, rarity: 'common' },
@@ -389,12 +400,18 @@ class RhythmSystem {
         this.defendMissThisFrame = false;
     }
 
-    startSwordBurst(beats) {
+    startSwordBurst(beats, gimmick) {
+        gimmick = gimmick || {};
         this.swordBurstActive = true;
         this.swordBurstStartBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
         const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
-        this.swordBurstLength = pattern[pattern.length - 1] + 1;
-        this.swordNotes = pattern.map(offset => ({
+        const offsets = pattern.slice();
+        const extra = gimmick.burstExtra || 0;
+        for (let i = 0; i < extra; i++) {
+            offsets.push(offsets[offsets.length - 1] + 1);
+        }
+        this.swordBurstLength = offsets[offsets.length - 1] + 1;
+        this.swordNotes = offsets.map(offset => ({
             id: this.noteId++,
             beat: this.swordBurstStartBeat + offset,
             type: 'sword',
@@ -403,12 +420,18 @@ class RhythmSystem {
         }));
     }
 
-    startAbility(beats) {
+    startAbility(beats, gimmick) {
+        gimmick = gimmick || {};
         this.abilityActive = true;
         this.abilityStartBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
         const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
-        this.abilityLength = pattern[pattern.length - 1] + 1;
-        this.abilityNotes = pattern.map((offset, index) => ({
+        const offsets = pattern.slice();
+        const extra = gimmick.burstExtra || 0;
+        for (let i = 0; i < extra; i++) {
+            offsets.push(offsets[offsets.length - 1] + 1);
+        }
+        this.abilityLength = offsets[offsets.length - 1] + 1;
+        this.abilityNotes = offsets.map((offset, index) => ({
             id: this.noteId++,
             beat: this.abilityStartBeat + offset,
             type: 'ability',
@@ -476,7 +499,9 @@ class RhythmSystem {
         return null;
     }
 
-    checkInput(inputType) {
+    checkInput(inputType, gimmick) {
+        gimmick = gimmick || {};
+        const windowMult = gimmick.judgeWindowMult || 1;
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
 
@@ -490,7 +515,7 @@ class RhythmSystem {
         searchPool.forEach(note => {
             if (!note.hit && !note.missed && note.type === inputType) {
                 const dist = Math.abs(note.beat - currentBeat) * beatInterval;
-                if (dist < nearestDist && dist < CONSTANTS.GOOD_WINDOW) {
+                if (dist < nearestDist && dist < CONSTANTS.GOOD_WINDOW * windowMult) {
                     nearestDist = dist;
                     nearest = note;
                 }
@@ -502,13 +527,13 @@ class RhythmSystem {
         let judge = 'miss';
         let multiplier = 0.5;
 
-        if (nearestDist <= CONSTANTS.PERFECT_WINDOW) {
+        if (nearestDist <= CONSTANTS.PERFECT_WINDOW * windowMult) {
             judge = 'perfect';
             multiplier = 2.0;
-        } else if (nearestDist <= CONSTANTS.GREAT_WINDOW) {
+        } else if (nearestDist <= CONSTANTS.GREAT_WINDOW * windowMult) {
             judge = 'great';
             multiplier = 1.5;
-        } else if (nearestDist <= CONSTANTS.GOOD_WINDOW) {
+        } else if (nearestDist <= CONSTANTS.GOOD_WINDOW * windowMult) {
             judge = 'good';
             multiplier = 1.0;
         }
@@ -544,7 +569,9 @@ class RhythmSystem {
         }
     }
 
-    checkInputAny() {
+    checkInputAny(gimmick) {
+        gimmick = gimmick || {};
+        const windowMult = gimmick.judgeWindowMult || 1;
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
         const pools = [
@@ -559,7 +586,7 @@ class RhythmSystem {
             notes.forEach(note => {
                 if (!note.hit && !note.missed) {
                     const dist = Math.abs(note.beat - currentBeat) * beatInterval;
-                    if (dist < bestDist && dist < CONSTANTS.GOOD_WINDOW) {
+                    if (dist < bestDist && dist < CONSTANTS.GOOD_WINDOW * windowMult) {
                         bestDist = dist;
                         bestType = type;
                     }
@@ -568,10 +595,13 @@ class RhythmSystem {
         });
 
         if (!bestType) return null;
-        return this.checkInput(bestType);
+        return this.checkInput(bestType, gimmick);
     }
 
-    getNotesForRender() {
+    getNotesForRender(gimmick) {
+        gimmick = gimmick || {};
+        const speedMult = gimmick.noteSpeedMult || 1;
+        const lineOffset = gimmick.judgeLineOffset || 0;
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = LOOKAHEAD_BEATS + 1;
@@ -585,10 +615,11 @@ class RhythmSystem {
             const dist = n.beat - currentBeat;
             return dist > -0.5 && dist < visibleBeats && !n.hit;
         }).map(n => {
-            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * beatInterval);
+            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
+            const base = 300 + lineOffset;
             return {
                 ...n,
-                x: n.type === 'defend' ? 300 - offset : 300 + offset,
+                x: n.type === 'defend' ? base - offset : base + offset,
             };
         });
     }
@@ -701,6 +732,9 @@ class Player {
         this.dashTimer = 0;
         this.dashDir = 1;
         this.pulseTimer = 0;
+        this.gimmickPhase = 'normal';
+        this.gimmickTimer = GIMMICK_NORMAL_SECONDS;
+        this.gimmickIndex = 0;
 
         this.upgrades = {
             range: 1, atk: 1, speed: 1, perfect: 1,
@@ -720,6 +754,11 @@ class Player {
                 this.upgrades[upgrade.type] += upgrade.value;
             }
         }
+    }
+
+    getActiveGimmick() {
+        if (this.gimmickPhase !== 'special') return {};
+        return CHARACTER_GIMMICKS[this.charId][this.gimmickIndex];
     }
 
     getAttackRange() {
@@ -742,6 +781,19 @@ class Player {
         if (this.pulseTimer > 0) {
             this.pulseTimer -= dt;
             if (this.pulseTimer < 0) this.pulseTimer = 0;
+        }
+
+        this.gimmickTimer -= dt;
+        if (this.gimmickTimer <= 0) {
+            if (this.gimmickPhase === 'normal') {
+                this.gimmickPhase = 'special';
+                this.gimmickTimer = GIMMICK_SPECIAL_SECONDS;
+                // gimmickIndexはここでは変えない（specialに入る瞬間は「現在の」インデックスを使う）
+            } else {
+                this.gimmickPhase = 'normal';
+                this.gimmickTimer = GIMMICK_NORMAL_SECONDS;
+                this.gimmickIndex = 1 - this.gimmickIndex; // 次のspecialフェーズに備えて反転させておく
+            }
         }
 
         if (this.dashTimer > 0) {
@@ -1899,7 +1951,8 @@ class Renderer {
         }
 
         // Notes
-        const notes = game.rhythm.getNotesForRender();
+        const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
+        const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
             const nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
@@ -1920,11 +1973,14 @@ class Renderer {
                     ctx.drawImage(swordImg, nx - size * 0.35, ny - size * 0.35, size * 0.7, size * 0.7);
                 }
             } else if (note.type === 'ability') {
+                const abilityNy = gimmick.abilityPulseLine
+                    ? ny + Math.sin(game.audio.getCurrentBeat() * 3) * 15
+                    : ny;
                 ctx.fillStyle = '#4a90d9';
                 ctx.shadowColor = '#4a90d9';
                 ctx.shadowBlur = 12;
                 ctx.beginPath();
-                ctx.arc(nx, ny, size/2, 0, Math.PI * 2);
+                ctx.arc(nx, abilityNy, size/2, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
             } else if (note.type === 'defend') {
@@ -2191,7 +2247,8 @@ class GameController {
     // ==================== Input Handling ====================
 
     handleUniversalInput() {
-        const result = this.rhythm.checkInputAny();
+        const gimmick = this.localPlayer.getActiveGimmick();
+        const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
 
         const noteType = result.note.type;
@@ -2231,7 +2288,8 @@ class GameController {
         this.audio.playSwordSound();
 
         if (result.judge !== 'miss') {
-            const dmg = this.localPlayer.getDamage(10, result.judge);
+            const gimmick = this.localPlayer.getActiveGimmick();
+            const dmg = Math.floor(this.localPlayer.getDamage(10, result.judge) * (gimmick.damageMult || 1));
 
             // Hit enemies in range
             let hitCount = 0;
@@ -2380,7 +2438,7 @@ class GameController {
             const inRange = this.stage.enemies.some(e => !e.dead &&
                 Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
             if (inRange) {
-                this.rhythm.startSwordBurst(4);
+                this.rhythm.startSwordBurst(4, this.localPlayer.getActiveGimmick());
             }
         }
 
@@ -2388,7 +2446,7 @@ class GameController {
         if (!this.rhythm.abilityActive && this.abilityCooldown <= 0) {
             this.localPlayer.useAbility();
             this.audio.playAbilitySound();
-            this.rhythm.startAbility(4);
+            this.rhythm.startAbility(4, this.localPlayer.getActiveGimmick());
             this.abilityCooldown = 8;
         }
 
@@ -2446,6 +2504,14 @@ class GameController {
     }
 
     updateHUD() {
+        const gimmickIndicator = document.getElementById('gimmickIndicator');
+        if (this.localPlayer.gimmickPhase === 'special') {
+            gimmickIndicator.textContent = `${this.localPlayer.char.name}: 固有ギミック発動中`;
+            gimmickIndicator.classList.remove('hidden');
+        } else {
+            gimmickIndicator.classList.add('hidden');
+        }
+
         document.getElementById('scoreValue').textContent = this.rhythm.score + this.stage.totalScore;
         document.getElementById('stageValue').textContent = this.stage.getStageName();
         document.getElementById('bpmValue').textContent = Math.round(this.audio.bpm);
@@ -2528,7 +2594,7 @@ const GameLogic = {
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES,
     IMAGE_MANIFEST, applyAbility, resolvePerfectHeal,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
-    BURST_PATTERNS, LOOKAHEAD_BEATS,
+    BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,
 };
 if (typeof globalThis !== 'undefined') {
