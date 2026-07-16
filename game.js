@@ -23,7 +23,7 @@ const CHARACTERS = [
     { id: 'swordsman', name: '剣士', diff: 1, desc: '初心者向け・安定型', color: '#e74c3c',
       ability: '斬鉄剣', abilityDesc: '前方広範囲攻撃', hp: 120, atk: 10, speed: 1.0 },
     { id: 'archer', name: '弓士', diff: 2, desc: '遠距離型', color: '#2ecc71',
-      ability: '連射', abilityDesc: '遠距離複数射撃', hp: 90, atk: 12, speed: 1.1 },
+      ability: '連射', abilityDesc: '遠距離複数射撃', hp: 90, atk: 12, speed: 1.1, rangeMultiplier: 3 },
     { id: 'thief', name: '盗賊', diff: 3, desc: '高速攻撃型', color: '#9b59b6',
       ability: '神速', abilityDesc: '攻撃速度大幅UP', hp: 80, atk: 8, speed: 1.3 },
     { id: 'fighter', name: '拳士', diff: 4, desc: '高火力コンボ型', color: '#f39c12',
@@ -31,7 +31,7 @@ const CHARACTERS = [
     { id: 'beast', name: '獣人', diff: 5, desc: '高火力高難度', color: '#e67e22',
       ability: '獣王撃', abilityDesc: '超高威力一撃', hp: 110, atk: 20, speed: 0.85 },
     { id: 'mage', name: '魔法使い', diff: 6, desc: '能力重視型', color: '#3498db',
-      ability: 'メテオ', abilityDesc: '広範囲魔法攻撃', hp: 70, atk: 5, speed: 0.8 },
+      ability: 'メテオ', abilityDesc: '広範囲魔法攻撃', hp: 70, atk: 5, speed: 0.8, rangeMultiplier: 3 },
 ];
 
 const UPGRADES = [
@@ -691,7 +691,7 @@ class Player {
     }
 
     getAttackRange() {
-        return 80 * this.upgrades.range;
+        return 80 * this.upgrades.range * (this.char.rangeMultiplier || 1);
     }
 
     getDamage(baseDamage, judge) {
