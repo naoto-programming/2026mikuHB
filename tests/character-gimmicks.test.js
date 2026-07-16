@@ -61,6 +61,11 @@ if (rhythm2.swordNotes.length !== baseLen + 2) {
 // checkInputAnyはgimmick.judgeWindowMultで判定窓を縮小できる
 const rhythm3 = new RhythmSystem(audio);
 rhythm3.startSwordBurst(4, {});
+// startSwordBurstはランダムなバーストパターンを選ぶため、note[0]以外のノーツが
+// 偶然この後設定するcurrentTimeと同じタイミングになりヒットしてしまうことがある
+// （ヒットするとplayHitSound経由でこのモックにないcreateOscillatorを呼びクラッシュする）。
+// note[0]だけを判定対象にしたいので、他のノーツは判定から除外しておく。
+rhythm3.swordNotes.forEach((n, i) => { if (i > 0) n.missed = true; });
 const beatInterval = 60 / audio.bpm;
 audio.ctx.currentTime = (rhythm3.swordNotes[0].beat * beatInterval) + 0.25; // GOOD_WINDOW(0.30)以内だが縮小後窓の外
 const resultNarrow = rhythm3.checkInputAny({ judgeWindowMult: 0.5 });
