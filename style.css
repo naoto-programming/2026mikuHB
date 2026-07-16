@@ -92,6 +92,7 @@
         }
         .char-card:hover { border-color: #ff6b35; transform: translateY(-5px); }
         .char-card.selected { border-color: #ff6b35; background: rgba(255,107,53,0.2); }
+        .difficulty-btn.selected { border-color: #ff6b35; background: rgba(255,107,53,0.2); color: #fff; }
         .char-card .char-name { font-weight: bold; color: #ff6b35; margin-bottom: 5px; font-size: 1.1em; }
         .char-card .char-diff { font-size: 0.8em; color: #888; }
         .char-card .char-desc { font-size: 0.75em; color: #aaa; margin-top: 5px; }
