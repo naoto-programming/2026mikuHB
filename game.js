@@ -379,6 +379,20 @@ const BURST_PATTERNS = [
     [0, 2, 2.5, 3],
 ];
 
+const pickBurstPattern = function(effectiveDiff) {
+    const diff = Math.max(1, effectiveDiff);
+    const weights = BURST_PATTERNS.map((_, i) => 1 + i * (diff / 6));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = Math.random() * total;
+    for (let i = 0; i < BURST_PATTERNS.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) return BURST_PATTERNS[i];
+    }
+    return BURST_PATTERNS[BURST_PATTERNS.length - 1];
+};
+
+const DIFFICULTY_BONUS = { easy: -2, normal: 0, hard: 2 };
+
 class RhythmSystem {
     constructor(audio) {
         this.audio = audio;
@@ -398,13 +412,14 @@ class RhythmSystem {
         this.abilityLength = 0;
         this.defendNotes = [];
         this.defendMissThisFrame = false;
+        this.effectiveDiff = 1;
     }
 
     startSwordBurst(beats, gimmick) {
         gimmick = gimmick || {};
         this.swordBurstActive = true;
         this.swordBurstStartBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
-        const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
+        const pattern = pickBurstPattern(this.effectiveDiff || 1);
         const offsets = pattern.slice();
         const extra = gimmick.burstExtra || 0;
         for (let i = 0; i < extra; i++) {
@@ -424,7 +439,7 @@ class RhythmSystem {
         gimmick = gimmick || {};
         this.abilityActive = true;
         this.abilityStartBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
-        const pattern = BURST_PATTERNS[Math.floor(Math.random() * BURST_PATTERNS.length)];
+        const pattern = pickBurstPattern(this.effectiveDiff || 1);
         const offsets = pattern.slice();
         const extra = gimmick.burstExtra || 0;
         for (let i = 0; i < extra; i++) {
@@ -1097,10 +1112,11 @@ class StageManager {
         this.eliteSpawned = false;
         this.completed = false;
         this.totalScore = 0;
+        this.difficultyMult = 1;
     }
 
     getStageMod() {
-        return 1 + (this.stage - 1) * 0.3 + (this.subStage - 1) * 0.1;
+        return (1 + (this.stage - 1) * 0.3 + (this.subStage - 1) * 0.1) * this.difficultyMult;
     }
 
     start(trackDurationSeconds) {
@@ -2020,6 +2036,7 @@ class GameController {
         this.players = [];
         this.localPlayer = null;
         this.selectedChar = 'swordsman';
+        this.difficulty = 'normal';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
@@ -2144,11 +2161,20 @@ class GameController {
         this.showCharSelect();
     }
 
+    setDifficulty(level) {
+        this.difficulty = level;
+        document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
+        const btn = document.getElementById(`difficulty-${level}`);
+        if (btn) btn.classList.add('selected');
+    }
+
     confirmChar() {
         this.players = [];
         this.localPlayer = new Player('p1', this.selectedChar, true);
         this.players.push(this.localPlayer);
         this.stage = new StageManager();
+        this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
+        this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
 
         this.startGame();
     }
@@ -2578,6 +2604,7 @@ if (typeof window !== 'undefined') {
         showHowToPlay: () => game.showHowToPlay(),
         startSinglePlayer: () => game.startSinglePlayer(),
         confirmChar: () => game.confirmChar(),
+        setDifficulty: (level) => game.setDifficulty(level),
         createHost: () => game.createHost(),
         showJoin: () => game.showJoin(),
         joinHost: () => game.joinHost(),
@@ -2592,6 +2619,7 @@ if (typeof window !== 'undefined') {
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES,
+    pickBurstPattern, DIFFICULTY_BONUS,
     IMAGE_MANIFEST, applyAbility, resolvePerfectHeal,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,

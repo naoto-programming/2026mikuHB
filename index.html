@@ -72,6 +72,11 @@
             <div class="subtitle" id="charSelectSubtitle">難易度が低い順</div>
             <div class="char-select" id="charSelect"></div>
             <div class="btn-group">
+                <button class="btn difficulty-btn" id="difficulty-easy" onclick="Game.setDifficulty('easy')">EASY</button>
+                <button class="btn difficulty-btn selected" id="difficulty-normal" onclick="Game.setDifficulty('normal')">NORMAL</button>
+                <button class="btn difficulty-btn" id="difficulty-hard" onclick="Game.setDifficulty('hard')">HARD</button>
+            </div>
+            <div class="btn-group">
                 <button class="btn" onclick="Game.confirmChar()">決定</button>
                 <button class="btn" onclick="Game.showModeSelect()">戻る</button>
             </div>
