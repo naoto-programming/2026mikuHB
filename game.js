@@ -2217,6 +2217,8 @@ class GameController {
         document.getElementById('bottomHud').classList.remove('hidden');
 
         this.rhythm.reset();
+        document.getElementById('comboCount').textContent = '0';
+        document.getElementById('comboDisplay').style.opacity = '0.3';
         this.gameTime = 0;
         this.abilityCooldown = 0;
         this.hasteTimer = 0;
