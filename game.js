@@ -35,12 +35,12 @@ const CHARACTERS = [
 ];
 
 const CHARACTER_GIMMICKS = {
-    swordsman: [{ judgeLineOffset: -20 }, { judgeLineOffset: 20 }],
-    archer: [{ judgeLineOffset: 80 }, { noteSpeedMult: 1.4 }],
-    thief: [{ noteSpeedMult: 1.3 }, { judgeWindowMult: 0.7 }],
-    fighter: [{ burstExtra: 2 }, { damageMult: 1.3 }],
-    beast: [{ judgeWindowMult: 0.7 }, { damageMult: 1.5 }],
-    mage: [{ burstExtra: 1 }, { abilityPulseLine: true }],
+    swordsman: [{ special: 'holdNote' }, { special: 'giantNote' }],
+    archer: [{ special: 'notesFallFromAbove' }, { special: 'noteShuffle' }],
+    thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
+    fighter: [{ special: 'steppedMotion' }, { special: 'damageNote' }],
+    beast: [{ special: 'invisibleApproach' }, { special: 'rewindEffect' }],
+    mage: [{ special: 'driftingJudgeLine' }, { special: 'laneSplit' }],
 };
 const GIMMICK_NORMAL_SECONDS = 20;
 const GIMMICK_SPECIAL_SECONDS = 8;

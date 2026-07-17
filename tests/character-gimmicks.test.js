@@ -13,6 +13,22 @@ const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem } = globalThis.Gam
     }
 });
 
+const expectedSpecials = {
+    swordsman: ['holdNote', 'giantNote'],
+    archer: ['notesFallFromAbove', 'noteShuffle'],
+    thief: ['resonanceShake', 'rapidFire'],
+    fighter: ['steppedMotion', 'damageNote'],
+    beast: ['invisibleApproach', 'rewindEffect'],
+    mage: ['driftingJudgeLine', 'laneSplit'],
+};
+Object.keys(expectedSpecials).forEach(id => {
+    expectedSpecials[id].forEach((special, i) => {
+        if (CHARACTER_GIMMICKS[id][i].special !== special) {
+            throw new Error(id + '[' + i + '].special should be ' + special + ', got ' + CHARACTER_GIMMICKS[id][i].special);
+        }
+    });
+});
+
 // 初期状態はnormalフェーズで、getActiveGimmickは空オブジェクトを返す
 const p = new Player('p1', 'thief', true);
 if (p.gimmickPhase !== 'normal') throw new Error('gimmickPhase should start as normal');
