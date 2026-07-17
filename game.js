@@ -464,6 +464,18 @@ class RhythmSystem {
         });
     }
 
+    generateHoldNote(beat) {
+        this.defendNotes.push({
+            id: this.noteId++,
+            beat: beat,
+            type: 'defend',
+            hit: false,
+            missed: false,
+            isHold: true,
+            holdEndBeat: beat + 1,
+        });
+    }
+
     findDefendNoteAtBeat(beat) {
         return this.defendNotes.find(n => !n.hit && !n.missed && n.beat === beat);
     }
@@ -2053,6 +2065,7 @@ class GameController {
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
+        this.holdNoteActive = null;
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -2086,11 +2099,16 @@ class GameController {
 
         window.addEventListener('keyup', (e) => {
             this.heldKeys.delete(e.key.toLowerCase());
+            if (this.heldKeys.size === 0) this.resolveHoldNoteEnd();
         });
 
         document.getElementById('gameContainer').addEventListener('pointerdown', () => {
             if (this.state !== 'playing') return;
             this.handleUniversalInput();
+        });
+
+        document.getElementById('gameContainer').addEventListener('pointerup', () => {
+            this.resolveHoldNoteEnd();
         });
     }
 
@@ -2292,6 +2310,11 @@ class GameController {
         const noteType = result.note.type;
         if (noteType === 'sword') {
             this.resolveSwordHit(result);
+        } else if (noteType === 'defend' && result.note.isHold) {
+            this.holdNoteActive = result.note;
+            this.localPlayer.defend();
+            this.audio.playCounterSound();
+            return;
         } else if (noteType === 'defend') {
             this.localPlayer.defend();
             this.audio.playCounterSound();
@@ -2328,6 +2351,25 @@ class GameController {
             resolvePerfectHeal(this.localPlayer);
         } else if (result.judge !== 'miss') {
             this.audio.playSuccessSound();
+        }
+    }
+
+    resolveHoldNoteEnd() {
+        if (!this.holdNoteActive) return;
+        const note = this.holdNoteActive;
+        this.holdNoteActive = null;
+        const currentBeat = this.audio.getCurrentBeat();
+        const beatInterval = 60 / this.audio.bpm;
+        const dist = Math.abs(note.holdEndBeat - currentBeat) * beatInterval;
+        if (dist < CONSTANTS.GOOD_WINDOW) {
+            this.stage.enemies.forEach(e => {
+                if (e.dead) return;
+                if (Math.abs(e.x - this.localPlayer.x) < 250) {
+                    e.takeDamage(this.localPlayer.getDamage(30, 'perfect'), 'ability');
+                    e.stunTimer = 1.5;
+                }
+            });
+            this.renderer.shake(6, 0.2);
         }
     }
 
@@ -2473,7 +2515,11 @@ class GameController {
                     defendBeat += 0.5;
                 }
                 if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
-                    this.rhythm.generateDefendNote(defendBeat);
+                    if (this.localPlayer.getActiveGimmick().special === 'holdNote') {
+                        this.rhythm.generateHoldNote(defendBeat);
+                    } else {
+                        this.rhythm.generateDefendNote(defendBeat);
+                    }
                 }
 
                 e.attackTimer = (defendBeat - currentBeat) * beatInterval;
