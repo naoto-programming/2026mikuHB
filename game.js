@@ -62,7 +62,6 @@ const ENEMY_TYPES = {
     ranged: { name: 'ゴブリン射手', hp: 25, atk: 10, speed: 0.8, size: 28, color: '#e67e22', score: 20, ranged: true, defense: false, range: 300, counterable: false },
     defense: { name: '盾兵', hp: 60, atk: 6, speed: 0.5, size: 35, color: '#34495e', score: 25, ranged: false, defense: true, shield: true, counterable: true },
     large: { name: 'オーガ', hp: 150, atk: 15, speed: 0.6, size: 50, color: '#c0392b', score: 50, ranged: false, defense: false, elite: true, counterable: true },
-    elite: { name: 'エリート', hp: 200, atk: 20, speed: 1.2, size: 45, color: '#e74c3c', score: 100, ranged: true, defense: true, elite: true, counterable: false },
     suicide: { name: '自爆兵', hp: 15, atk: 25, speed: 2.5, size: 26, color: '#d35400', score: 20, ranged: false, defense: false, suicide: true, counterable: false },
     healer: { name: 'ヒーラー', hp: 40, atk: 0, speed: 0.7, size: 30, color: '#27ae60', score: 30, ranged: true, defense: false, healer: true, range: 320, healAmount: 25, counterable: false },
 };
@@ -113,7 +112,6 @@ const IMAGE_MANIFEST = {
         ranged: '弓敵.png',
         defense: '盾敵.png',
         large: '大型敵.png',
-        elite: '大型敵.png',
         suicide: '自爆敵.png',
         healer: 'ヒーラー敵.png',
     },
@@ -939,7 +937,7 @@ class Enemy {
         this.y = y;
         this.hp = this.data.hp * stageMod;
         this.maxHp = this.hp;
-        this.atk = this.data.atk * stageMod * (type === 'elite' ? 0.6 : 1);
+        this.atk = this.data.atk * stageMod;
         this.vx = -this.data.speed * (1 + stageMod * 0.1);
         this.vy = 0;
         this.state = 'move';
@@ -1109,7 +1107,6 @@ class StageManager {
         this.currentWave = 0;
         this.waveTimer = 0;
         this.waveIntervalSeconds = 15;
-        this.eliteSpawned = false;
         this.completed = false;
         this.totalScore = 0;
         this.difficultyMult = 1;
@@ -1124,7 +1121,6 @@ class StageManager {
         this.totalWaves = computeTotalWaves(trackDurationSeconds || 90, this.waveIntervalSeconds);
         this.currentWave = 0;
         this.waveTimer = 1;
-        this.eliteSpawned = false;
         this.completed = false;
         this.scrollX = 0;
     }
@@ -1137,11 +1133,6 @@ class StageManager {
             this.spawnWave();
             this.currentWave++;
             this.waveTimer = this.waveIntervalSeconds;
-
-            if (this.currentWave === this.totalWaves && !this.eliteSpawned) {
-                this.spawnElite();
-                this.eliteSpawned = true;
-            }
         }
 
         this.enemies.forEach(e => e.update(dt, players, this.scrollX, this.enemies));
@@ -1185,13 +1176,6 @@ class StageManager {
             enemy.brightnessShift = 0.85 + Math.random() * 0.3;
             this.enemies.push(enemy);
         }
-    }
-
-    spawnElite() {
-        const mod = this.getStageMod();
-        const x = CONSTANTS.CANVAS_WIDTH / 2;
-        const y = CONSTANTS.GROUND_Y;
-        this.enemies.push(new Enemy('elite', x, y, mod * 1.5));
     }
 
     nextStage() {
@@ -1790,13 +1774,7 @@ class Renderer {
             const drawH = s * 2.2;
             const drawW = drawH * (sprite.width / sprite.height);
             ctx.save();
-            if (e.type === 'elite') {
-                ctx.filter = 'saturate(2.2) hue-rotate(-20deg) brightness(0.9)';
-                ctx.shadowColor = '#ff3b30';
-                ctx.shadowBlur = 20;
-            } else {
-                ctx.filter = `hue-rotate(${e.hueShift || 0}deg) brightness(${e.brightnessShift || 1})`;
-            }
+            ctx.filter = `hue-rotate(${e.hueShift || 0}deg) brightness(${e.brightnessShift || 1})`;
             ctx.translate(x, y);
             ctx.scale(-1, 1);
             ctx.drawImage(sprite, -drawW / 2, -drawH, drawW, drawH);
