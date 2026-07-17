@@ -718,6 +718,7 @@ class RhythmSystem {
         this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.giantNote = null;
         this.giantNoteExploded = false;
+        this.damageNotes = [];
     }
 }
 
