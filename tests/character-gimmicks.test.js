@@ -44,7 +44,14 @@ function makeAudio() {
     const audio = new AudioSystem();
     audio.bpm = 120;
     audio.isPlaying = true;
-    audio.ctx = { currentTime: 0 };
+    audio.ctx = {
+        currentTime: 0,
+        createOscillator() { return { connect(){}, start(){}, stop(){}, frequency:{setValueAtTime(){}, exponentialRampToValueAtTime(){}} }; },
+        createGain() { return { connect(){}, gain:{value:0, setValueAtTime(){}, exponentialRampToValueAtTime(){}} }; },
+        createBufferSource() { return { connect(){}, start(){}, stop(){} }; },
+        createBuffer() { return { getChannelData(){ return new Float32Array(100); } }; },
+        createBiquadFilter() { return { connect(){}, frequency:{value:0} }; },
+    };
     audio.startTime = 0;
     return audio;
 }
@@ -70,5 +77,27 @@ const beatInterval = 60 / audio.bpm;
 audio.ctx.currentTime = (rhythm3.swordNotes[0].beat * beatInterval) + 0.25; // GOOD_WINDOW(0.30)以内だが縮小後窓の外
 const resultNarrow = rhythm3.checkInputAny({ judgeWindowMult: 0.5 });
 if (resultNarrow !== null) throw new Error('a narrowed judge window should miss a note that a normal window would catch');
+
+// judgeWindowMultは防御ノーツには適用されない（ダメージ回避に直結するため）
+const audio4 = makeAudio();
+const rhythm4 = new RhythmSystem(audio4);
+rhythm4.generateDefendNote(1);
+const beatInterval4 = 60 / audio4.bpm;
+audio4.ctx.currentTime = (1 * beatInterval4) + 0.25; // GOOD_WINDOW(0.30)以内、縮小後窓(0.15)の外
+const defendResult = rhythm4.checkInputAny({ judgeWindowMult: 0.5 });
+if (defendResult === null || defendResult.note.type !== 'defend') {
+    throw new Error('judgeWindowMult should not narrow the defend window, expected a defend hit but got ' + JSON.stringify(defendResult));
+}
+const checkInputDefendResult = (() => {
+    const audio5 = makeAudio();
+    const rhythm5 = new RhythmSystem(audio5);
+    rhythm5.generateDefendNote(1);
+    const beatInterval5 = 60 / audio5.bpm;
+    audio5.ctx.currentTime = (1 * beatInterval5) + 0.25;
+    return rhythm5.checkInput('defend', { judgeWindowMult: 0.5 });
+})();
+if (checkInputDefendResult === null) {
+    throw new Error('checkInput should not narrow the defend window via judgeWindowMult either');
+}
 
 console.log('CHARACTER GIMMICKS OK');

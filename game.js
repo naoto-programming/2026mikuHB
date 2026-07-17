@@ -514,7 +514,9 @@ class RhythmSystem {
 
     checkInput(inputType, gimmick) {
         gimmick = gimmick || {};
-        const windowMult = gimmick.judgeWindowMult || 1;
+        // judgeWindowMultは攻撃・能力ノーツの判定窓のみに作用させる。防御ノーツは
+        // ダメージ回避に直結するため、ギミックで理不尽に難しくしない。
+        const windowMult = inputType === 'defend' ? 1 : (gimmick.judgeWindowMult || 1);
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
 
@@ -584,18 +586,20 @@ class RhythmSystem {
 
     checkInputAny(gimmick) {
         gimmick = gimmick || {};
+        // judgeWindowMultは攻撃・能力ノーツの判定窓のみに作用させる。防御ノーツは
+        // ダメージ回避に直結するため、ギミックで理不尽に難しくしない。
         const windowMult = gimmick.judgeWindowMult || 1;
         const currentBeat = this.audio.getCurrentBeat();
         const beatInterval = 60 / this.audio.bpm;
         const pools = [
-            { type: 'sword', notes: this.swordNotes },
-            { type: 'ability', notes: this.abilityActive ? this.abilityNotes : [] },
-            { type: 'defend', notes: this.defendNotes },
+            { type: 'sword', notes: this.swordNotes, windowMult },
+            { type: 'ability', notes: this.abilityActive ? this.abilityNotes : [], windowMult },
+            { type: 'defend', notes: this.defendNotes, windowMult: 1 },
         ];
 
         let bestType = null;
         let bestDist = Infinity;
-        pools.forEach(({ type, notes }) => {
+        pools.forEach(({ type, notes, windowMult }) => {
             notes.forEach(note => {
                 if (!note.hit && !note.missed) {
                     const dist = Math.abs(note.beat - currentBeat) * beatInterval;
@@ -2407,7 +2411,7 @@ class GameController {
 
     update(dt) {
         this.gameTime += dt;
-        if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
+        if (this.abilityCooldown > 0) this.abilityCooldown -= dt * (1 + this.hasteNoteRateBonus);
 
         // Update players (movement is AI-controlled)
         this.players.forEach(p => {
