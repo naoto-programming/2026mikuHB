@@ -2044,18 +2044,24 @@ class Renderer {
                 const fallProgress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
                 ny = 40 + fallProgress * (barY - 40);
             }
+            let shuffledNx = nx;
+            if (gimmick.special === 'noteShuffle') {
+                const seed = Math.sin(note.id * 12.9898) * 43758.5453;
+                const jitter = (seed - Math.floor(seed) - 0.5) * 120;
+                shuffledNx = nx + jitter;
+            }
 
             if (note.type === 'sword') {
                 ctx.fillStyle = '#ff6b35';
                 ctx.shadowColor = '#ff6b35';
                 ctx.shadowBlur = 12;
                 ctx.beginPath();
-                ctx.arc(nx, ny, size/2, 0, Math.PI * 2);
+                ctx.arc(shuffledNx, ny, size/2, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
                 const swordImg = game.images && game.images[IMAGE_MANIFEST.weapons.swordIcon];
                 if (swordImg) {
-                    ctx.drawImage(swordImg, nx - size * 0.35, ny - size * 0.35, size * 0.7, size * 0.7);
+                    ctx.drawImage(swordImg, shuffledNx - size * 0.35, ny - size * 0.35, size * 0.7, size * 0.7);
                 }
             } else if (note.type === 'ability') {
                 const abilityNy = gimmick.abilityPulseLine
@@ -2065,7 +2071,7 @@ class Renderer {
                 ctx.shadowColor = '#4a90d9';
                 ctx.shadowBlur = 12;
                 ctx.beginPath();
-                ctx.arc(nx, abilityNy, size/2, 0, Math.PI * 2);
+                ctx.arc(shuffledNx, abilityNy, size/2, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
             } else if (note.type === 'defend') {
@@ -2073,10 +2079,10 @@ class Renderer {
                 ctx.shadowColor = '#e74c3c';
                 ctx.shadowBlur = 15;
                 ctx.beginPath();
-                ctx.moveTo(nx, ny - size/2);
-                ctx.lineTo(nx + size/2, ny);
-                ctx.lineTo(nx, ny + size/2);
-                ctx.lineTo(nx - size/2, ny);
+                ctx.moveTo(shuffledNx, ny - size/2);
+                ctx.lineTo(shuffledNx + size/2, ny);
+                ctx.lineTo(shuffledNx, ny + size/2);
+                ctx.lineTo(shuffledNx - size/2, ny);
                 ctx.closePath();
                 ctx.fill();
                 ctx.shadowBlur = 0;
