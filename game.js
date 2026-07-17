@@ -702,6 +702,8 @@ class RhythmSystem {
         this.maxCombo = 0;
         this.score = 0;
         this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
+        this.giantNote = null;
+        this.giantNoteExploded = false;
     }
 }
 
@@ -2036,7 +2038,7 @@ class Renderer {
             if (nx < -50 || nx > barW + 50) return;
 
             const ny = barY + barH/2;
-            const size = 35;
+            const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
 
             if (note.type === 'sword') {
                 ctx.fillStyle = '#ff6b35';
