@@ -2370,6 +2370,13 @@ class GameController {
                 }
             });
             this.renderer.shake(6, 0.2);
+        } else if (this.localPlayer.invincible <= 0) {
+            const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
+            if (dmg > 0) {
+                this.localPlayer.takeDamage(dmg);
+                this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
+                    `-${Math.floor(dmg)}`, '#e74c3c', 16);
+            }
         }
     }
 
@@ -2492,6 +2499,13 @@ class GameController {
 
     update(dt) {
         this.gameTime += dt;
+        if (this.holdNoteActive) {
+            const currentBeat = this.audio.getCurrentBeat();
+            const beatInterval = 60 / this.audio.bpm;
+            if (currentBeat > this.holdNoteActive.holdEndBeat + CONSTANTS.GOOD_WINDOW / beatInterval) {
+                this.resolveHoldNoteEnd();
+            }
+        }
         if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
         // Update players (movement is AI-controlled)
