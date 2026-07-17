@@ -2268,6 +2268,16 @@ class GameController {
         } else if (noteType === 'defend') {
             this.localPlayer.defend();
             this.audio.playCounterSound();
+            const reductionByJudge = { perfect: 1, great: 0.9, good: 0.5 };
+            const reduction = reductionByJudge[result.judge] || 0;
+            if (reduction < 1) {
+                const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200) * (1 - reduction);
+                if (dmg > 0) {
+                    this.localPlayer.takeDamage(dmg);
+                    this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
+                        `-${Math.floor(dmg)}`, '#e74c3c', 16);
+                }
+            }
         }
         // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
         // バースト完了時の一括効果はupdate()側のability_complete処理で変更なく発動する。
