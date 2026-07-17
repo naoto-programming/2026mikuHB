@@ -413,6 +413,7 @@ class RhythmSystem {
         this.effectiveDiff = 1;
         this.giantNote = null;
         this.giantNoteExploded = false;
+        this.damageNotes = [];
     }
 
     startSwordBurst(beats, gimmick) {
@@ -505,6 +506,16 @@ class RhythmSystem {
         }
     }
 
+    generateDamageNote(beat) {
+        this.damageNotes.push({
+            id: this.noteId++,
+            beat: beat,
+            type: 'trap',
+            hit: false,
+            missed: false,
+        });
+    }
+
     findDefendNoteAtBeat(beat) {
         return this.defendNotes.find(n => !n.hit && !n.missed && n.beat === beat);
     }
@@ -571,6 +582,7 @@ class RhythmSystem {
 
         let searchPool = inputType === 'ability' ? this.abilityNotes
             : inputType === 'defend' ? this.defendNotes
+            : inputType === 'trap' ? this.damageNotes
             : this.swordNotes;
 
         let nearest = null;
@@ -644,6 +656,7 @@ class RhythmSystem {
             { type: 'sword', notes: this.swordNotes, windowMult },
             { type: 'ability', notes: this.abilityActive ? this.abilityNotes : [], windowMult },
             { type: 'defend', notes: this.defendNotes, windowMult: 1 },
+            { type: 'trap', notes: this.damageNotes, windowMult: 1 },
         ];
 
         let bestType = null;
@@ -668,11 +681,12 @@ class RhythmSystem {
         gimmick = gimmick || {};
         const speedMult = gimmick.noteSpeedMult || 1;
         const lineOffset = gimmick.judgeLineOffset || 0;
-        const currentBeat = this.audio.getCurrentBeat();
+        const rawCurrentBeat = this.audio.getCurrentBeat();
+        const currentBeat = gimmick.special === 'steppedMotion' ? Math.floor(rawCurrentBeat) : rawCurrentBeat;
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = LOOKAHEAD_BEATS + 1;
 
-        const allNotes = [...this.swordNotes, ...this.defendNotes];
+        const allNotes = [...this.swordNotes, ...this.defendNotes, ...this.damageNotes];
         if (this.abilityActive) {
             allNotes.push(...this.abilityNotes);
         }
@@ -1399,6 +1413,17 @@ class Renderer {
         // Rhythm UI
         if (game.state === 'playing') {
             this.renderRhythmUI(ctx, game);
+
+            if (game.rewindEffectTimer > 0) {
+                const t = game.rewindEffectTimer / 6;
+                ctx.save();
+                ctx.globalAlpha = 0.35 * t;
+                ctx.filter = 'invert(1) hue-rotate(180deg)';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, CONSTANTS.CANVAS_WIDTH, CONSTANTS.CANVAS_HEIGHT);
+                ctx.restore();
+                if (Math.random() < 0.3) this.shake(4, 0.1);
+            }
         }
 
         // Wave progress bar at bottom
@@ -2032,10 +2057,18 @@ class Renderer {
 
         // Notes
         const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
+        if (gimmick.special === 'driftingJudgeLine') {
+            gimmick.judgeLineOffset = Math.sin(game.audio.getCurrentBeat() * 1.5) * 60;
+        }
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
             const nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
+            if (gimmick.special === 'invisibleApproach') {
+                const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
+                if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
+            }
+            const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -20 : 20) : 0;
 
             let ny = barY + barH/2;
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
@@ -2044,6 +2077,7 @@ class Renderer {
                 const fallProgress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
                 ny = 40 + fallProgress * (barY - 40);
             }
+            ny += laneOffset;
             let shuffledNx = nx;
             if (gimmick.special === 'noteShuffle') {
                 const seed = Math.sin(note.id * 12.9898) * 43758.5453;
@@ -2086,6 +2120,15 @@ class Renderer {
                 ctx.closePath();
                 ctx.fill();
                 ctx.shadowBlur = 0;
+            } else if (note.type === 'trap') {
+                const trapNy = ny - 30;
+                ctx.fillStyle = '#8e44ad';
+                ctx.shadowColor = '#8e44ad';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(shuffledNx, trapNy, size/2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
             }
         });
 
@@ -2116,6 +2159,8 @@ class GameController {
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
         this.holdNoteActive = null;
+        this.rewindEffectTimer = 0;
+        this.rewindWasActive = false;
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -2340,6 +2385,9 @@ class GameController {
         this.audio.onBeat = (beat, time) => {
             if (this.state !== 'playing') return;
             this.audio.playMetronomeTick();
+            if (this.localPlayer.getActiveGimmick().special === 'resonanceShake') {
+                this.renderer.shake(5, 0.3);
+            }
         };
 
         // Rhythm judge callback
@@ -2360,6 +2408,14 @@ class GameController {
         const noteType = result.note.type;
         if (noteType === 'sword') {
             this.resolveSwordHit(result);
+        } else if (noteType === 'trap') {
+            const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
+            if (dmg > 0) {
+                this.localPlayer.takeDamage(dmg);
+                this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
+                    `-${Math.floor(dmg)}`, '#e74c3c', 16);
+            }
+            return;
         } else if (noteType === 'defend' && result.note.isHold) {
             this.holdNoteActive = result.note;
             this.localPlayer.defend();
@@ -2565,6 +2621,14 @@ class GameController {
 
     update(dt) {
         this.gameTime += dt;
+
+        const activeSpecial = this.localPlayer.getActiveGimmick().special;
+        if (activeSpecial === 'rewindEffect' && !this.rewindWasActive) {
+            this.rewindEffectTimer = 6; // 4拍分の演出 + 2拍分のノーツ生成停止(概算値、演出用途のため厳密な拍換算はしない)
+        }
+        this.rewindWasActive = activeSpecial === 'rewindEffect';
+        if (this.rewindEffectTimer > 0) this.rewindEffectTimer -= dt;
+
         if (this.holdNoteActive) {
             const currentBeat = this.audio.getCurrentBeat();
             const beatInterval = 60 / this.audio.bpm;
@@ -2583,7 +2647,8 @@ class GameController {
         this.stage.update(dt, this.players);
 
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
-        this.stage.enemies.forEach(e => {
+        const rewindPausingSpawns = activeSpecial === 'rewindEffect' && this.rewindEffectTimer > 0 && this.rewindEffectTimer < 2;
+        if (!rewindPausingSpawns) this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
                 const currentBeat = this.audio.getCurrentBeat();
                 const beatInterval = 60 / this.audio.bpm;
@@ -2594,8 +2659,13 @@ class GameController {
                 if (this.rhythm.hasAbilityNoteAtBeat(defendBeat)) {
                     defendBeat += 0.5;
                 }
-                if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
-                    if (this.localPlayer.getActiveGimmick().special === 'holdNote') {
+                const activeGimmickSpecial = this.localPlayer.getActiveGimmick().special;
+                if (activeGimmickSpecial === 'damageNote') {
+                    if (!this.rhythm.damageNotes.some(n => !n.hit && !n.missed && n.beat === defendBeat)) {
+                        this.rhythm.generateDamageNote(defendBeat);
+                    }
+                } else if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
+                    if (activeGimmickSpecial === 'holdNote') {
                         this.rhythm.generateHoldNote(defendBeat);
                     } else {
                         this.rhythm.generateDefendNote(defendBeat);
@@ -2616,6 +2686,10 @@ class GameController {
                 if (inRange) {
                     this.rhythm.generateGiantNote(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS));
                 }
+            }
+        } else if (activeGimmick.special === 'rapidFire') {
+            if (!this.rhythm.swordBurstActive) {
+                this.rhythm.startSwordBurst(4, activeGimmick);
             }
         } else if (!this.rhythm.swordBurstActive) {
             const inRange = this.stage.enemies.some(e => !e.dead &&
