@@ -411,6 +411,8 @@ class RhythmSystem {
         this.defendNotes = [];
         this.defendMissThisFrame = false;
         this.effectiveDiff = 1;
+        this.giantNote = null;
+        this.giantNoteExploded = false;
     }
 
     startSwordBurst(beats, gimmick) {
@@ -476,6 +478,33 @@ class RhythmSystem {
         });
     }
 
+    generateGiantNote(beat) {
+        const note = {
+            id: this.noteId++,
+            beat: beat,
+            type: 'sword',
+            hit: false,
+            missed: false,
+            isGiant: true,
+            giantStage: 3,
+        };
+        this.giantNote = note;
+        this.swordNotes.push(note);
+    }
+
+    resolveGiantHit() {
+        if (!this.giantNote) return;
+        this.giantNote.giantStage--;
+        if (this.giantNote.giantStage <= 0) {
+            this.giantNote.giantStage = 0;
+            this.giantNote.hit = true;
+            this.giantNoteExploded = true;
+        } else {
+            this.giantNote.beat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+            this.giantNote.hit = false;
+        }
+    }
+
     findDefendNoteAtBeat(beat) {
         return this.defendNotes.find(n => !n.hit && !n.missed && n.beat === beat);
     }
@@ -501,6 +530,14 @@ class RhythmSystem {
                 if (note.type === 'defend') this.defendMissThisFrame = true;
             }
         });
+
+        // 巨大ノーツを見逃した場合、missedのまま放置すると二度と新しい巨大ノーツが
+        // 生成されなくなってしまう（giantNoteが非nullのまま残るため）。参照をクリアして
+        // 次の間合い到達時に新しい巨大ノーツ（giantStage 3）を生成できるようにする。
+        if (this.giantNote && this.giantNote.missed) {
+            this.swordNotes = this.swordNotes.filter(n => n !== this.giantNote);
+            this.giantNote = null;
+        }
 
         // Check ability completion
         if (this.abilityActive) {
@@ -2384,6 +2421,22 @@ class GameController {
         this.localPlayer.attack();
         this.audio.playSwordSound();
 
+        if (result.note && result.note.isGiant) {
+            this.rhythm.resolveGiantHit();
+            if (this.rhythm.giantNoteExploded) {
+                this.stage.enemies.forEach(e => {
+                    if (e.dead) return;
+                    if (Math.abs(e.x - this.localPlayer.x) < 250) {
+                        e.takeDamage(this.localPlayer.getDamage(50, 'perfect'), 'ability');
+                    }
+                });
+                this.renderer.shake(8, 0.3);
+                this.rhythm.giantNoteExploded = false;
+                this.rhythm.swordNotes = this.rhythm.swordNotes.filter(n => n !== this.rhythm.giantNote);
+                this.rhythm.giantNote = null;
+            }
+        }
+
         if (result.judge !== 'miss') {
             const gimmick = this.localPlayer.getActiveGimmick();
             const dmg = Math.floor(this.localPlayer.getDamage(10, result.judge) * (gimmick.damageMult || 1));
@@ -2542,11 +2595,20 @@ class GameController {
         });
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
-        if (!this.rhythm.swordBurstActive) {
+        const activeGimmick = this.localPlayer.getActiveGimmick();
+        if (activeGimmick.special === 'giantNote') {
+            if (!this.rhythm.giantNote) {
+                const inRange = this.stage.enemies.some(e => !e.dead &&
+                    Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
+                if (inRange) {
+                    this.rhythm.generateGiantNote(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS));
+                }
+            }
+        } else if (!this.rhythm.swordBurstActive) {
             const inRange = this.stage.enemies.some(e => !e.dead &&
                 Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
             if (inRange) {
-                this.rhythm.startSwordBurst(4, this.localPlayer.getActiveGimmick());
+                this.rhythm.startSwordBurst(4, activeGimmick);
             }
         }
 
