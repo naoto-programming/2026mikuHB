@@ -669,42 +669,73 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
     const power = 0.4 + ratio * 0.6; // 全Miss:40%, 全成功:100%
     const alive = enemies.filter(e => !e.dead);
     const nearby = alive.filter(e => Math.abs(e.x - playerX) < 250);
-    const result = { charId, power, hits: [], buff: null };
+    const result = { charId, power, hits: [] };
 
     function hit(enemy, dmg) {
         enemy.takeDamage(dmg, 'ability');
         result.hits.push({ enemy, dmg });
     }
 
+    function knockback(enemy, playerX, amount) {
+        const dir = Math.sign(enemy.x - playerX) || 1;
+        enemy.x += dir * amount;
+    }
+
+    const POWER_TIERS = { weak: 20, medium: 35, strong: 55 };
+
     switch (charId) {
         case 'swordsman':
-            nearby.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
+            // 回転切り: 範囲(中)攻撃(強)
+            nearby.forEach(e => hit(e, Math.floor(POWER_TIERS.strong * player.upgrades.ability * power)));
             break;
-        case 'archer':
-            alive.slice(0, 5).forEach(e => hit(e, Math.floor(14 * player.upgrades.ability * power)));
+        case 'archer': {
+            // 貫通弓: 向いている方向の長距離直線上の敵全てに攻撃(中)
+            const facing = player.facing || 1;
+            alive
+                .filter(e => Math.sign(e.x - playerX) === facing && Math.abs(e.x - playerX) < 450)
+                .forEach(e => hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power)));
             break;
-        case 'thief':
-            result.buff = { type: 'haste', duration: 3 + 4 * power, noteRateBonus: 0.5 * power };
-            break;
-        case 'fighter': {
-            const target = alive[0];
+        }
+        case 'thief': {
+            // 4回攻撃: 最も近い敵にPerfect攻撃相当をやや強化して4回
+            let target = null, nearestDist = Infinity;
+            alive.forEach(e => {
+                const dist = Math.abs(e.x - playerX);
+                if (dist < nearestDist) { nearestDist = dist; target = e; }
+            });
             if (target) {
-                const hits = Math.max(1, Math.round(4 * power));
-                for (let i = 0; i < hits; i++) hit(target, Math.floor(12 * player.upgrades.ability));
+                const dmg = Math.floor(player.getDamage(10, 'perfect') * 1.2);
+                for (let i = 0; i < 4; i++) hit(target, dmg);
             }
             break;
         }
+        case 'fighter': {
+            // 吹き飛ばし: 長距離範囲(中)攻撃+ノックバック(強)
+            alive
+                .filter(e => Math.abs(e.x - playerX) < 450)
+                .forEach(e => {
+                    hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power));
+                    knockback(e, playerX, 100);
+                });
+            break;
+        }
         case 'beast': {
-            let target = null, highestHp = -1;
-            alive.forEach(e => { if (e.hp > highestHp) { highestHp = e.hp; target = e; } });
-            if (target) hit(target, Math.floor(90 * player.upgrades.ability * power));
+            // 突進引っ掻き: 向いている方向の中距離直線上に攻撃(中)+ノックバック(弱)
+            const facing = player.facing || 1;
+            alive
+                .filter(e => Math.sign(e.x - playerX) === facing && Math.abs(e.x - playerX) < 250)
+                .forEach(e => {
+                    hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power));
+                    knockback(e, playerX, 30);
+                });
             break;
         }
         case 'mage':
-            nearby.forEach(e => hit(e, Math.floor(45 * player.upgrades.ability * power)));
+            // ノーツメテオ: 生存中の敵全体に攻撃(弱)
+            alive.forEach(e => hit(e, Math.floor(POWER_TIERS.weak * player.upgrades.ability * power)));
             break;
         default:
-            alive.forEach(e => hit(e, Math.floor(30 * player.upgrades.ability * power)));
+            alive.forEach(e => hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power)));
     }
 
     return result;
@@ -2026,8 +2057,6 @@ class GameController {
         this.lastTime = 0;
         this.gameTime = 0;
         this.abilityCooldown = 0;
-        this.hasteTimer = 0;
-        this.hasteNoteRateBonus = 0;
 
         this.setupInput();
         this.setupUI();
@@ -2221,8 +2250,6 @@ class GameController {
         document.getElementById('comboDisplay').style.opacity = '0.3';
         this.gameTime = 0;
         this.abilityCooldown = 0;
-        this.hasteTimer = 0;
-        this.hasteNoteRateBonus = 0;
 
         // Reset player positions
         this.players.forEach(p => {
@@ -2423,7 +2450,7 @@ class GameController {
 
     update(dt) {
         this.gameTime += dt;
-        if (this.abilityCooldown > 0) this.abilityCooldown -= dt * (1 + this.hasteNoteRateBonus);
+        if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
         // Update players (movement is AI-controlled)
         this.players.forEach(p => {
@@ -2483,18 +2510,8 @@ class GameController {
                     `${dmg}`, '#4a90d9', 18);
             });
 
-            if (outcome.buff && outcome.buff.type === 'haste') {
-                this.hasteTimer = outcome.buff.duration;
-                this.hasteNoteRateBonus = outcome.buff.noteRateBonus;
-            }
-
             this.renderer.shake(5, 0.2);
             this.audio.playAbilitySound();
-        }
-
-        if (this.hasteTimer > 0) {
-            this.hasteTimer -= dt;
-            if (this.hasteTimer <= 0) this.hasteNoteRateBonus = 0;
         }
 
         // 防御ノーツを取りこぼした瞬間、周囲の敵からまとめてダメージを受ける
