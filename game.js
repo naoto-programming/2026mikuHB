@@ -2037,8 +2037,13 @@ class Renderer {
             const nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
 
-            const ny = barY + barH/2;
+            let ny = barY + barH/2;
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
+            if (gimmick.special === 'notesFallFromAbove') {
+                const beatsRemaining = note.beat - currentBeat;
+                const fallProgress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
+                ny = 40 + fallProgress * (barY - 40);
+            }
 
             if (note.type === 'sword') {
                 ctx.fillStyle = '#ff6b35';
