@@ -204,6 +204,12 @@ class AudioSystem {
     async startBGM(track) {
         if (!this.ctx) this.init();
         const buffer = await this.loadTrack(track);
+        // ブラウザの自動再生ポリシーにより、ここでAudioContextがまだ'suspended'のままだと
+        // ctx.currentTimeが進まず、拍クロック(getCurrentBeat)が固まってノーツが流れなくなる。
+        // 再生開始直前に必ずrunning状態へ遷移させておく。
+        if (this.ctx.state === 'suspended') {
+            await this.ctx.resume();
+        }
         this.bpm = track.bpm;
         if (this.source) {
             try { this.source.stop(); } catch (e) {}
@@ -1260,6 +1266,7 @@ class StageManager {
         this.completed = false;
         this.totalScore = 0;
         this.difficultyMult = 1;
+        this.transitioning = false;
     }
 
     getStageMod() {
@@ -1276,7 +1283,7 @@ class StageManager {
     }
 
     update(dt, players) {
-        if (this.completed) return;
+        if (this.completed || this.transitioning) return;
 
         this.waveTimer -= dt;
         if (this.waveTimer <= 0 && this.enemies.length === 0 && this.currentWave < this.totalWaves) {
@@ -2537,6 +2544,11 @@ class GameController {
     async startGame() {
         this.state = 'playing';
         this.stage.completed = false;
+        // loadTrack()のawait中もrequestAnimationFrameの毎フレームupdate()は走り続けるため、
+        // stage.start()でcurrentWave/totalWavesが正しく再設定される前にStageManager.update()が
+        // 前ステージの古い値(currentWave===totalWaves)で即座にcompleted=trueにしてしまう
+        // レースコンディションを防ぐ。stage.start()完了までStageManagerの更新自体を止めておく。
+        this.stage.transitioning = true;
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
         document.getElementById('bottomHud').classList.remove('hidden');
@@ -2561,6 +2573,7 @@ class GameController {
         const track = pickRandomTrack();
         const buffer = await this.audio.loadTrack(track);
         this.stage.start(buffer.duration);
+        this.stage.transitioning = false;
         this.audio.startBGM(track);
         this.audio.loadSfx();
 
