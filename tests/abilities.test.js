@@ -20,27 +20,28 @@ function makePlayer(charId) {
     if (outcome.hits[0].enemy !== near) throw new Error('swordsman ability hit the wrong enemy');
 }
 
-// 弓士「貫通弓」: facing方向・長距離(450px)の敵全てにヒットする(逆方向にはヒットしない)
+// 弓士「貫通弓」: 向いている方向ではなく、敵がより遠くまで広がっている側にヒットする
 {
     const player = makePlayer('archer');
-    player.facing = 1;
-    const ahead = new Enemy('normal', 300, 0, 1); // プレイヤーx=0から見て前方
-    const behind = new Enemy('normal', -300, 0, 1); // 後方
-    const tooFar = new Enemy('normal', 500, 0, 1); // 前方だが450px超
-    const outcome = applyAbility('archer', 1, player, [ahead, behind, tooFar], 0);
-    if (outcome.hits.length !== 1) throw new Error('archer ability should only hit enemies ahead within 450px, got ' + outcome.hits.length);
-    if (outcome.hits[0].enemy !== ahead) throw new Error('archer ability hit the wrong enemy');
+    player.facing = -1; // 向いている方向は後方
+    const closeBehind = new Enemy('normal', -50, 0, 1); // facingと同じ側だが近い
+    const farAhead = new Enemy('normal', 400, 0, 1); // facingと逆側だが最も遠い(450px以内)
+    const outcome = applyAbility('archer', 1, player, [closeBehind, farAhead], 0);
+    if (outcome.hits.length !== 1) throw new Error('archer ability should aim toward the farther side, got ' + outcome.hits.length);
+    if (outcome.hits[0].enemy !== farAhead) throw new Error('archer ability should hit the farther-side enemy regardless of facing, hit ' + JSON.stringify(outcome.hits));
 }
 
-// 盗賊「4回攻撃」: 最も近い敵単体に4回ヒットする、バフは発生しない
+// 盗賊「4回攻撃」(1回分): 基本攻撃と同じ間合いの敵全てにヒットする(単体攻撃ではない)、バフは発生しない
 {
     const player = makePlayer('thief');
     player.x = 0;
-    const near = new Enemy('normal', 50, 0, 1);
-    const far = new Enemy('normal', 500, 0, 1);
-    const outcome = applyAbility('thief', 1, player, [near, far], 0);
-    if (outcome.hits.length !== 4) throw new Error('thief ability should hit 4 times, got ' + outcome.hits.length);
-    if (outcome.hits.some(h => h.enemy !== near)) throw new Error('thief ability should only hit the nearest enemy');
+    const range = player.getAttackRange();
+    const near1 = new Enemy('normal', range * 0.3, 0, 1);
+    const near2 = new Enemy('normal', -range * 0.5, 0, 1);
+    const far = new Enemy('normal', range + 50, 0, 1);
+    const outcome = applyAbility('thief', 1, player, [near1, near2, far], 0);
+    if (outcome.hits.length !== 2) throw new Error('thief ability should hit every enemy within the basic attack range in one call, got ' + outcome.hits.length);
+    if (outcome.hits.some(h => h.enemy === far)) throw new Error('thief ability should not hit enemies outside the basic attack range');
     if (outcome.buff) throw new Error('thief ability should no longer grant any buff');
 }
 

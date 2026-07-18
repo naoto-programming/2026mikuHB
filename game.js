@@ -764,24 +764,31 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
             nearby.forEach(e => hit(e, Math.floor(POWER_TIERS.strong * player.upgrades.ability * power)));
             break;
         case 'archer': {
-            // 貫通弓: 向いている方向の長距離直線上の敵全てに攻撃(中)
-            const facing = player.facing || 1;
+            // 貫通弓: 向いている方向ではなく、左右のうち敵がより遠くまで広がっている方へ撃つ
+            // （貫通の恩恵を活かせるよう、より多くを射抜ける可能性がある方向を選ぶ）
+            let dir = player.facing || 1;
+            if (alive.length > 0) {
+                let farthest = null, farthestDist = -1;
+                alive.forEach(e => {
+                    const dist = Math.abs(e.x - playerX);
+                    if (dist > farthestDist) { farthestDist = dist; farthest = e; }
+                });
+                dir = Math.sign(farthest.x - playerX) || dir;
+            }
             alive
-                .filter(e => Math.sign(e.x - playerX) === facing && Math.abs(e.x - playerX) < 450)
+                .filter(e => Math.sign(e.x - playerX) === dir && Math.abs(e.x - playerX) < 450)
                 .forEach(e => hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power)));
             break;
         }
         case 'thief': {
-            // 4回攻撃: 最も近い敵にPerfect攻撃相当をやや強化して4回
-            let target = null, nearestDist = Infinity;
-            alive.forEach(e => {
-                const dist = Math.abs(e.x - playerX);
-                if (dist < nearestDist) { nearestDist = dist; target = e; }
-            });
-            if (target) {
-                const dmg = Math.floor(player.getDamage(10, 'perfect') * 1.2);
-                for (let i = 0; i < 4; i++) hit(target, dmg);
-            }
+            // 4回攻撃(1回分): 基本攻撃と同じ間合いの敵全てにPerfect攻撃相当をやや強化して攻撃する。
+            // 呼び出し側(GameController)がこれを0.25拍間隔で4回呼び出し、単発の一撃ではなく
+            // 連続コンボとして扱う。
+            const range = player.getAttackRange();
+            const dmg = Math.floor(player.getDamage(10, 'perfect') * 1.2);
+            alive
+                .filter(e => Math.abs(e.x - playerX) < range)
+                .forEach(e => hit(e, dmg));
             break;
         }
         case 'fighter': {
@@ -897,7 +904,7 @@ class Player {
         return Math.floor(dmg * (this.char.atk / 10));
     }
 
-    update(dt, scrollX, enemies) {
+    update(dt, scrollX, enemies, holdGimmickTimer) {
         this.animTimer += dt;
         if (this.invincible > 0) this.invincible -= dt;
         if (this.flashTimer > 0) this.flashTimer -= dt;
@@ -906,8 +913,10 @@ class Player {
             if (this.pulseTimer < 0) this.pulseTimer = 0;
         }
 
-        this.gimmickTimer -= dt;
-        if (this.gimmickTimer <= 0) {
+        // holdGimmickTimerが立っている間はギミックの特殊フェーズを時間切れにしない
+        // （巨大ノーツ未爆発・巻き戻し演出中など、途中終了すると達成不可能になるものを保護する）
+        if (!holdGimmickTimer) this.gimmickTimer -= dt;
+        if (!holdGimmickTimer && this.gimmickTimer <= 0) {
             if (this.gimmickPhase === 'normal') {
                 this.gimmickPhase = 'special';
                 this.gimmickTimer = GIMMICK_SPECIAL_SECONDS;
@@ -1310,6 +1319,7 @@ class Renderer {
         this.ctx = canvas.getContext('2d');
         this.particles = [];
         this.floatingTexts = [];
+        this.meteorNotes = [];
         this.shakeTimer = 0;
         this.shakeIntensity = 0;
         this.bgStars = [];
@@ -1343,6 +1353,35 @@ class Renderer {
                 size: 3 + Math.random() * 4,
                 gravity: 0.2,
             });
+        }
+    }
+
+    addMeteorNote(x, targetY) {
+        this.meteorNotes.push({ x, y: targetY - 260, targetY, t: 0 });
+    }
+
+    renderMeteorNotes(ctx) {
+        for (let i = this.meteorNotes.length - 1; i >= 0; i--) {
+            const m = this.meteorNotes[i];
+            m.t += 1 / 60;
+            const progress = Math.min(1, m.t / 0.35);
+            const y = m.y + (m.targetY - m.y) * progress;
+            ctx.save();
+            ctx.fillStyle = '#4a90d9';
+            ctx.shadowColor = '#4a90d9';
+            ctx.shadowBlur = 16;
+            ctx.beginPath();
+            ctx.arc(m.x, y, 13, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(74,144,217,0.4)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(m.x, m.y);
+            ctx.lineTo(m.x, y);
+            ctx.stroke();
+            ctx.restore();
+            if (progress >= 1) this.meteorNotes.splice(i, 1);
         }
     }
 
@@ -1417,6 +1456,9 @@ class Renderer {
         // Particles
         this.renderParticles(ctx);
 
+        // 魔法使い「ノーツメテオ」が敵に着弾するまでの落下演出
+        this.renderMeteorNotes(ctx);
+
         // Floating texts
         this.renderFloatingTexts(ctx);
 
@@ -1426,13 +1468,25 @@ class Renderer {
 
             if (game.rewindEffectTimer > 0) {
                 const t = game.rewindEffectTimer / 6;
+                // globalCompositeOperation='difference'で画面全体を実際に色反転させる
+                // （filterだけでは背景を反転できず、地味な半透明オーバーレイにしかならなかった）
                 ctx.save();
-                ctx.globalAlpha = 0.35 * t;
-                ctx.filter = 'invert(1) hue-rotate(180deg)';
+                ctx.globalCompositeOperation = 'difference';
                 ctx.fillStyle = '#ffffff';
+                ctx.globalAlpha = Math.min(1, t * 1.5);
                 ctx.fillRect(0, 0, CONSTANTS.CANVAS_WIDTH, CONSTANTS.CANVAS_HEIGHT);
                 ctx.restore();
-                if (Math.random() < 0.3) this.shake(4, 0.1);
+                if (Math.random() < 0.5) this.shake(12, 0.15);
+
+                ctx.save();
+                ctx.globalAlpha = 0.9;
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 6;
+                ctx.font = 'bold 30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('◀◀ 巻き戻し ◀◀', w / 2, 70);
+                ctx.restore();
             }
         }
 
@@ -2031,21 +2085,30 @@ class Renderer {
         ctx.lineWidth = 1;
         ctx.strokeRect(barX, barY, barW, barH);
 
+        // 魔法使いA「判定線移動」: 判定線自体の表示位置(左右・上下)を実際に動かす。
+        // ノーツ側のx(base+lineOffset)は既にこの値を織り込んで計算されるため、
+        // 描画上の判定線もここで求めた値で一致させる（判定タイミング自体は変えない）。
+        const driftingJudgeLine = game.localPlayer && game.localPlayer.getActiveGimmick().special === 'driftingJudgeLine';
+        const judgeLineOffsetX = driftingJudgeLine ? Math.sin(game.audio.getCurrentBeat() * 1.5) * 60 : 0;
+        const judgeLineOffsetY = driftingJudgeLine ? Math.cos(game.audio.getCurrentBeat() * 1.1) * 25 : 0;
+
         // Target line (center)
         const targetX = barW / 2;
+        const lineDrawX = targetX + judgeLineOffsetX;
+        const lineDrawCenterY = barY + barH / 2 + judgeLineOffsetY;
         ctx.strokeStyle = '#ff6b35';
         ctx.lineWidth = 3;
         ctx.shadowColor = '#ff6b35';
         ctx.shadowBlur = 10;
         ctx.beginPath();
-        ctx.moveTo(targetX, barY + 5);
-        ctx.lineTo(targetX, barY + barH - 5);
+        ctx.moveTo(lineDrawX, lineDrawCenterY - barH / 2 + 5);
+        ctx.lineTo(lineDrawX, lineDrawCenterY + barH / 2 - 5);
         ctx.stroke();
         ctx.shadowBlur = 0;
 
         // Target glow
         ctx.fillStyle = 'rgba(255,107,53,0.1)';
-        ctx.fillRect(targetX - 25, barY + 5, 50, barH - 10);
+        ctx.fillRect(lineDrawX - 25, lineDrawCenterY - barH / 2 + 5, 50, barH - 10);
 
         // Beat markers
         const currentBeat = game.audio.getCurrentBeat();
@@ -2067,8 +2130,22 @@ class Renderer {
 
         // Notes
         const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
-        if (gimmick.special === 'driftingJudgeLine') {
-            gimmick.judgeLineOffset = Math.sin(game.audio.getCurrentBeat() * 1.5) * 60;
+        if (driftingJudgeLine) {
+            gimmick.judgeLineOffset = judgeLineOffsetX;
+        }
+        const LANE_SPLIT_OFFSET = 32;
+        if (gimmick.special === 'laneSplit') {
+            // 2レーンに分かれていることが分かるよう、常時ガイド線を描いておく
+            ctx.strokeStyle = 'rgba(74,144,217,0.35)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
+            [-LANE_SPLIT_OFFSET, LANE_SPLIT_OFFSET].forEach(off => {
+                ctx.beginPath();
+                ctx.moveTo(0, barY + barH / 2 + off);
+                ctx.lineTo(barW, barY + barH / 2 + off);
+                ctx.stroke();
+            });
+            ctx.setLineDash([]);
         }
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
@@ -2084,11 +2161,11 @@ class Renderer {
                 const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
                 if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
             }
-            const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -20 : 20)
+            const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -LANE_SPLIT_OFFSET : LANE_SPLIT_OFFSET)
                 : gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
                 : 0;
 
-            let ny = barY + barH/2;
+            let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
             if (gimmick.special === 'notesFallFromAbove') {
                 const beatsRemaining = note.beat - currentBeat;
@@ -2197,6 +2274,7 @@ class GameController {
         this.holdNoteActive = null;
         this.rewindEffectTimer = 0;
         this.rewindWasActive = false;
+        this.thiefCombo = null;
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -2399,6 +2477,7 @@ class GameController {
         document.getElementById('comboDisplay').style.opacity = '0.3';
         this.gameTime = 0;
         this.abilityCooldown = 0;
+        this.thiefCombo = null;
 
         // Reset player positions
         this.players.forEach(p => {
@@ -2520,6 +2599,20 @@ class GameController {
                     `-${Math.floor(dmg)}`, '#e74c3c', 16);
             }
         }
+    }
+
+    // 一部のギミックは8秒の特殊フェーズ内では最後まで発動しきれないことがあるため、
+    // 「未完了の間はフェーズタイマーを進めない」ことで時間切れではなく条件達成で終わるようにする。
+    shouldHoldGimmickTimer() {
+        if (this.localPlayer.gimmickPhase !== 'special') return false;
+        const special = this.localPlayer.getActiveGimmick().special;
+        if (special === 'giantNote') {
+            return !!this.rhythm.giantNote;
+        }
+        if (special === 'rewindEffect') {
+            return this.rewindEffectTimer > 0;
+        }
+        return false;
     }
 
     resolveSwordHit(result) {
@@ -2676,7 +2769,8 @@ class GameController {
 
         // Update players (movement is AI-controlled)
         this.players.forEach(p => {
-            p.update(dt, this.stage.scrollX, this.stage.enemies);
+            const holdGimmickTimer = (p === this.localPlayer) && this.shouldHoldGimmickTimer();
+            p.update(dt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer);
         });
 
         // Update stage
@@ -2763,16 +2857,51 @@ class GameController {
         const abilityResult = this.rhythm.update();
         if (abilityResult && abilityResult.type === 'ability_complete') {
             const ratio = abilityResult.hitCount / abilityResult.total;
-            const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+            if (this.localPlayer.charId === 'thief') {
+                // 4回攻撃: 0.25拍間隔で4回、基本攻撃と同じ間合いの敵全てに繰り返しヒットさせる
+                this.thiefCombo = {
+                    ratio,
+                    remaining: 4,
+                    nextBeat: this.audio.getCurrentBeat(),
+                };
+            } else {
+                const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
 
-            outcome.hits.forEach(({ enemy, dmg }) => {
-                this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
-                this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
-                    `${dmg}`, '#4a90d9', 18);
-            });
+                outcome.hits.forEach(({ enemy, dmg }) => {
+                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
+                    this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
+                        `${dmg}`, '#4a90d9', 18);
+                    if (this.localPlayer.charId === 'mage') {
+                        this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2);
+                    }
+                });
 
-            this.renderer.shake(5, 0.2);
-            this.audio.playAbilitySound();
+                this.renderer.shake(5, 0.2);
+                this.audio.playAbilitySound();
+            }
+        }
+
+        // 盗賊「4回攻撃」: 0.25拍ごとに1回分ずつ実際にヒットを適用し、都度シュバッと敵の方へダッシュする
+        if (this.thiefCombo) {
+            const currentBeat = this.audio.getCurrentBeat();
+            if (currentBeat >= this.thiefCombo.nextBeat) {
+                const outcome = applyAbility('thief', this.thiefCombo.ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+                let nearest = null, nearestDist = Infinity;
+                outcome.hits.forEach(({ enemy, dmg }) => {
+                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
+                    this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
+                        `${dmg}`, '#4a90d9', 18);
+                    const dist = Math.abs(enemy.x - this.localPlayer.x);
+                    if (dist < nearestDist) { nearestDist = dist; nearest = enemy; }
+                });
+                if (nearest) {
+                    this.localPlayer.perfectDash(Math.sign(nearest.x - this.localPlayer.x) || this.localPlayer.facing);
+                }
+                this.audio.playAbilitySound();
+                this.thiefCombo.remaining--;
+                this.thiefCombo.nextBeat += 0.25;
+                if (this.thiefCombo.remaining <= 0) this.thiefCombo = null;
+            }
         }
 
         // 防御ノーツを取りこぼした瞬間、周囲の敵からまとめてダメージを受ける
