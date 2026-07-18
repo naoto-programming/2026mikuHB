@@ -35,11 +35,11 @@ const CHARACTERS = [
 ];
 
 const CHARACTER_GIMMICKS = {
-    swordsman: [{ special: 'holdNote' }, { special: 'giantNote' }],
+    swordsman: [{ special: 'flickUpNote' }, { special: 'giantNote' }],
     archer: [{ special: 'notesFallFromAbove' }, { special: 'noteShuffle' }],
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'damageNote' }],
-    beast: [{ special: 'invisibleApproach' }, { special: 'rewindEffect' }],
+    beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
     mage: [{ special: 'driftingJudgeLine' }, { special: 'laneSplit' }],
 };
 const GIMMICK_NORMAL_SECONDS = 20;
@@ -468,15 +468,14 @@ class RhythmSystem {
         });
     }
 
-    generateHoldNote(beat) {
+    generateFlickUpNote(beat) {
         this.defendNotes.push({
             id: this.noteId++,
             beat: beat,
             type: 'defend',
             hit: false,
             missed: false,
-            isHold: true,
-            holdEndBeat: beat + 1,
+            flickUp: true,
         });
     }
 
@@ -502,7 +501,7 @@ class RhythmSystem {
             this.giantNote.hit = true;
             this.giantNoteExploded = true;
         } else {
-            this.giantNote.beat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+            this.giantNote.beat = this.findFreeBeat(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS));
             this.giantNote.hit = false;
         }
     }
@@ -524,6 +523,23 @@ class RhythmSystem {
     hasAbilityNoteAtBeat(beat) {
         if (!this.abilityActive) return false;
         return this.abilityNotes.some(n => !n.hit && !n.missed && n.beat === beat);
+    }
+
+    // 巨大ノーツ・ダメージノーツ等、他のノーツ種別と打つタイミングが被ってはいけない
+    // ギミック用に、指定beatが既に何かに使われていないか確認する
+    beatIsOccupied(beat) {
+        const pools = [this.swordNotes, this.abilityNotes, this.defendNotes, this.damageNotes];
+        return pools.some(pool => pool.some(n => !n.hit && !n.missed && n.beat === beat));
+    }
+
+    findFreeBeat(beat) {
+        let candidate = beat;
+        let guard = 0;
+        while (this.beatIsOccupied(candidate) && guard < 8) {
+            candidate += 0.5;
+            guard++;
+        }
+        return candidate;
     }
 
     update() {
@@ -548,7 +564,7 @@ class RhythmSystem {
         if (this.giantNote && this.giantNote.missed) {
             this.giantNote.missed = false;
             this.giantNote.hit = false;
-            this.giantNote.beat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+            this.giantNote.beat = this.findFreeBeat(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS));
         }
 
         // Check ability completion
@@ -775,6 +791,7 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
                 });
                 dir = Math.sign(farthest.x - playerX) || dir;
             }
+            result.dir = dir;
             alive
                 .filter(e => Math.sign(e.x - playerX) === dir && Math.abs(e.x - playerX) < 450)
                 .forEach(e => hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power)));
@@ -792,23 +809,37 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
             break;
         }
         case 'fighter': {
-            // 吹き飛ばし: 長距離範囲(中)攻撃+ノックバック(強)
-            alive
-                .filter(e => Math.abs(e.x - playerX) < 450)
-                .forEach(e => {
+            // 吹き飛ばし: 長距離範囲(中)攻撃+ノックバック(強)。ノックバックの見た目が
+            // 分かりやすいよう、攻撃range外の少し広い範囲にもノックバックだけ効果を及ぼす
+            const dmgRange = 450, knockbackOnlyRange = 650;
+            alive.forEach(e => {
+                const dist = Math.abs(e.x - playerX);
+                if (dist < dmgRange) {
                     hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power));
                     knockback(e, playerX, 100);
-                });
+                } else if (dist < knockbackOnlyRange) {
+                    knockback(e, playerX, 100);
+                }
+            });
             break;
         }
         case 'beast': {
-            // 突進引っ掻き: 向いている方向の中距離直線上に攻撃(中)+ノックバック(弱)
+            // 突進引っ掻き: 向いている方向の中距離直線上に攻撃(中)+ノックバック(弱)。
+            // ノックバックの見た目が分かりやすいよう、攻撃range外の少し広い範囲にも
+            // ノックバックだけ効果を及ぼす
             const facing = player.facing || 1;
+            result.dir = facing;
+            const dmgRange = 250, knockbackOnlyRange = 400;
             alive
-                .filter(e => Math.sign(e.x - playerX) === facing && Math.abs(e.x - playerX) < 250)
+                .filter(e => Math.sign(e.x - playerX) === facing)
                 .forEach(e => {
-                    hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power));
-                    knockback(e, playerX, 30);
+                    const dist = Math.abs(e.x - playerX);
+                    if (dist < dmgRange) {
+                        hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power));
+                        knockback(e, playerX, 30);
+                    } else if (dist < knockbackOnlyRange) {
+                        knockback(e, playerX, 30);
+                    }
                 });
             break;
         }
@@ -1320,6 +1351,7 @@ class Renderer {
         this.particles = [];
         this.floatingTexts = [];
         this.meteorNotes = [];
+        this.flyingArrows = [];
         this.shakeTimer = 0;
         this.shakeIntensity = 0;
         this.bgStars = [];
@@ -1382,6 +1414,29 @@ class Renderer {
             ctx.stroke();
             ctx.restore();
             if (progress >= 1) this.meteorNotes.splice(i, 1);
+        }
+    }
+
+    addFlyingArrow(x, y, dir, image) {
+        this.flyingArrows.push({ x, y, dir, image, t: 0 });
+    }
+
+    renderFlyingArrows(ctx) {
+        for (let i = this.flyingArrows.length - 1; i >= 0; i--) {
+            const a = this.flyingArrows[i];
+            a.t += 1 / 60;
+            a.x += a.dir * 900 / 60;
+            ctx.save();
+            ctx.translate(a.x, a.y);
+            ctx.scale(a.dir < 0 ? -1 : 1, 1);
+            if (a.image) {
+                ctx.drawImage(a.image, -22, -9, 44, 18);
+            } else {
+                ctx.fillStyle = '#c99a5b';
+                ctx.fillRect(-22, -3, 44, 6);
+            }
+            ctx.restore();
+            if (a.t > 0.6 || a.x < -100 || a.x > CONSTANTS.CANVAS_WIDTH + 100) this.flyingArrows.splice(i, 1);
         }
     }
 
@@ -1459,35 +1514,15 @@ class Renderer {
         // 魔法使い「ノーツメテオ」が敵に着弾するまでの落下演出
         this.renderMeteorNotes(ctx);
 
+        // 弓士「貫通弓」が飛んでいく矢の演出
+        this.renderFlyingArrows(ctx);
+
         // Floating texts
         this.renderFloatingTexts(ctx);
 
         // Rhythm UI
         if (game.state === 'playing') {
             this.renderRhythmUI(ctx, game);
-
-            if (game.rewindEffectTimer > 0) {
-                const t = game.rewindEffectTimer / 6;
-                // globalCompositeOperation='difference'で画面全体を実際に色反転させる
-                // （filterだけでは背景を反転できず、地味な半透明オーバーレイにしかならなかった）
-                ctx.save();
-                ctx.globalCompositeOperation = 'difference';
-                ctx.fillStyle = '#ffffff';
-                ctx.globalAlpha = Math.min(1, t * 1.5);
-                ctx.fillRect(0, 0, CONSTANTS.CANVAS_WIDTH, CONSTANTS.CANVAS_HEIGHT);
-                ctx.restore();
-                if (Math.random() < 0.5) this.shake(12, 0.15);
-
-                ctx.save();
-                ctx.globalAlpha = 0.9;
-                ctx.fillStyle = '#ffffff';
-                ctx.shadowColor = '#000000';
-                ctx.shadowBlur = 6;
-                ctx.font = 'bold 30px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('◀◀ 巻き戻し ◀◀', w / 2, 70);
-                ctx.restore();
-            }
         }
 
         // Wave progress bar at bottom
@@ -2147,15 +2182,50 @@ class Renderer {
             });
             ctx.setLineDash([]);
         }
+        // 獣人B「判定円」: 中央に判定円を配置し、上下左右に動かす。
+        // ノーツは8方向から判定円に向かって流れてくる(打つタイミングは通常と同じ、距離のみで判定)。
+        const centerJudgeCircle = gimmick.special === 'centerJudgeCircle';
+        const cjcCenterX = CONSTANTS.CANVAS_WIDTH / 2;
+        const cjcCenterY = CONSTANTS.CANVAS_HEIGHT / 2;
+        const cjcCircleX = cjcCenterX + Math.sin(currentBeat * 0.8) * 140;
+        const cjcCircleY = cjcCenterY + Math.cos(currentBeat * 0.6) * 90;
+        if (centerJudgeCircle) {
+            ctx.save();
+            ctx.strokeStyle = '#e74c3c';
+            ctx.lineWidth = 4;
+            ctx.shadowColor = '#e74c3c';
+            ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.arc(cjcCircleX, cjcCircleY, 30, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
-            let nx = targetX + (note.x - 300);
-            if (gimmick.special === 'notesFallFromAbove') {
-                // 判定線に収束せず、レーン内の様々な場所に固定のx座標で降らせる
-                // （判定タイミング・到達時間は変わらない、見た目のみ）
-                const seed = Math.sin(note.id * 53.173) * 91731.7;
-                nx = 60 + (seed - Math.floor(seed)) * (barW - 120);
+            if (centerJudgeCircle && note.type === 'defend') {
+                const angle = (note.id % 8) * (Math.PI / 4);
+                const spawnRadius = 420;
+                const spawnX = cjcCenterX + Math.cos(angle) * spawnRadius;
+                const spawnY = cjcCenterY + Math.sin(angle) * spawnRadius;
+                const beatsRemaining = note.beat - currentBeat;
+                const progress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
+                const px = spawnX + (cjcCircleX - spawnX) * progress;
+                const py = spawnY + (cjcCircleY - spawnY) * progress;
+                ctx.fillStyle = '#e74c3c';
+                ctx.shadowColor = '#e74c3c';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.moveTo(px, py - 17.5);
+                ctx.lineTo(px + 17.5, py);
+                ctx.lineTo(px, py + 17.5);
+                ctx.lineTo(px - 17.5, py);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                return;
             }
+            const nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
                 const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
@@ -2168,17 +2238,20 @@ class Renderer {
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
             if (gimmick.special === 'notesFallFromAbove') {
+                // 出現直後だけ上空から落ちてきてレーンに着地し、以降は通常のノーツと同じ高さ・
+                // 横移動でレーンを流れて判定線で打つ（判定タイミングは不変）
                 const beatsRemaining = note.beat - currentBeat;
-                const fallProgress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
-                ny = 40 + fallProgress * (barY - 40);
+                const fallWindowStart = LOOKAHEAD_BEATS + 1;
+                const fallWindowEnd = LOOKAHEAD_BEATS - 1.5;
+                if (beatsRemaining > fallWindowEnd) {
+                    const fallProgress = 1 - Math.max(0, Math.min(1, (beatsRemaining - fallWindowEnd) / (fallWindowStart - fallWindowEnd)));
+                    ny = 40 + fallProgress * (ny - 40);
+                }
             }
             ny += laneOffset;
-            let shuffledNx = nx;
-            if (gimmick.special === 'noteShuffle') {
-                const seed = Math.sin(note.id * 12.9898) * 43758.5453;
-                const jitter = (seed - Math.floor(seed) - 0.5) * 120;
-                shuffledNx = nx + jitter;
-            }
+            // noteShuffle特有のx計算は既にRhythmSystem.getNotesForRender側(接近方向のシャッフル)
+            // で行われているため、ここでは追加のジッターは加えない（リズムを保つため）
+            const shuffledNx = nx;
 
             if (note.type === 'sword') {
                 ctx.fillStyle = '#ff6b35';
@@ -2204,16 +2277,20 @@ class Renderer {
                 ctx.fill();
                 ctx.shadowBlur = 0;
             } else if (note.type === 'defend') {
-                if (note.isHold) {
-                    const holdSize = size * 1.4;
+                if (note.flickUp) {
+                    // 上に弾くノーツ: 金色の上向き矢印で、通常の防御ノーツと区別する
+                    const flickSize = size * 1.3;
                     ctx.fillStyle = '#f1c40f';
                     ctx.shadowColor = '#f1c40f';
                     ctx.shadowBlur = 22;
                     ctx.beginPath();
-                    ctx.moveTo(shuffledNx, ny - holdSize/2);
-                    ctx.lineTo(shuffledNx + holdSize/2, ny);
-                    ctx.lineTo(shuffledNx, ny + holdSize/2);
-                    ctx.lineTo(shuffledNx - holdSize/2, ny);
+                    ctx.moveTo(shuffledNx, ny - flickSize/2);
+                    ctx.lineTo(shuffledNx + flickSize/2, ny + flickSize/4);
+                    ctx.lineTo(shuffledNx + flickSize/4, ny + flickSize/4);
+                    ctx.lineTo(shuffledNx + flickSize/4, ny + flickSize/2);
+                    ctx.lineTo(shuffledNx - flickSize/4, ny + flickSize/2);
+                    ctx.lineTo(shuffledNx - flickSize/4, ny + flickSize/4);
+                    ctx.lineTo(shuffledNx - flickSize/2, ny + flickSize/4);
                     ctx.closePath();
                     ctx.fill();
                     ctx.lineWidth = 3;
@@ -2271,9 +2348,6 @@ class GameController {
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
-        this.holdNoteActive = null;
-        this.rewindEffectTimer = 0;
-        this.rewindWasActive = false;
         this.thiefCombo = null;
 
         this.lastTime = 0;
@@ -2308,16 +2382,11 @@ class GameController {
 
         window.addEventListener('keyup', (e) => {
             this.heldKeys.delete(e.key.toLowerCase());
-            if (this.heldKeys.size === 0) this.resolveHoldNoteEnd();
         });
 
         document.getElementById('gameContainer').addEventListener('pointerdown', () => {
             if (this.state !== 'playing') return;
             this.handleUniversalInput();
-        });
-
-        document.getElementById('gameContainer').addEventListener('pointerup', () => {
-            this.resolveHoldNoteEnd();
         });
     }
 
@@ -2531,11 +2600,6 @@ class GameController {
                     `-${Math.floor(dmg)}`, '#e74c3c', 16);
             }
             return;
-        } else if (noteType === 'defend' && result.note.isHold) {
-            this.holdNoteActive = result.note;
-            this.localPlayer.defend();
-            this.audio.playCounterSound();
-            return;
         } else if (noteType === 'defend') {
             this.localPlayer.defend();
             this.audio.playCounterSound();
@@ -2548,6 +2612,17 @@ class GameController {
                     this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
                         `-${Math.floor(dmg)}`, '#e74c3c', 16);
                 }
+            }
+            // 上に弾くノーツ: PerfectかGreatで超カウンター(周囲の敵に大ダメージ+スタン)
+            if (result.note.flickUp && (result.judge === 'perfect' || result.judge === 'great')) {
+                this.stage.enemies.forEach(e => {
+                    if (e.dead) return;
+                    if (Math.abs(e.x - this.localPlayer.x) < 250) {
+                        e.takeDamage(this.localPlayer.getDamage(30, 'perfect'), 'ability');
+                        e.stunTimer = 1.5;
+                    }
+                });
+                this.renderer.shake(6, 0.2);
             }
         }
         // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
@@ -2575,32 +2650,6 @@ class GameController {
         }
     }
 
-    resolveHoldNoteEnd() {
-        if (!this.holdNoteActive) return;
-        const note = this.holdNoteActive;
-        this.holdNoteActive = null;
-        const currentBeat = this.audio.getCurrentBeat();
-        const beatInterval = 60 / this.audio.bpm;
-        const dist = Math.abs(note.holdEndBeat - currentBeat) * beatInterval;
-        if (dist < CONSTANTS.GOOD_WINDOW) {
-            this.stage.enemies.forEach(e => {
-                if (e.dead) return;
-                if (Math.abs(e.x - this.localPlayer.x) < 250) {
-                    e.takeDamage(this.localPlayer.getDamage(30, 'perfect'), 'ability');
-                    e.stunTimer = 1.5;
-                }
-            });
-            this.renderer.shake(6, 0.2);
-        } else if (this.localPlayer.invincible <= 0) {
-            const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
-            if (dmg > 0) {
-                this.localPlayer.takeDamage(dmg);
-                this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
-                    `-${Math.floor(dmg)}`, '#e74c3c', 16);
-            }
-        }
-    }
-
     // 一部のギミックは8秒の特殊フェーズ内では最後まで発動しきれないことがあるため、
     // 「未完了の間はフェーズタイマーを進めない」ことで時間切れではなく条件達成で終わるようにする。
     shouldHoldGimmickTimer() {
@@ -2608,9 +2657,6 @@ class GameController {
         const special = this.localPlayer.getActiveGimmick().special;
         if (special === 'giantNote') {
             return !!this.rhythm.giantNote;
-        }
-        if (special === 'rewindEffect') {
-            return this.rewindEffectTimer > 0;
         }
         return false;
     }
@@ -2751,20 +2797,6 @@ class GameController {
     update(dt) {
         this.gameTime += dt;
 
-        const activeSpecial = this.localPlayer.getActiveGimmick().special;
-        if (activeSpecial === 'rewindEffect' && !this.rewindWasActive) {
-            this.rewindEffectTimer = 6; // 4拍分の演出 + 2拍分のノーツ生成停止(概算値、演出用途のため厳密な拍換算はしない)
-        }
-        this.rewindWasActive = activeSpecial === 'rewindEffect';
-        if (this.rewindEffectTimer > 0) this.rewindEffectTimer -= dt;
-
-        if (this.holdNoteActive) {
-            const currentBeat = this.audio.getCurrentBeat();
-            const beatInterval = 60 / this.audio.bpm;
-            if (currentBeat > this.holdNoteActive.holdEndBeat + CONSTANTS.GOOD_WINDOW / beatInterval) {
-                this.resolveHoldNoteEnd();
-            }
-        }
         if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
         // Update players (movement is AI-controlled)
@@ -2777,8 +2809,7 @@ class GameController {
         this.stage.update(dt, this.players);
 
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
-        const rewindPausingSpawns = activeSpecial === 'rewindEffect' && this.rewindEffectTimer > 0 && this.rewindEffectTimer < 2;
-        if (!rewindPausingSpawns) this.stage.enemies.forEach(e => {
+        this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
                 const currentBeat = this.audio.getCurrentBeat();
                 const beatInterval = 60 / this.audio.bpm;
@@ -2791,12 +2822,14 @@ class GameController {
                 }
                 const activeGimmickSpecial = this.localPlayer.getActiveGimmick().special;
                 if (activeGimmickSpecial === 'damageNote') {
-                    if (!this.rhythm.damageNotes.some(n => !n.hit && !n.missed && n.beat === defendBeat)) {
-                        this.rhythm.generateDamageNote(defendBeat);
+                    // 他のノーツ種別と打つタイミングが被らないよう、空いているbeatを探して生成する
+                    const damageBeat = this.rhythm.findFreeBeat(defendBeat);
+                    if (!this.rhythm.damageNotes.some(n => !n.hit && !n.missed && n.beat === damageBeat)) {
+                        this.rhythm.generateDamageNote(damageBeat);
                     }
                 } else if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
-                    if (activeGimmickSpecial === 'holdNote') {
-                        this.rhythm.generateHoldNote(defendBeat);
+                    if (activeGimmickSpecial === 'flickUpNote') {
+                        this.rhythm.generateFlickUpNote(defendBeat);
                     } else {
                         this.rhythm.generateDefendNote(defendBeat);
                     }
@@ -2814,7 +2847,7 @@ class GameController {
                 const inRange = this.stage.enemies.some(e => !e.dead &&
                     Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
                 if (inRange) {
-                    this.rhythm.generateGiantNote(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS));
+                    this.rhythm.generateGiantNote(this.rhythm.findFreeBeat(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS)));
                 }
             }
         } else if (activeGimmick.special === 'rapidFire') {
@@ -2875,6 +2908,14 @@ class GameController {
                         this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2);
                     }
                 });
+                if (this.localPlayer.charId === 'archer') {
+                    const arrowImg = this.images && this.images[IMAGE_MANIFEST.weapons.arrow];
+                    this.renderer.addFlyingArrow(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, outcome.dir || this.localPlayer.facing, arrowImg);
+                }
+                if (this.localPlayer.charId === 'beast') {
+                    // 突進引っ掻き: 名前の通り、実際に敵の方へ突進する動きを見せる
+                    this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing);
+                }
 
                 this.renderer.shake(5, 0.2);
                 this.audio.playAbilitySound();

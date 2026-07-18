@@ -14,11 +14,11 @@ const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem } = globalThis.Gam
 });
 
 const expectedSpecials = {
-    swordsman: ['holdNote', 'giantNote'],
+    swordsman: ['flickUpNote', 'giantNote'],
     archer: ['notesFallFromAbove', 'noteShuffle'],
     thief: ['resonanceShake', 'rapidFire'],
     fighter: ['steppedMotion', 'damageNote'],
-    beast: ['invisibleApproach', 'rewindEffect'],
+    beast: ['invisibleApproach', 'centerJudgeCircle'],
     mage: ['driftingJudgeLine', 'laneSplit'],
 };
 Object.keys(expectedSpecials).forEach(id => {
