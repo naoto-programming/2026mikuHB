@@ -789,20 +789,17 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
             nearby.forEach(e => hit(e, Math.floor(POWER_TIERS.strong * player.upgrades.ability * power)));
             break;
         case 'archer': {
-            // 貫通弓: 向いている方向ではなく、左右のうち敵がより遠くまで広がっている方へ撃つ
-            // （貫通の恩恵を活かせるよう、より多くを射抜ける可能性がある方向を選ぶ）
+            // 貫通弓: 向いている方向ではなく、能力の射程(450px)内で敵がより多くいる方へ撃つ
+            const archerRange = 450;
+            const rightCount = alive.filter(e => e.x - playerX > 0 && Math.abs(e.x - playerX) < archerRange).length;
+            const leftCount = alive.filter(e => e.x - playerX < 0 && Math.abs(e.x - playerX) < archerRange).length;
             let dir = player.facing || 1;
-            if (alive.length > 0) {
-                let farthest = null, farthestDist = -1;
-                alive.forEach(e => {
-                    const dist = Math.abs(e.x - playerX);
-                    if (dist > farthestDist) { farthestDist = dist; farthest = e; }
-                });
-                dir = Math.sign(farthest.x - playerX) || dir;
+            if (rightCount !== leftCount) {
+                dir = rightCount > leftCount ? 1 : -1;
             }
             result.dir = dir;
             alive
-                .filter(e => Math.sign(e.x - playerX) === dir && Math.abs(e.x - playerX) < 450)
+                .filter(e => Math.sign(e.x - playerX) === dir && Math.abs(e.x - playerX) < archerRange)
                 .forEach(e => hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power)));
             break;
         }
@@ -990,7 +987,12 @@ class Player {
                 targetX = this.x + Math.sign(nearest.x - this.x) * attackRange * 0.5;
             }
             if (nearest) {
-                this.facing = Math.sign(nearest.x - this.x) || this.facing;
+                // 敵と重なるほど近いと差分が0付近で揺れ動き、向きが毎フレーム反転してしまう
+                // ため、はっきり離れている時だけ向きを更新する(不感帯)
+                const dx = nearest.x - this.x;
+                if (Math.abs(dx) > 15) {
+                    this.facing = Math.sign(dx);
+                }
             }
 
             const toTarget = targetX - this.x;
@@ -2407,6 +2409,9 @@ class GameController {
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
         this.thiefCombo = null;
+        this.tutorialBoxTimer = null;
+        this.gimmickIndicatorTimer = null;
+        this.gimmickIndicatorWasSpecial = false;
 
         this.lastTime = 0;
         this.gameTime = 0;
@@ -2610,6 +2615,16 @@ class GameController {
         this.gameTime = 0;
         this.abilityCooldown = 0;
         this.thiefCombo = null;
+
+        // 操作説明のポップアップは最初の1回だけ表示し、時間経過で消す
+        // (ステージ切り替えのたびにstartGame()が呼ばれるが、2回目以降は既にタイマー済みなので再表示しない)
+        if (!this.tutorialBoxTimer) {
+            const tutorialBox = document.getElementById('tutorialBox');
+            tutorialBox.style.opacity = '1';
+            this.tutorialBoxTimer = setTimeout(() => {
+                tutorialBox.style.opacity = '0';
+            }, 5000);
+        }
 
         // Reset player positions
         this.players.forEach(p => {
@@ -3057,12 +3072,20 @@ class GameController {
 
     updateHUD() {
         const gimmickIndicator = document.getElementById('gimmickIndicator');
-        if (this.localPlayer.gimmickPhase === 'special') {
+        const inSpecial = this.localPlayer.gimmickPhase === 'special';
+        if (inSpecial && !this.gimmickIndicatorWasSpecial) {
+            // ギミック開始時に一瞬だけ表示し、発動時間全体ではなく短時間で消す
             gimmickIndicator.textContent = `${this.localPlayer.char.name}: 固有ギミック発動中`;
             gimmickIndicator.classList.remove('hidden');
-        } else {
+            gimmickIndicator.style.opacity = '1';
+            clearTimeout(this.gimmickIndicatorTimer);
+            this.gimmickIndicatorTimer = setTimeout(() => {
+                gimmickIndicator.style.opacity = '0';
+            }, 2500);
+        } else if (!inSpecial) {
             gimmickIndicator.classList.add('hidden');
         }
+        this.gimmickIndicatorWasSpecial = inSpecial;
 
         document.getElementById('scoreValue').textContent = this.rhythm.score + this.stage.totalScore;
         document.getElementById('stageValue').textContent = this.stage.getStageName();

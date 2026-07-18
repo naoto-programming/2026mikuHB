@@ -20,15 +20,16 @@ function makePlayer(charId) {
     if (outcome.hits[0].enemy !== near) throw new Error('swordsman ability hit the wrong enemy');
 }
 
-// 弓士「貫通弓」: 向いている方向ではなく、敵がより遠くまで広がっている側にヒットする
+// 弓士「貫通弓」: 向いている方向ではなく、能力範囲(450px)内で敵がより多くいる側にヒットする
 {
     const player = makePlayer('archer');
-    player.facing = -1; // 向いている方向は後方
-    const closeBehind = new Enemy('normal', -50, 0, 1); // facingと同じ側だが近い
-    const farAhead = new Enemy('normal', 400, 0, 1); // facingと逆側だが最も遠い(450px以内)
-    const outcome = applyAbility('archer', 1, player, [closeBehind, farAhead], 0);
-    if (outcome.hits.length !== 1) throw new Error('archer ability should aim toward the farther side, got ' + outcome.hits.length);
-    if (outcome.hits[0].enemy !== farAhead) throw new Error('archer ability should hit the farther-side enemy regardless of facing, hit ' + JSON.stringify(outcome.hits));
+    player.facing = -1; // 向いている方向は後方(敵が少ない側)
+    const behind = new Enemy('normal', -50, 0, 1); // facingと同じ側だが1体だけ
+    const ahead1 = new Enemy('normal', 100, 0, 1); // facingと逆側に2体
+    const ahead2 = new Enemy('normal', 300, 0, 1);
+    const outcome = applyAbility('archer', 1, player, [behind, ahead1, ahead2], 0);
+    if (outcome.hits.length !== 2) throw new Error('archer ability should aim toward the side with more enemies in range, got ' + outcome.hits.length);
+    if (outcome.hits.some(h => h.enemy === behind)) throw new Error('archer ability should not hit the side with fewer enemies, hit ' + JSON.stringify(outcome.hits));
 }
 
 // 盗賊「4回攻撃」(1回分): 基本攻撃と同じ間合いの敵全てにヒットする(単体攻撃ではない)、バフは発生しない

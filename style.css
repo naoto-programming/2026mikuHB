@@ -224,6 +224,7 @@
             color: #aaa;
             border: 1px solid #444;
             white-space: nowrap;
+            transition: opacity 0.8s ease;
         }
         .tutorial-box span { font-weight: bold; }
 
