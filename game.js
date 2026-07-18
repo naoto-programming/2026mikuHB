@@ -36,7 +36,7 @@ const CHARACTERS = [
 
 const CHARACTER_GIMMICKS = {
     swordsman: [{ special: 'flickUpNote' }, { special: 'giantNote' }],
-    archer: [{ special: 'corruptedNote' }, { special: 'noteShuffle' }],
+    archer: [{ special: 'corruptedNote' }, { special: 'shrinkTarget' }],
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
@@ -448,6 +448,7 @@ class RhythmSystem {
         this.giantNote = null;
         this.giantNoteExploded = false;
         this.rapidFireNextBeat = null;
+        this.rapidFireAlternator = 0;
     }
 
     startSwordBurst(beats, gimmick) {
@@ -752,13 +753,7 @@ class RhythmSystem {
         }).map(n => {
             const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
             const base = 300 + lineOffset;
-            let approachesFromDefendSide = n.type === 'defend';
-            if (gimmick.special === 'noteShuffle') {
-                // カウンターと攻撃/能力ノーツの接近方向をノーツごとにシャッフルし、
-                // 種別によらずどちらの向きからも来るようにする（判定は距離のみで変わらない）
-                const seed = Math.sin(n.id * 91.737) * 34521.19;
-                approachesFromDefendSide = (seed - Math.floor(seed)) < 0.5;
-            }
+            const approachesFromDefendSide = n.type === 'defend';
             return {
                 ...n,
                 x: approachesFromDefendSide ? base - offset : base + offset,
@@ -781,6 +776,7 @@ class RhythmSystem {
         this.giantNote = null;
         this.giantNoteExploded = false;
         this.rapidFireNextBeat = null;
+        this.rapidFireAlternator = 0;
     }
 }
 
@@ -1127,7 +1123,7 @@ class Enemy {
         this.hp = this.data.hp * stageMod;
         this.maxHp = this.hp;
         this.atk = this.data.atk * stageMod;
-        this.vx = -this.data.speed * (1 + stageMod * 0.1);
+        this.vx = -this.data.speed * 1.4 * (1 + stageMod * 0.1);
         this.vy = 0;
         this.state = 'move';
         this.animTimer = 0;
@@ -2209,6 +2205,12 @@ class Renderer {
         const cjcCenterX = CONSTANTS.CANVAS_WIDTH / 2;
         const cjcCenterY = CONSTANTS.CANVAS_HEIGHT / 2;
 
+        // 弓士B「シュリンクターゲット」: 本来レーンに流れるノーツの代わりに、画面上の
+        // ランダムな位置に大きめのノーツを設置。だんだん縮んでいき、その場所に固定表示
+        // された判定円と同じ大きさになった瞬間が本来の判定タイミングと一致する。
+        const shrinkTarget = gimmick.special === 'shrinkTarget';
+        const hideNormalTrack = centerJudgeCircle || shrinkTarget;
+
         const driftingJudgeLine = gimmick.special === 'driftingJudgeLine';
         const judgeLineOffsetX = driftingJudgeLine ? Math.sin(currentBeat * 1.5) * 60 : 0;
         const judgeLineOffsetY = driftingJudgeLine ? Math.cos(currentBeat * 1.1) * 25 : 0;
@@ -2216,7 +2218,7 @@ class Renderer {
         const targetX = barW / 2;
         const LANE_SPLIT_OFFSET = 32;
 
-        if (!centerJudgeCircle) {
+        if (!hideNormalTrack) {
             // Beat bar background
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(barX, barY, barW, barH);
@@ -2270,7 +2272,7 @@ class Renderer {
                 });
                 ctx.setLineDash([]);
             }
-        } else {
+        } else if (centerJudgeCircle) {
             ctx.save();
             ctx.strokeStyle = '#e74c3c';
             ctx.lineWidth = 4;
@@ -2281,6 +2283,7 @@ class Renderer {
             ctx.stroke();
             ctx.restore();
         }
+        // shrinkTargetは各ノーツごとに専用の判定円を描くため、ここでは何も描かない
 
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
@@ -2306,6 +2309,41 @@ class Renderer {
                 ctx.shadowBlur = 0;
                 return;
             }
+            if (shrinkTarget) {
+                const seedX = Math.sin(note.id * 12.9898) * 43758.5453;
+                const seedY = Math.sin(note.id * 78.233) * 12345.678;
+                const px = 100 + (seedX - Math.floor(seedX)) * (CONSTANTS.CANVAS_WIDTH - 200);
+                const py = 100 + (seedY - Math.floor(seedY)) * (CONSTANTS.CANVAS_HEIGHT - 300);
+                const beatsRemaining = note.beat - currentBeat;
+                const progress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
+                const targetSize = 35;
+                const startSize = 140;
+                const currentSize = targetSize + (startSize - targetSize) * (1 - progress);
+
+                // 目標サイズの判定円(常に同じ大きさで固定表示)
+                ctx.save();
+                ctx.strokeStyle = '#4a90d9';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#4a90d9';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(px, py, targetSize / 2, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+
+                // だんだん縮んでいくノーツ本体
+                const noteColor = note.type === 'defend' ? '#e74c3c' : note.type === 'ability' ? '#4a90d9' : '#ff6b35';
+                ctx.save();
+                ctx.globalAlpha = 0.85;
+                ctx.fillStyle = noteColor;
+                ctx.shadowColor = noteColor;
+                ctx.shadowBlur = 14;
+                ctx.beginPath();
+                ctx.arc(px, py, currentSize / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+                return;
+            }
             let nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
@@ -2314,6 +2352,7 @@ class Renderer {
             }
             const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -LANE_SPLIT_OFFSET : LANE_SPLIT_OFFSET)
                 : gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
+                : gimmick.special === 'flipMirror' ? (note.id % 2 === 0 ? -25 : 25)
                 : 0;
 
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
@@ -2778,7 +2817,7 @@ class GameController {
             if (this.state !== 'playing') return;
             this.audio.playMetronomeTick();
             if (this.localPlayer.getActiveGimmick().special === 'resonanceShake') {
-                this.renderer.shake(14, 0.35);
+                this.renderer.shake(30, 0.4);
             }
         };
 
@@ -3064,19 +3103,28 @@ class GameController {
             }
         } else if (activeGimmick.special === 'rapidFire') {
             if (this.rhythm.rapidFireNextBeat === null) {
-                // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降は0.5拍間隔で休みなく生成する
+                // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降はカウンターノーツと
+                // 攻撃ノーツが半拍ずつずれて交互に休みなく続く
                 this.rhythm.swordNotes = [];
                 this.rhythm.rapidFireNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+                this.rhythm.rapidFireAlternator = 0;
             }
             const rapidFireHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
             while (this.rhythm.rapidFireNextBeat < rapidFireHorizon) {
-                this.rhythm.swordNotes.push({
+                const isSword = this.rhythm.rapidFireAlternator % 2 === 0;
+                const note = {
                     id: this.rhythm.noteId++,
                     beat: this.rhythm.rapidFireNextBeat,
-                    type: 'sword',
+                    type: isSword ? 'sword' : 'defend',
                     hit: false,
                     missed: false,
-                });
+                };
+                if (isSword) {
+                    this.rhythm.swordNotes.push(note);
+                } else {
+                    this.rhythm.defendNotes.push(note);
+                }
+                this.rhythm.rapidFireAlternator++;
                 this.rhythm.rapidFireNextBeat += 0.5;
             }
         } else {
