@@ -36,11 +36,11 @@ const CHARACTERS = [
 
 const CHARACTER_GIMMICKS = {
     swordsman: [{ special: 'flickUpNote' }, { special: 'giantNote' }],
-    archer: [{ special: 'corruptedNote' }, { special: 'shrinkTarget' }],
+    archer: [{ special: 'corruptedNote' }, { special: 'wideWindow', judgeWindowMult: 1.6 }],
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
-    mage: [{ special: 'driftingJudgeLine' }, { special: 'screenRotate' }],
+    mage: [{ special: 'driftingJudgeLine' }, { special: 'erraticApproach', judgeWindowMult: 0.7 }],
 };
 const GIMMICK_NORMAL_SECONDS = 20;
 const GIMMICK_SPECIAL_SECONDS = 8;
@@ -568,11 +568,18 @@ class RhythmSystem {
 
     markRandomNoteCorrupted() {
         const currentBeat = this.audio.getCurrentBeat();
-        const candidates = [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes]
-            .filter(n => !n.hit && !n.missed && !n.corrupted && n.beat > currentBeat);
+        const allActive = [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes];
+        const candidates = allActive.filter(n => !n.hit && !n.missed && !n.corrupted && n.beat > currentBeat);
         if (candidates.length === 0) return false;
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
         pick.corrupted = true;
+        // 同じbeatに別の(打たなければならない)ノーツがあると、片方を選べばもう片方が
+        // 強制ミスになりコンボが途切れてしまうため、同じタイミングのノーツも全て感染させる
+        allActive.forEach(n => {
+            if (n !== pick && !n.hit && !n.missed && n.beat === pick.beat) {
+                n.corrupted = true;
+            }
+        });
         return true;
     }
 
@@ -594,12 +601,20 @@ class RhythmSystem {
         [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes].forEach(note => {
             if (!note.hit && !note.missed && currentBeat > note.beat + CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60)) {
                 note.missed = true;
-                if (note.type !== 'ability') {
+                if (note.corrupted) {
+                    // ウイルスノーツは打たずに無視するのが正解なので、素通りさせた瞬間に
+                    // コンボを加算する(通常のミス扱いにはしない)
+                    this.combo++;
+                    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                } else if (note.rapidFireNote) {
+                    // 連打ギミック中は発動時間内で完結する専用の仕組みのため、
+                    // 通常のコンボ切れ・被弾処理はしない
+                } else if (note.type !== 'ability') {
                     this.combo = 0;
                     this.judges.miss++;
                     if (this.onJudge) this.onJudge('miss', 0, this.combo);
                 }
-                if (note.type === 'defend') this.defendMissThisFrame = true;
+                if (note.type === 'defend' && !note.corrupted && !note.rapidFireNote) this.defendMissThisFrame = true;
             }
         });
 
@@ -754,7 +769,15 @@ class RhythmSystem {
             const dist = n.beat - currentBeat;
             return dist > -0.5 && dist < visibleBeats && !n.hit;
         }).map(n => {
-            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
+            // 魔法使いB「不規則接近」: ノーツごとに見た目の接近速度が不規則に揺れ動く
+            // (常に正の値なので進行方向は変わらず、beat===currentBeatで必ずoffset=0になる
+            // ため、実際の到達タイミング自体は変化しない。見た目だけを読みにくくする)
+            let effectiveSpeedMult = speedMult;
+            if (gimmick.special === 'erraticApproach') {
+                const wobble = 0.3 + 1.4 * (0.5 + 0.5 * Math.sin(n.id * 5.7 + rawCurrentBeat * 2.3));
+                effectiveSpeedMult = speedMult * wobble;
+            }
+            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * effectiveSpeedMult * beatInterval);
             const base = 300 + lineOffset;
             const approachesFromDefendSide = n.type === 'defend';
             return {
@@ -1547,15 +1570,6 @@ class Renderer {
         ctx.save();
         ctx.translate(sx, sy);
 
-        // 魔法使いB「画面回転」: 1拍ごとに画面全体が90°ずつ回転する
-        const rotateGimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
-        if (rotateGimmick.special === 'screenRotate') {
-            const rotationDeg = (Math.floor(game.audio.getCurrentBeat()) % 4) * 90;
-            ctx.translate(w / 2, h / 2);
-            ctx.rotate(rotationDeg * Math.PI / 180);
-            ctx.translate(-w / 2, -h / 2);
-        }
-
         // Background
         ctx.fillStyle = '#080818';
         ctx.fillRect(0, 0, w, h);
@@ -2217,11 +2231,7 @@ class Renderer {
         const cjcCenterX = CONSTANTS.CANVAS_WIDTH / 2;
         const cjcCenterY = CONSTANTS.CANVAS_HEIGHT / 2;
 
-        // 弓士B「シュリンクターゲット」: 本来レーンに流れるノーツの代わりに、画面上の
-        // ランダムな位置に大きめのノーツを設置。だんだん縮んでいき、その場所に固定表示
-        // された判定円と同じ大きさになった瞬間が本来の判定タイミングと一致する。
-        const shrinkTarget = gimmick.special === 'shrinkTarget';
-        const hideNormalTrack = centerJudgeCircle || shrinkTarget;
+        const hideNormalTrack = centerJudgeCircle;
 
         const driftingJudgeLine = gimmick.special === 'driftingJudgeLine';
         const judgeLineOffsetX = driftingJudgeLine ? Math.sin(currentBeat * 1.5) * 60 : 0;
@@ -2281,8 +2291,6 @@ class Renderer {
             ctx.stroke();
             ctx.restore();
         }
-        // shrinkTargetは各ノーツごとに専用の判定円を描くため、ここでは何も描かない
-
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
             if (centerJudgeCircle) {
@@ -2308,41 +2316,6 @@ class Renderer {
                 ctx.shadowBlur = 0;
                 return;
             }
-            if (shrinkTarget) {
-                const seedX = Math.sin(note.id * 12.9898) * 43758.5453;
-                const seedY = Math.sin(note.id * 78.233) * 12345.678;
-                const px = 100 + (seedX - Math.floor(seedX)) * (CONSTANTS.CANVAS_WIDTH - 200);
-                const py = 100 + (seedY - Math.floor(seedY)) * (CONSTANTS.CANVAS_HEIGHT - 300);
-                const beatsRemaining = note.beat - currentBeat;
-                const progress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
-                const targetSize = 35;
-                const startSize = 140;
-                const currentSize = targetSize + (startSize - targetSize) * (1 - progress);
-
-                // 目標サイズの判定円(常に同じ大きさで固定表示)
-                ctx.save();
-                ctx.strokeStyle = '#4a90d9';
-                ctx.lineWidth = 3;
-                ctx.shadowColor = '#4a90d9';
-                ctx.shadowBlur = 10;
-                ctx.beginPath();
-                ctx.arc(px, py, targetSize / 2, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-
-                // だんだん縮んでいくノーツ本体
-                const noteColor = note.type === 'defend' ? '#e74c3c' : note.type === 'ability' ? '#4a90d9' : '#ff6b35';
-                ctx.save();
-                ctx.globalAlpha = 0.85;
-                ctx.fillStyle = noteColor;
-                ctx.shadowColor = noteColor;
-                ctx.shadowBlur = 14;
-                ctx.beginPath();
-                ctx.arc(px, py, currentSize / 2, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-                return;
-            }
             let nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
@@ -2354,7 +2327,8 @@ class Renderer {
                 : 0;
 
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
-            const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
+            // 弓士B「判定拡大」: 判定が広くなったことが伝わるよう、ノーツを一回り大きく見せる
+            const size = note.isGiant ? 35 + note.giantStage * 15 : (gimmick.special === 'wideWindow' ? 46 : 35);
             ny += laneOffset;
             let shuffledNx = nx;
 
@@ -2476,6 +2450,9 @@ class GameController {
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
         this.thiefCombo = null;
+        this.rapidFirePerfectCount = 0;
+        this.rapidFireWasActive = false;
+        this.thiefRapidFirePayout = null;
         this.tutorialBoxTimer = null;
         this.gimmickIndicatorTimer = null;
         this.gimmickIndicatorWasSpecial = false;
@@ -2602,7 +2579,9 @@ class GameController {
         if (!this.audio.ctx) this.audio.init();
         if (this.audio.ctx.state === 'suspended') await this.audio.ctx.resume();
 
-        this.latencyTestBpm = 100;
+        // BPMを低めにして拍間隔を広く取ることで、無線イヤホン等の大きめの遅延(200-400ms程度)
+        // があっても「最も近い拍」の判定が隣の拍と紛れない(半拍=500msの余裕を持たせる)
+        this.latencyTestBpm = 60;
         this.latencyTestBeatInterval = 60 / this.latencyTestBpm;
         this.latencyTestStartTime = this.audio.ctx.currentTime + 0.6;
         this.latencyTestTotalBeats = 20;
@@ -2678,13 +2657,21 @@ class GameController {
             return;
         }
 
-        // 中央値は外れ値(タップし忘れ・大きく外した回)に影響されにくい
-        const sorted = [...this.latencyTestSamples].sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)];
-        this.audio.latencyOffset = Math.max(0, Math.min(0.4, median));
+        // 1回目の中央値を仮の基準にして、そこから大きく外れたサンプル(タップし忘れ・
+        // 誤って隣の拍を叩いた等)を除外し、残りから最終的な中央値を取る2段階の外れ値除去
+        const median = arr => {
+            const s = [...arr].sort((a, b) => a - b);
+            return s[Math.floor(s.length / 2)];
+        };
+        const roughMedian = median(this.latencyTestSamples);
+        const filtered = this.latencyTestSamples.filter(v => Math.abs(v - roughMedian) < 0.15);
+        const finalSamples = filtered.length >= 3 ? filtered : this.latencyTestSamples;
+        const finalMedian = median(finalSamples);
+
+        this.audio.latencyOffset = Math.max(0, Math.min(0.4, finalMedian));
         localStorage.setItem('beatSwordLatencyOffset', String(this.audio.latencyOffset));
         document.getElementById('latencyStatus').textContent =
-            `補正値: ${Math.round(this.audio.latencyOffset * 1000)}ms を保存しました`;
+            `補正値: ${Math.round(this.audio.latencyOffset * 1000)}ms を保存しました(有効サンプル${finalSamples.length}/${this.latencyTestSamples.length})`;
     }
 
     hideAllScreens() {
@@ -2790,6 +2777,9 @@ class GameController {
         this.gameTime = 0;
         this.abilityCooldown = 0;
         this.thiefCombo = null;
+        this.rapidFirePerfectCount = 0;
+        this.rapidFireWasActive = false;
+        this.thiefRapidFirePayout = null;
 
         // 操作説明のポップアップは最初の1回だけ表示し、時間経過で消す
         // (ステージ切り替えのたびにstartGame()が呼ばれるが、2回目以降は既にタイマー済みなので再表示しない)
@@ -2842,6 +2832,13 @@ class GameController {
         const gimmick = this.localPlayer.getActiveGimmick();
         const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
+
+        // 盗賊B「連打」: 発動中はカウンターも攻撃もせず、Perfectで打てた数だけを数える。
+        // 実際の攻撃はギミック終了直後にまとめて発動する。
+        if (result.note.rapidFireNote) {
+            if (result.judge === 'perfect') this.rapidFirePerfectCount++;
+            return;
+        }
 
         // ウイルス化ノーツ: 攻撃/能力/カウンターノーツのどれであっても、感染していれば
         // 通常の効果の代わりに自分がダメージを受ける
@@ -3071,6 +3068,14 @@ class GameController {
         const activeGimmick = this.localPlayer.getActiveGimmick();
         const isRapidFire = activeGimmick.special === 'rapidFire';
 
+        // ちょうど連打ギミックが終わった瞬間: 発動中に溜めたPerfectの数だけ、
+        // 実際の攻撃をこの直後にまとめて払い出す
+        if (this.rapidFireWasActive && !isRapidFire && this.rapidFirePerfectCount > 0) {
+            this.thiefRapidFirePayout = { remaining: this.rapidFirePerfectCount, nextBeat: this.audio.getCurrentBeat() };
+            this.rapidFirePerfectCount = 0;
+        }
+        this.rapidFireWasActive = isRapidFire;
+
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
         if (!isRapidFire) this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
@@ -3129,6 +3134,7 @@ class GameController {
                     type: isSword ? 'sword' : 'defend',
                     hit: false,
                     missed: false,
+                    rapidFireNote: true,
                 };
                 if (isSword) {
                     this.rhythm.swordNotes.push(note);
@@ -3228,6 +3234,33 @@ class GameController {
                 this.thiefCombo.remaining--;
                 this.thiefCombo.nextBeat += 0.25;
                 if (this.thiefCombo.remaining <= 0) this.thiefCombo = null;
+            }
+        }
+
+        // 盗賊B「連打」の払い出し: ギミック終了直後、発動中に打てたPerfectの数だけ
+        // 0.25拍ごとに実際の攻撃を連続で叩き込む
+        if (this.thiefRapidFirePayout) {
+            const currentBeat = this.audio.getCurrentBeat();
+            if (currentBeat >= this.thiefRapidFirePayout.nextBeat) {
+                const range = this.localPlayer.getAttackRange();
+                const dmg = Math.floor(this.localPlayer.getDamage(10, 'perfect') * 1.2);
+                const targets = this.stage.enemies.filter(e => !e.dead && Math.abs(e.x - this.localPlayer.x) < range);
+                let nearest = null, nearestDist = Infinity;
+                targets.forEach(e => {
+                    e.takeDamage(dmg, 'ability');
+                    this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#9b59b6', 8);
+                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${dmg}`, '#9b59b6', 18);
+                    const dist = Math.abs(e.x - this.localPlayer.x);
+                    if (dist < nearestDist) { nearestDist = dist; nearest = e; }
+                });
+                if (nearest) {
+                    this.localPlayer.perfectDash(Math.sign(nearest.x - this.localPlayer.x) || this.localPlayer.facing);
+                }
+                this.renderer.addRangeCircle(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, range, '#9b59b6');
+                this.audio.playAbilitySound();
+                this.thiefRapidFirePayout.remaining--;
+                this.thiefRapidFirePayout.nextBeat += 0.25;
+                if (this.thiefRapidFirePayout.remaining <= 0) this.thiefRapidFirePayout = null;
             }
         }
 

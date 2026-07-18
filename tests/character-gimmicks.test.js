@@ -15,11 +15,11 @@ const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem } = globalThis.Gam
 
 const expectedSpecials = {
     swordsman: ['flickUpNote', 'giantNote'],
-    archer: ['corruptedNote', 'shrinkTarget'],
+    archer: ['corruptedNote', 'wideWindow'],
     thief: ['resonanceShake', 'rapidFire'],
     fighter: ['steppedMotion', 'flipMirror'],
     beast: ['invisibleApproach', 'centerJudgeCircle'],
-    mage: ['driftingJudgeLine', 'screenRotate'],
+    mage: ['driftingJudgeLine', 'erraticApproach'],
 };
 Object.keys(expectedSpecials).forEach(id => {
     expectedSpecials[id].forEach((special, i) => {
