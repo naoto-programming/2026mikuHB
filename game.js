@@ -14,6 +14,10 @@ const CONSTANTS = {
     PERFECT_WINDOW: 0.09,
     GREAT_WINDOW: 0.18,
     GOOD_WINDOW: 0.30,
+    // 音声遅延補正の上限(秒)。GOOD_WINDOWより十分小さく保たないと、補正値の誤差だけで
+    // 全てのタップが判定窓の外に出てしまい「タップが一切反応しない」状態になり得るため、
+    // 実測の誤差を見込んでも安全な値に固定でクランプする。
+    MAX_LATENCY_OFFSET: 0.15,
     STAGE_LENGTH: 4000,
     MAX_PLAYERS: 8,
     HOST_PORT: 8080,
@@ -2435,7 +2439,10 @@ class GameController {
         this.renderer = new Renderer(this.canvas);
         this.audio = new AudioSystem();
         const savedLatency = parseFloat(localStorage.getItem('beatSwordLatencyOffset'));
-        if (!isNaN(savedLatency)) this.audio.latencyOffset = savedLatency;
+        // 以前保存された値が(古いバージョンの緩いクランプ等で)安全範囲を超えていた場合に
+        // 備え、読み込み時にも同じ上限で再クランプする。これにより、既存ユーザーが再テスト
+        // しなくても「タップが反応しない」状態から自動的に復帰できる。
+        if (!isNaN(savedLatency)) this.audio.latencyOffset = Math.max(0, Math.min(CONSTANTS.MAX_LATENCY_OFFSET, savedLatency));
         this.rhythm = new RhythmSystem(this.audio);
         this.stage = new StageManager();
         this.network = { isConnected: false, isHost: false, players: [] };
@@ -2668,10 +2675,16 @@ class GameController {
         const finalSamples = filtered.length >= 3 ? filtered : this.latencyTestSamples;
         const finalMedian = median(finalSamples);
 
-        this.audio.latencyOffset = Math.max(0, Math.min(0.4, finalMedian));
+        this.audio.latencyOffset = Math.max(0, Math.min(CONSTANTS.MAX_LATENCY_OFFSET, finalMedian));
         localStorage.setItem('beatSwordLatencyOffset', String(this.audio.latencyOffset));
         document.getElementById('latencyStatus').textContent =
             `補正値: ${Math.round(this.audio.latencyOffset * 1000)}ms を保存しました(有効サンプル${finalSamples.length}/${this.latencyTestSamples.length})`;
+    }
+
+    resetLatencyOffset() {
+        this.audio.latencyOffset = 0;
+        localStorage.removeItem('beatSwordLatencyOffset');
+        document.getElementById('latencyStatus').textContent = '補正値をリセットしました(0ms)';
     }
 
     hideAllScreens() {
@@ -3375,6 +3388,7 @@ if (typeof window !== 'undefined') {
         showHowToPlay: () => game.showHowToPlay(),
         showLatencyTest: () => game.showLatencyTest(),
         startLatencyTest: () => game.startLatencyTest(),
+        resetLatencyOffset: () => game.resetLatencyOffset(),
         startSinglePlayer: () => game.startSinglePlayer(),
         confirmChar: () => game.confirmChar(),
         setDifficulty: (level) => game.setDifficulty(level),
