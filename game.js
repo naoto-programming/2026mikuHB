@@ -40,7 +40,7 @@ const CHARACTER_GIMMICKS = {
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
-    mage: [{ special: 'driftingJudgeLine' }, { special: 'laneSplit' }],
+    mage: [{ special: 'driftingJudgeLine' }, { special: 'screenRotate' }],
 };
 const GIMMICK_NORMAL_SECONDS = 20;
 const GIMMICK_SPECIAL_SECONDS = 8;
@@ -244,19 +244,22 @@ class AudioSystem {
     }
 
     // 遅延テスト用の単純なビープ音(SFXの事前読み込みに依存しない)
-    playCalibrationTick() {
+    // atTimeを省略するとこの瞬間に鳴らす。遅延テストではatTimeを指定して
+    // Web Audioのサンプル精度スケジューリングで正確な時刻に鳴らす
+    // (requestAnimationFrameから鳴らすと最大1フレーム分(~16ms)の誤差が乗ってしまうため)
+    playCalibrationTick(atTime) {
         if (!this.ctx) return;
-        const now = this.ctx.currentTime;
+        const when = atTime !== undefined ? atTime : this.ctx.currentTime;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.type = 'square';
         osc.connect(gain);
         gain.connect(this.masterGain);
-        osc.frequency.setValueAtTime(880, now);
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
-        osc.start(now);
-        osc.stop(now + 0.08);
+        osc.frequency.setValueAtTime(880, when);
+        gain.gain.setValueAtTime(0.25, when);
+        gain.gain.exponentialRampToValueAtTime(0.01, when + 0.08);
+        osc.start(when);
+        osc.stop(when + 0.08);
     }
 
     getBeatAccuracy() {
@@ -1544,6 +1547,15 @@ class Renderer {
         ctx.save();
         ctx.translate(sx, sy);
 
+        // 魔法使いB「画面回転」: 1拍ごとに画面全体が90°ずつ回転する
+        const rotateGimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
+        if (rotateGimmick.special === 'screenRotate') {
+            const rotationDeg = (Math.floor(game.audio.getCurrentBeat()) % 4) * 90;
+            ctx.translate(w / 2, h / 2);
+            ctx.rotate(rotationDeg * Math.PI / 180);
+            ctx.translate(-w / 2, -h / 2);
+        }
+
         // Background
         ctx.fillStyle = '#080818';
         ctx.fillRect(0, 0, w, h);
@@ -2216,7 +2228,6 @@ class Renderer {
         const judgeLineOffsetY = driftingJudgeLine ? Math.cos(currentBeat * 1.1) * 25 : 0;
 
         const targetX = barW / 2;
-        const LANE_SPLIT_OFFSET = 32;
 
         if (!hideNormalTrack) {
             // Beat bar background
@@ -2259,19 +2270,6 @@ class Renderer {
             if (driftingJudgeLine) {
                 gimmick.judgeLineOffset = judgeLineOffsetX;
             }
-            if (gimmick.special === 'laneSplit') {
-                // 2レーンに分かれていることが分かるよう、常時ガイド線を描いておく
-                ctx.strokeStyle = 'rgba(74,144,217,0.35)';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([6, 6]);
-                [-LANE_SPLIT_OFFSET, LANE_SPLIT_OFFSET].forEach(off => {
-                    ctx.beginPath();
-                    ctx.moveTo(0, barY + barH / 2 + off);
-                    ctx.lineTo(barW, barY + barH / 2 + off);
-                    ctx.stroke();
-                });
-                ctx.setLineDash([]);
-            }
         } else if (centerJudgeCircle) {
             ctx.save();
             ctx.strokeStyle = '#e74c3c';
@@ -2287,7 +2285,7 @@ class Renderer {
 
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
-            if (centerJudgeCircle && note.type === 'defend') {
+            if (centerJudgeCircle) {
                 const angle = (note.id % 8) * (Math.PI / 4);
                 const spawnRadius = 420;
                 const spawnX = cjcCenterX + Math.cos(angle) * spawnRadius;
@@ -2296,8 +2294,9 @@ class Renderer {
                 const progress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
                 const px = spawnX + (cjcCenterX - spawnX) * progress;
                 const py = spawnY + (cjcCenterY - spawnY) * progress;
-                ctx.fillStyle = '#e74c3c';
-                ctx.shadowColor = '#e74c3c';
+                const cjcColor = note.type === 'defend' ? '#e74c3c' : note.type === 'ability' ? '#4a90d9' : '#ff6b35';
+                ctx.fillStyle = cjcColor;
+                ctx.shadowColor = cjcColor;
                 ctx.shadowBlur = 15;
                 ctx.beginPath();
                 ctx.moveTo(px, py - 17.5);
@@ -2350,8 +2349,7 @@ class Renderer {
                 const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
                 if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
             }
-            const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -LANE_SPLIT_OFFSET : LANE_SPLIT_OFFSET)
-                : gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
+            const laneOffset = gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
                 : gimmick.special === 'flipMirror' ? (note.id % 2 === 0 ? -25 : 25)
                 : 0;
 
@@ -2607,11 +2605,18 @@ class GameController {
         this.latencyTestBpm = 100;
         this.latencyTestBeatInterval = 60 / this.latencyTestBpm;
         this.latencyTestStartTime = this.audio.ctx.currentTime + 0.6;
-        this.latencyTestTotalBeats = 12;
+        this.latencyTestTotalBeats = 20;
         this.latencyTestWarmupBeats = 2;
         this.latencyTestSamples = [];
-        this.latencyTestLastBeatIndex = -1;
         this.latencyTestActive = true;
+
+        // 全てのクリック音をここで一括して未来の正確な時刻に予約する。
+        // requestAnimationFrameのループから都度鳴らすと、フレームが来るまで待たされる分
+        // (最大約16ms)だけ実際の発音が遅れてしまい、測定結果に系統的な誤差が乗る。
+        // Web Audioのスケジューリングはサンプル精度なので、事前予約すれば発音時刻がぶれない。
+        for (let i = 0; i < this.latencyTestTotalBeats; i++) {
+            this.audio.playCalibrationTick(this.latencyTestStartTime + i * this.latencyTestBeatInterval);
+        }
 
         document.getElementById('latencyStatus').textContent = 'クリック音に合わせてタップ...';
         document.getElementById('latencyStartBtn').disabled = true;
@@ -2620,6 +2625,7 @@ class GameController {
         window.addEventListener('keydown', this.latencyTapHandler);
         document.getElementById('latencyScreen').addEventListener('pointerdown', this.latencyTapHandler);
 
+        this.latencyTestLastBeatIndex = -1;
         this.latencyTestLoop();
     }
 
@@ -2629,9 +2635,10 @@ class GameController {
         const elapsedBeats = (now - this.latencyTestStartTime) / this.latencyTestBeatInterval;
         const beatIndex = Math.floor(elapsedBeats);
 
+        // 発音自体はstartLatencyTestで既に正確な時刻へ予約済み。ここでは視覚的な
+        // フィードバック(ドットの点滅)と終了判定のみ行う。
         if (beatIndex >= 0 && beatIndex !== this.latencyTestLastBeatIndex && beatIndex < this.latencyTestTotalBeats) {
             this.latencyTestLastBeatIndex = beatIndex;
-            this.audio.playCalibrationTick();
             const dot = document.getElementById('latencyBeatIndicator');
             dot.style.background = '#ff6b35';
             dot.style.transform = 'scale(1.2)';
@@ -3059,8 +3066,13 @@ class GameController {
         // Update stage
         this.stage.update(dt, this.players);
 
+        // 盗賊B「連打」中は、交互のノーツ以外は一切生成しない
+        // (防御ノーツ・能力ノーツ含め、他のノーツが混ざらないようにする)
+        const activeGimmick = this.localPlayer.getActiveGimmick();
+        const isRapidFire = activeGimmick.special === 'rapidFire';
+
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
-        this.stage.enemies.forEach(e => {
+        if (!isRapidFire) this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
                 const currentBeat = this.audio.getCurrentBeat();
                 const beatInterval = 60 / this.audio.bpm;
@@ -3087,12 +3099,11 @@ class GameController {
 
         // 弓士A「ウイルス化」: 攻撃/能力/カウンターノーツのうち既存の1つを感染させる
         // (一度に1つまで、専用の独立したノーツは生成しない)
-        if (this.localPlayer.getActiveGimmick().special === 'corruptedNote' && !this.rhythm.hasCorruptedNote()) {
+        if (activeGimmick.special === 'corruptedNote' && !this.rhythm.hasCorruptedNote()) {
             this.rhythm.markRandomNoteCorrupted();
         }
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
-        const activeGimmick = this.localPlayer.getActiveGimmick();
         if (activeGimmick.special === 'giantNote') {
             if (!this.rhythm.giantNote) {
                 const inRange = this.stage.enemies.some(e => !e.dead &&
@@ -3138,8 +3149,8 @@ class GameController {
             }
         }
 
-        // 能力バーストをクールダウン明けに自動開始する
-        if (!this.rhythm.abilityActive && this.abilityCooldown <= 0) {
+        // 能力バーストをクールダウン明けに自動開始する（連打中は他のノーツを混ぜない）
+        if (!isRapidFire && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
             this.localPlayer.useAbility();
             this.audio.playAbilitySound();
             this.rhythm.startAbility(4, this.localPlayer.getActiveGimmick());
