@@ -161,6 +161,9 @@ class AudioSystem {
         this.onBeat = null;
         this.beatCallbacks = [];
         this.masterGain = null;
+        // 無線イヤホン等の出力遅延を補正する値(秒)。入力判定にのみ使い、
+        // ノーツの見た目の動き(getCurrentBeat)には影響させない。
+        this.latencyOffset = 0;
     }
 
     init() {
@@ -229,6 +232,31 @@ class AudioSystem {
         if (!this.isPlaying) return 0;
         const elapsed = this.ctx.currentTime - this.startTime;
         return elapsed / (60 / this.bpm);
+    }
+
+    // 入力判定専用の「現在拍」。無線イヤホン等で音が遅れて届く場合、プレイヤーは
+    // 実際より遅いタイミングで反応してしまうため、その分だけ判定側の時計を
+    // 巻き戻して補正する(ノーツの描画位置には影響しない)。
+    getInputBeat() {
+        if (!this.isPlaying) return 0;
+        const elapsed = (this.ctx.currentTime - this.latencyOffset) - this.startTime;
+        return elapsed / (60 / this.bpm);
+    }
+
+    // 遅延テスト用の単純なビープ音(SFXの事前読み込みに依存しない)
+    playCalibrationTick() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.frequency.setValueAtTime(880, now);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+        osc.start(now);
+        osc.stop(now + 0.08);
     }
 
     getBeatAccuracy() {
@@ -606,7 +634,7 @@ class RhythmSystem {
         // judgeWindowMultは攻撃・能力ノーツの判定窓のみに作用させる。防御ノーツは
         // ダメージ回避に直結するため、ギミックで理不尽に難しくしない。
         const windowMult = inputType === 'defend' ? 1 : (gimmick.judgeWindowMult || 1);
-        const currentBeat = this.audio.getCurrentBeat();
+        const currentBeat = this.audio.getInputBeat();
         const beatInterval = 60 / this.audio.bpm;
 
         let searchPool = inputType === 'ability' ? this.abilityNotes
@@ -678,7 +706,7 @@ class RhythmSystem {
         // judgeWindowMultは攻撃・能力ノーツの判定窓のみに作用させる。防御ノーツは
         // ダメージ回避に直結するため、ギミックで理不尽に難しくしない。
         const windowMult = gimmick.judgeWindowMult || 1;
-        const currentBeat = this.audio.getCurrentBeat();
+        const currentBeat = this.audio.getInputBeat();
         const beatInterval = 60 / this.audio.bpm;
         const pools = [
             { type: 'sword', notes: this.swordNotes, windowMult },
@@ -2395,6 +2423,8 @@ class GameController {
         this.ctx = this.canvas.getContext('2d');
         this.renderer = new Renderer(this.canvas);
         this.audio = new AudioSystem();
+        const savedLatency = parseFloat(localStorage.getItem('beatSwordLatencyOffset'));
+        if (!isNaN(savedLatency)) this.audio.latencyOffset = savedLatency;
         this.rhythm = new RhythmSystem(this.audio);
         this.stage = new StageManager();
         this.network = { isConnected: false, isHost: false, players: [] };
@@ -2518,11 +2548,110 @@ class GameController {
         document.getElementById('howToScreen').classList.remove('hidden');
     }
 
+    // ==================== 音声遅延テスト ====================
+    // 無線イヤホン等は音の出力に遅延があり、プレイヤーはBGMを聞いてから反応するまでの
+    // 時間が実際のタイミングより遅れて見えてしまう。メトロノーム音に合わせてタップして
+    // もらい、実際のタップと拍のずれを測定してAudioSystem.latencyOffsetに反映する。
+
+    showLatencyTest() {
+        this.hideAllScreens();
+        document.getElementById('latencyScreen').classList.remove('hidden');
+        const current = this.audio.latencyOffset || 0;
+        document.getElementById('latencyStatus').textContent =
+            current > 0 ? `現在の補正値: ${Math.round(current * 1000)}ms` : '「テスト開始」を押してください';
+    }
+
+    async startLatencyTest() {
+        if (!this.audio.ctx) this.audio.init();
+        if (this.audio.ctx.state === 'suspended') await this.audio.ctx.resume();
+
+        this.latencyTestBpm = 100;
+        this.latencyTestBeatInterval = 60 / this.latencyTestBpm;
+        this.latencyTestStartTime = this.audio.ctx.currentTime + 0.6;
+        this.latencyTestTotalBeats = 12;
+        this.latencyTestWarmupBeats = 2;
+        this.latencyTestSamples = [];
+        this.latencyTestLastBeatIndex = -1;
+        this.latencyTestActive = true;
+
+        document.getElementById('latencyStatus').textContent = 'クリック音に合わせてタップ...';
+        document.getElementById('latencyStartBtn').disabled = true;
+
+        this.latencyTapHandler = () => this.onLatencyTap();
+        window.addEventListener('keydown', this.latencyTapHandler);
+        document.getElementById('latencyScreen').addEventListener('pointerdown', this.latencyTapHandler);
+
+        this.latencyTestLoop();
+    }
+
+    latencyTestLoop() {
+        if (!this.latencyTestActive) return;
+        const now = this.audio.ctx.currentTime;
+        const elapsedBeats = (now - this.latencyTestStartTime) / this.latencyTestBeatInterval;
+        const beatIndex = Math.floor(elapsedBeats);
+
+        if (beatIndex >= 0 && beatIndex !== this.latencyTestLastBeatIndex && beatIndex < this.latencyTestTotalBeats) {
+            this.latencyTestLastBeatIndex = beatIndex;
+            this.audio.playCalibrationTick();
+            const dot = document.getElementById('latencyBeatIndicator');
+            dot.style.background = '#ff6b35';
+            dot.style.transform = 'scale(1.2)';
+            setTimeout(() => {
+                dot.style.background = '#333';
+                dot.style.transform = 'scale(1)';
+            }, 100);
+        }
+
+        if (beatIndex >= this.latencyTestTotalBeats) {
+            this.finishLatencyTest();
+            return;
+        }
+        requestAnimationFrame(() => this.latencyTestLoop());
+    }
+
+    onLatencyTap() {
+        if (!this.latencyTestActive) return;
+        const now = this.audio.ctx.currentTime;
+        const elapsedBeats = (now - this.latencyTestStartTime) / this.latencyTestBeatInterval;
+        const nearestBeat = Math.round(elapsedBeats);
+        // 最初のウォームアップ拍と最後の拍は判定対象から除外する
+        if (nearestBeat < this.latencyTestWarmupBeats || nearestBeat >= this.latencyTestTotalBeats - 1) return;
+        const expectedTime = this.latencyTestStartTime + nearestBeat * this.latencyTestBeatInterval;
+        // 正の値 = 音を聞いてから遅れてタップした(≒出力遅延がある)
+        this.latencyTestSamples.push(now - expectedTime);
+    }
+
+    finishLatencyTest() {
+        this.latencyTestActive = false;
+        window.removeEventListener('keydown', this.latencyTapHandler);
+        document.getElementById('latencyScreen').removeEventListener('pointerdown', this.latencyTapHandler);
+        document.getElementById('latencyStartBtn').disabled = false;
+
+        if (this.latencyTestSamples.length < 3) {
+            document.getElementById('latencyStatus').textContent = 'タップが少なすぎます。もう一度試してください。';
+            return;
+        }
+
+        // 中央値は外れ値(タップし忘れ・大きく外した回)に影響されにくい
+        const sorted = [...this.latencyTestSamples].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        this.audio.latencyOffset = Math.max(0, Math.min(0.4, median));
+        localStorage.setItem('beatSwordLatencyOffset', String(this.audio.latencyOffset));
+        document.getElementById('latencyStatus').textContent =
+            `補正値: ${Math.round(this.audio.latencyOffset * 1000)}ms を保存しました`;
+    }
+
     hideAllScreens() {
         document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
         document.getElementById('hud').classList.add('hidden');
         document.getElementById('bottomHud').classList.add('hidden');
         this.audio.stopGameOverLoop();
+        if (this.latencyTestActive) {
+            this.latencyTestActive = false;
+            window.removeEventListener('keydown', this.latencyTapHandler);
+            document.getElementById('latencyScreen').removeEventListener('pointerdown', this.latencyTapHandler);
+            document.getElementById('latencyStartBtn').disabled = false;
+        }
     }
 
     // ==================== Game Flow ====================
@@ -3152,6 +3281,8 @@ if (typeof window !== 'undefined') {
         showModeSelect: () => game.showModeSelect(),
         showLobby: () => game.showLobby(),
         showHowToPlay: () => game.showHowToPlay(),
+        showLatencyTest: () => game.showLatencyTest(),
+        startLatencyTest: () => game.startLatencyTest(),
         startSinglePlayer: () => game.startSinglePlayer(),
         confirmChar: () => game.confirmChar(),
         setDifficulty: (level) => game.setDifficulty(level),

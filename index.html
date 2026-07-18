@@ -57,6 +57,7 @@
             <div class="btn-group">
                 <button class="btn" onclick="Game.showModeSelect()">ゲーム開始</button>
                 <button class="btn" onclick="Game.showHowToPlay()">遊び方</button>
+                <button class="btn" onclick="Game.showLatencyTest()">音声遅延テスト</button>
             </div>
         </div>
 
@@ -145,6 +146,19 @@
                 <p>ステージクリア時に3つの強化から1つ選択。ローグライト方式で進むほど強くなる！</p>
             </div>
             <button class="btn" onclick="Game.showMenu()" style="margin-top:30px;">戻る</button>
+        </div>
+
+        <!-- Audio Latency Test -->
+        <div id="latencyScreen" class="screen hidden">
+            <h2>音声遅延テスト</h2>
+            <div class="subtitle">無線イヤホンなどの音の遅れを測定して補正します</div>
+            <p style="color:#aaa;margin:10px 0;max-width:420px;">クリック音に合わせて<strong>画面をタップ、またはスペースキー</strong>を押してください(数回)</p>
+            <div id="latencyBeatIndicator" style="width:70px;height:70px;border-radius:50%;background:#333;margin:25px auto;transition:transform 0.1s ease, background 0.1s ease;"></div>
+            <div id="latencyStatus" style="font-size:1.1em;color:#ff6b35;margin:10px 0;min-height:1.4em;">「テスト開始」を押してください</div>
+            <div class="btn-group">
+                <button class="btn" id="latencyStartBtn" onclick="Game.startLatencyTest()">テスト開始</button>
+                <button class="btn" onclick="Game.showMenu()">戻る</button>
+            </div>
         </div>
     </div>
 
