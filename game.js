@@ -36,9 +36,9 @@ const CHARACTERS = [
 
 const CHARACTER_GIMMICKS = {
     swordsman: [{ special: 'flickUpNote' }, { special: 'giantNote' }],
-    archer: [{ special: 'notesFallFromAbove' }, { special: 'noteShuffle' }],
+    archer: [{ special: 'corruptedNote' }, { special: 'noteShuffle' }],
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
-    fighter: [{ special: 'steppedMotion' }, { special: 'damageNote' }],
+    fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
     mage: [{ special: 'driftingJudgeLine' }, { special: 'laneSplit' }],
 };
@@ -419,7 +419,6 @@ class RhythmSystem {
         this.effectiveDiff = 1;
         this.giantNote = null;
         this.giantNoteExploded = false;
-        this.damageNotes = [];
         this.rapidFireNextBeat = null;
     }
 
@@ -512,16 +511,6 @@ class RhythmSystem {
         }
     }
 
-    generateDamageNote(beat) {
-        this.damageNotes.push({
-            id: this.noteId++,
-            beat: beat,
-            type: 'trap',
-            hit: false,
-            missed: false,
-        });
-    }
-
     findDefendNoteAtBeat(beat) {
         return this.defendNotes.find(n => !n.hit && !n.missed && n.beat === beat);
     }
@@ -531,11 +520,28 @@ class RhythmSystem {
         return this.abilityNotes.some(n => !n.hit && !n.missed && n.beat === beat);
     }
 
-    // 巨大ノーツ・ダメージノーツ等、他のノーツ種別と打つタイミングが被ってはいけない
-    // ギミック用に、指定beatが既に何かに使われていないか確認する
+    // 巨大ノーツ等、他のノーツ種別と打つタイミングが被ってはいけないギミック用に、
+    // 指定beatが既に何かに使われていないか確認する
     beatIsOccupied(beat) {
-        const pools = [this.swordNotes, this.abilityNotes, this.defendNotes, this.damageNotes];
+        const pools = [this.swordNotes, this.abilityNotes, this.defendNotes];
         return pools.some(pool => pool.some(n => !n.hit && !n.missed && n.beat === beat));
+    }
+
+    // 弓士A「ウイルス化」: 攻撃/能力/カウンターノーツのうち既存の1つを感染させる
+    // (専用の独立したノーツを新たに生成するのではない)
+    hasCorruptedNote() {
+        const pools = [this.swordNotes, this.abilityNotes, this.defendNotes];
+        return pools.some(pool => pool.some(n => n.corrupted && !n.hit && !n.missed));
+    }
+
+    markRandomNoteCorrupted() {
+        const currentBeat = this.audio.getCurrentBeat();
+        const candidates = [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes]
+            .filter(n => !n.hit && !n.missed && !n.corrupted && n.beat > currentBeat);
+        if (candidates.length === 0) return false;
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+        pick.corrupted = true;
+        return true;
     }
 
     findFreeBeat(beat) {
@@ -605,7 +611,6 @@ class RhythmSystem {
 
         let searchPool = inputType === 'ability' ? this.abilityNotes
             : inputType === 'defend' ? this.defendNotes
-            : inputType === 'trap' ? this.damageNotes
             : this.swordNotes;
 
         let nearest = null;
@@ -679,7 +684,6 @@ class RhythmSystem {
             { type: 'sword', notes: this.swordNotes, windowMult },
             { type: 'ability', notes: this.abilityActive ? this.abilityNotes : [], windowMult },
             { type: 'defend', notes: this.defendNotes, windowMult: 1 },
-            { type: 'trap', notes: this.damageNotes, windowMult: 1 },
         ];
 
         let bestType = null;
@@ -709,7 +713,7 @@ class RhythmSystem {
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = LOOKAHEAD_BEATS + 1;
 
-        const allNotes = [...this.swordNotes, ...this.defendNotes, ...this.damageNotes];
+        const allNotes = [...this.swordNotes, ...this.defendNotes];
         if (this.abilityActive) {
             allNotes.push(...this.abilityNotes);
         }
@@ -748,7 +752,6 @@ class RhythmSystem {
         this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.giantNote = null;
         this.giantNoteExploded = false;
-        this.damageNotes = [];
         this.rapidFireNextBeat = null;
     }
 }
@@ -2165,110 +2168,86 @@ class Renderer {
         const barY = CONSTANTS.CANVAS_HEIGHT - 90;
         const barW = CONSTANTS.CANVAS_WIDTH;
         const barH = 90;
-
-        // Beat bar background
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
-        ctx.fillRect(barX, barY, barW, barH);
-        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(barX, barY, barW, barH);
-
-        // 魔法使いA「判定線移動」: 判定線自体の表示位置(左右・上下)を実際に動かす。
-        // ノーツ側のx(base+lineOffset)は既にこの値を織り込んで計算されるため、
-        // 描画上の判定線もここで求めた値で一致させる（判定タイミング自体は変えない）。
-        const driftingJudgeLine = game.localPlayer && game.localPlayer.getActiveGimmick().special === 'driftingJudgeLine';
-        const judgeLineOffsetX = driftingJudgeLine ? Math.sin(game.audio.getCurrentBeat() * 1.5) * 60 : 0;
-        const judgeLineOffsetY = driftingJudgeLine ? Math.cos(game.audio.getCurrentBeat() * 1.1) * 25 : 0;
-
-        // 弓士A「ノーツ落下」: 上から落ちてくる動きに合うよう、判定の目安を横向きの線にする
-        // （縦向きの判定線は横流れのノーツ向けのため、落下ノーツとは噛み合わない）
-        const notesFallFromAbove = game.localPlayer && game.localPlayer.getActiveGimmick().special === 'notesFallFromAbove';
-
-        // Target line (center)
-        const targetX = barW / 2;
-        const lineDrawX = targetX + judgeLineOffsetX;
-        const lineDrawCenterY = barY + barH / 2 + judgeLineOffsetY;
-        ctx.strokeStyle = '#ff6b35';
-        ctx.lineWidth = 3;
-        ctx.shadowColor = '#ff6b35';
-        ctx.shadowBlur = 10;
-        ctx.beginPath();
-        ctx.moveTo(lineDrawX, lineDrawCenterY - barH / 2 + 5);
-        ctx.lineTo(lineDrawX, lineDrawCenterY + barH / 2 - 5);
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        // Target glow
-        ctx.fillStyle = 'rgba(255,107,53,0.1)';
-        ctx.fillRect(lineDrawX - 25, lineDrawCenterY - barH / 2 + 5, 50, barH - 10);
-
-        if (notesFallFromAbove) {
-            const landingY = barY + barH / 2;
-            ctx.strokeStyle = '#ff6b35';
-            ctx.lineWidth = 4;
-            ctx.shadowColor = '#ff6b35';
-            ctx.shadowBlur = 14;
-            ctx.beginPath();
-            ctx.moveTo(40, landingY);
-            ctx.lineTo(barW - 40, landingY);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = 'rgba(255,107,53,0.12)';
-            ctx.fillRect(40, landingY - 25, barW - 80, 50);
-        }
-
-        // Beat markers
         const currentBeat = game.audio.getCurrentBeat();
         const beatInterval = 60 / game.audio.bpm;
         const pixelsPerBeat = CONSTANTS.NOTE_SPEED * beatInterval;
-
-        // Grid lines
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-        ctx.lineWidth = 1;
-        for (let i = -2; i < 6; i++) {
-            const beatPos = targetX + i * pixelsPerBeat;
-            if (beatPos > 0 && beatPos < barW) {
-                ctx.beginPath();
-                ctx.moveTo(beatPos, barY + 10);
-                ctx.lineTo(beatPos, barY + barH - 10);
-                ctx.stroke();
-            }
-        }
-
-        // Notes
         const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
-        if (driftingJudgeLine) {
-            gimmick.judgeLineOffset = judgeLineOffsetX;
-        }
-        const LANE_SPLIT_OFFSET = 32;
-        if (gimmick.special === 'laneSplit') {
-            // 2レーンに分かれていることが分かるよう、常時ガイド線を描いておく
-            ctx.strokeStyle = 'rgba(74,144,217,0.35)';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([6, 6]);
-            [-LANE_SPLIT_OFFSET, LANE_SPLIT_OFFSET].forEach(off => {
-                ctx.beginPath();
-                ctx.moveTo(0, barY + barH / 2 + off);
-                ctx.lineTo(barW, barY + barH / 2 + off);
-                ctx.stroke();
-            });
-            ctx.setLineDash([]);
-        }
-        // 獣人B「判定円」: 中央に判定円を配置し、上下左右に動かす。
-        // ノーツは8方向から判定円に向かって流れてくる(打つタイミングは通常と同じ、距離のみで判定)。
+
+        // 獣人B「判定円」が出ている間は、通常の判定線・トラック(下部バー)を全て隠し、
+        // 判定円のみを表示する(動かない固定の円)
         const centerJudgeCircle = gimmick.special === 'centerJudgeCircle';
         const cjcCenterX = CONSTANTS.CANVAS_WIDTH / 2;
         const cjcCenterY = CONSTANTS.CANVAS_HEIGHT / 2;
-        const cjcCircleX = cjcCenterX + Math.sin(currentBeat * 0.8) * 140;
-        const cjcCircleY = cjcCenterY + Math.cos(currentBeat * 0.6) * 90;
-        if (centerJudgeCircle) {
+
+        const driftingJudgeLine = gimmick.special === 'driftingJudgeLine';
+        const judgeLineOffsetX = driftingJudgeLine ? Math.sin(currentBeat * 1.5) * 60 : 0;
+        const judgeLineOffsetY = driftingJudgeLine ? Math.cos(currentBeat * 1.1) * 25 : 0;
+
+        const targetX = barW / 2;
+        const LANE_SPLIT_OFFSET = 32;
+
+        if (!centerJudgeCircle) {
+            // Beat bar background
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(barX, barY, barW, barH);
+            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(barX, barY, barW, barH);
+
+            // Target line (center)
+            const lineDrawX = targetX + judgeLineOffsetX;
+            const lineDrawCenterY = barY + barH / 2 + judgeLineOffsetY;
+            ctx.strokeStyle = '#ff6b35';
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#ff6b35';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.moveTo(lineDrawX, lineDrawCenterY - barH / 2 + 5);
+            ctx.lineTo(lineDrawX, lineDrawCenterY + barH / 2 - 5);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Target glow
+            ctx.fillStyle = 'rgba(255,107,53,0.1)';
+            ctx.fillRect(lineDrawX - 25, lineDrawCenterY - barH / 2 + 5, 50, barH - 10);
+
+            // Grid lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+            ctx.lineWidth = 1;
+            for (let i = -2; i < 6; i++) {
+                const beatPos = targetX + i * pixelsPerBeat;
+                if (beatPos > 0 && beatPos < barW) {
+                    ctx.beginPath();
+                    ctx.moveTo(beatPos, barY + 10);
+                    ctx.lineTo(beatPos, barY + barH - 10);
+                    ctx.stroke();
+                }
+            }
+
+            if (driftingJudgeLine) {
+                gimmick.judgeLineOffset = judgeLineOffsetX;
+            }
+            if (gimmick.special === 'laneSplit') {
+                // 2レーンに分かれていることが分かるよう、常時ガイド線を描いておく
+                ctx.strokeStyle = 'rgba(74,144,217,0.35)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 6]);
+                [-LANE_SPLIT_OFFSET, LANE_SPLIT_OFFSET].forEach(off => {
+                    ctx.beginPath();
+                    ctx.moveTo(0, barY + barH / 2 + off);
+                    ctx.lineTo(barW, barY + barH / 2 + off);
+                    ctx.stroke();
+                });
+                ctx.setLineDash([]);
+            }
+        } else {
             ctx.save();
             ctx.strokeStyle = '#e74c3c';
             ctx.lineWidth = 4;
             ctx.shadowColor = '#e74c3c';
             ctx.shadowBlur = 18;
             ctx.beginPath();
-            ctx.arc(cjcCircleX, cjcCircleY, 30, 0, Math.PI * 2);
+            ctx.arc(cjcCenterX, cjcCenterY, 30, 0, Math.PI * 2);
             ctx.stroke();
             ctx.restore();
         }
@@ -2282,8 +2261,8 @@ class Renderer {
                 const spawnY = cjcCenterY + Math.sin(angle) * spawnRadius;
                 const beatsRemaining = note.beat - currentBeat;
                 const progress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
-                const px = spawnX + (cjcCircleX - spawnX) * progress;
-                const py = spawnY + (cjcCircleY - spawnY) * progress;
+                const px = spawnX + (cjcCenterX - spawnX) * progress;
+                const py = spawnY + (cjcCenterY - spawnY) * progress;
                 ctx.fillStyle = '#e74c3c';
                 ctx.shadowColor = '#e74c3c';
                 ctx.shadowBlur = 15;
@@ -2298,12 +2277,6 @@ class Renderer {
                 return;
             }
             let nx = targetX + (note.x - 300);
-            if (notesFallFromAbove) {
-                // ノーツ同士が重ならないよう、拍ではなく固定のx位置に振り分けて落とす
-                // （判定タイミング・到達時間は不変、見た目のみ）
-                const slot = note.id % 5;
-                nx = 90 + slot * ((barW - 180) / 4);
-            }
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
                 const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
@@ -2315,16 +2288,37 @@ class Renderer {
 
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
-            if (notesFallFromAbove) {
-                // 横向きの判定線に向かって、出現から判定タイミングまでずっと上から落ち続ける
-                const beatsRemaining = note.beat - currentBeat;
-                const fallProgress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
-                ny = 40 + fallProgress * (ny - 40);
-            }
             ny += laneOffset;
-            // noteShuffle特有のx計算は既にRhythmSystem.getNotesForRender側(接近方向のシャッフル)
-            // で行われているため、ここでは追加のジッターは加えない（リズムを保つため）
-            const shuffledNx = nx;
+            let shuffledNx = nx;
+
+            // 拳士B「反転」: 1拍ごとに上下左右反転する
+            if (gimmick.special === 'flipMirror' && Math.floor(currentBeat) % 2 === 1) {
+                shuffledNx = barW - shuffledNx;
+                ny = 2 * (barY + barH / 2) - ny;
+            }
+
+            if (note.corrupted) {
+                // ウイルス化ノーツ: 攻撃/能力/カウンターノーツの一部が感染したもの。
+                // 種別に関わらず紫の脈動する見た目にして、打つと自分がダメージを受けることを示す。
+                const pulse = 1 + Math.sin(currentBeat * 6) * 0.15;
+                ctx.fillStyle = '#8e44ad';
+                ctx.shadowColor = '#8e44ad';
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.arc(shuffledNx, ny, (size / 2) * pulse, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 2;
+                for (let s = 0; s < 8; s++) {
+                    const ang = s * Math.PI / 4 + currentBeat;
+                    ctx.beginPath();
+                    ctx.moveTo(shuffledNx + Math.cos(ang) * size * 0.4, ny + Math.sin(ang) * size * 0.4);
+                    ctx.lineTo(shuffledNx + Math.cos(ang) * size * 0.7, ny + Math.sin(ang) * size * 0.7);
+                    ctx.stroke();
+                }
+                ctx.shadowBlur = 0;
+                return;
+            }
 
             if (note.type === 'sword') {
                 ctx.fillStyle = '#ff6b35';
@@ -2383,15 +2377,6 @@ class Renderer {
                     ctx.fill();
                     ctx.shadowBlur = 0;
                 }
-            } else if (note.type === 'trap') {
-                const trapNy = ny - 60;
-                ctx.fillStyle = '#8e44ad';
-                ctx.shadowColor = '#8e44ad';
-                ctx.shadowBlur = 15;
-                ctx.beginPath();
-                ctx.arc(shuffledNx, trapNy, size/2, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.shadowBlur = 0;
             }
         });
 
@@ -2668,10 +2653,9 @@ class GameController {
         const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
 
-        const noteType = result.note.type;
-        if (noteType === 'sword') {
-            this.resolveSwordHit(result);
-        } else if (noteType === 'trap') {
+        // ウイルス化ノーツ: 攻撃/能力/カウンターノーツのどれであっても、感染していれば
+        // 通常の効果の代わりに自分がダメージを受ける
+        if (result.note.corrupted) {
             const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
             if (dmg > 0) {
                 this.localPlayer.takeDamage(dmg);
@@ -2679,6 +2663,11 @@ class GameController {
                     `-${Math.floor(dmg)}`, '#e74c3c', 16);
             }
             return;
+        }
+
+        const noteType = result.note.type;
+        if (noteType === 'sword') {
+            this.resolveSwordHit(result);
         } else if (noteType === 'defend') {
             this.localPlayer.defend();
             this.audio.playCounterSound();
@@ -2900,13 +2889,7 @@ class GameController {
                     defendBeat += 0.5;
                 }
                 const activeGimmickSpecial = this.localPlayer.getActiveGimmick().special;
-                if (activeGimmickSpecial === 'damageNote') {
-                    // 他のノーツ種別と打つタイミングが被らないよう、空いているbeatを探して生成する
-                    const damageBeat = this.rhythm.findFreeBeat(defendBeat);
-                    if (!this.rhythm.damageNotes.some(n => !n.hit && !n.missed && n.beat === damageBeat)) {
-                        this.rhythm.generateDamageNote(damageBeat);
-                    }
-                } else if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
+                if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
                     if (activeGimmickSpecial === 'flickUpNote') {
                         this.rhythm.generateFlickUpNote(defendBeat);
                     } else {
@@ -2918,6 +2901,12 @@ class GameController {
                 e.defendNoteSpawned = true;
             }
         });
+
+        // 弓士A「ウイルス化」: 攻撃/能力/カウンターノーツのうち既存の1つを感染させる
+        // (一度に1つまで、専用の独立したノーツは生成しない)
+        if (this.localPlayer.getActiveGimmick().special === 'corruptedNote' && !this.rhythm.hasCorruptedNote()) {
+            this.rhythm.markRandomNoteCorrupted();
+        }
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
         const activeGimmick = this.localPlayer.getActiveGimmick();

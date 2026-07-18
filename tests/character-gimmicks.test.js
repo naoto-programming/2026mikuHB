@@ -15,9 +15,9 @@ const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem } = globalThis.Gam
 
 const expectedSpecials = {
     swordsman: ['flickUpNote', 'giantNote'],
-    archer: ['notesFallFromAbove', 'noteShuffle'],
+    archer: ['corruptedNote', 'noteShuffle'],
     thief: ['resonanceShake', 'rapidFire'],
-    fighter: ['steppedMotion', 'damageNote'],
+    fighter: ['steppedMotion', 'flipMirror'],
     beast: ['invisibleApproach', 'centerJudgeCircle'],
     mage: ['driftingJudgeLine', 'laneSplit'],
 };
