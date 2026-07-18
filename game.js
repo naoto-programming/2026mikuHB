@@ -1359,6 +1359,7 @@ class Renderer {
         this.floatingTexts = [];
         this.meteorNotes = [];
         this.flyingArrows = [];
+        this.rangeIndicators = [];
         this.shakeTimer = 0;
         this.shakeIntensity = 0;
         this.bgStars = [];
@@ -1447,6 +1448,48 @@ class Renderer {
         }
     }
 
+    // 能力発動時に効果範囲を分かりやすく可視化する(円=全方位、beam=特定方向への直線範囲)
+    addRangeCircle(x, y, radius, color) {
+        this.rangeIndicators.push({ type: 'circle', x, y, radius, color, t: 0 });
+    }
+
+    addRangeBeam(x, y, dir, length, color) {
+        this.rangeIndicators.push({ type: 'beam', x, y, dir, length, color, t: 0 });
+    }
+
+    renderRangeIndicators(ctx) {
+        const duration = 0.45;
+        for (let i = this.rangeIndicators.length - 1; i >= 0; i--) {
+            const r = this.rangeIndicators[i];
+            r.t += 1 / 60;
+            const progress = Math.min(1, r.t / duration);
+            const alpha = 0.55 * (1 - progress);
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = r.color;
+            ctx.lineWidth = 4;
+            if (r.type === 'circle') {
+                ctx.beginPath();
+                ctx.arc(r.x, r.y, r.radius * (0.7 + 0.3 * progress), 0, Math.PI * 2);
+                ctx.stroke();
+            } else if (r.type === 'beam') {
+                const h = 60;
+                ctx.fillStyle = r.color;
+                ctx.globalAlpha = alpha * 0.35;
+                ctx.fillRect(r.dir < 0 ? r.x - r.length : r.x, r.y - h / 2, r.length, h);
+                ctx.globalAlpha = alpha;
+                ctx.beginPath();
+                ctx.moveTo(r.x, r.y - h / 2);
+                ctx.lineTo(r.x + r.dir * r.length, r.y - h / 2);
+                ctx.moveTo(r.x, r.y + h / 2);
+                ctx.lineTo(r.x + r.dir * r.length, r.y + h / 2);
+                ctx.stroke();
+            }
+            ctx.restore();
+            if (progress >= 1) this.rangeIndicators.splice(i, 1);
+        }
+    }
+
     addFloatingText(x, y, text, color, size = 22) {
         this.floatingTexts.push({ x, y, text, color, size, life: 1, vy: -2.5, alpha: 1 });
     }
@@ -1523,6 +1566,9 @@ class Renderer {
 
         // 弓士「貫通弓」が飛んでいく矢の演出
         this.renderFlyingArrows(ctx);
+
+        // 能力の効果範囲を分かりやすく表示する
+        this.renderRangeIndicators(ctx);
 
         // Floating texts
         this.renderFloatingTexts(ctx);
@@ -2134,6 +2180,10 @@ class Renderer {
         const judgeLineOffsetX = driftingJudgeLine ? Math.sin(game.audio.getCurrentBeat() * 1.5) * 60 : 0;
         const judgeLineOffsetY = driftingJudgeLine ? Math.cos(game.audio.getCurrentBeat() * 1.1) * 25 : 0;
 
+        // 弓士A「ノーツ落下」: 上から落ちてくる動きに合うよう、判定の目安を横向きの線にする
+        // （縦向きの判定線は横流れのノーツ向けのため、落下ノーツとは噛み合わない）
+        const notesFallFromAbove = game.localPlayer && game.localPlayer.getActiveGimmick().special === 'notesFallFromAbove';
+
         // Target line (center)
         const targetX = barW / 2;
         const lineDrawX = targetX + judgeLineOffsetX;
@@ -2151,6 +2201,21 @@ class Renderer {
         // Target glow
         ctx.fillStyle = 'rgba(255,107,53,0.1)';
         ctx.fillRect(lineDrawX - 25, lineDrawCenterY - barH / 2 + 5, 50, barH - 10);
+
+        if (notesFallFromAbove) {
+            const landingY = barY + barH / 2;
+            ctx.strokeStyle = '#ff6b35';
+            ctx.lineWidth = 4;
+            ctx.shadowColor = '#ff6b35';
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            ctx.moveTo(40, landingY);
+            ctx.lineTo(barW - 40, landingY);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(255,107,53,0.12)';
+            ctx.fillRect(40, landingY - 25, barW - 80, 50);
+        }
 
         // Beat markers
         const currentBeat = game.audio.getCurrentBeat();
@@ -2232,7 +2297,13 @@ class Renderer {
                 ctx.shadowBlur = 0;
                 return;
             }
-            const nx = targetX + (note.x - 300);
+            let nx = targetX + (note.x - 300);
+            if (notesFallFromAbove) {
+                // ノーツ同士が重ならないよう、拍ではなく固定のx位置に振り分けて落とす
+                // （判定タイミング・到達時間は不変、見た目のみ）
+                const slot = note.id % 5;
+                nx = 90 + slot * ((barW - 180) / 4);
+            }
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
                 const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
@@ -2244,16 +2315,11 @@ class Renderer {
 
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
-            if (gimmick.special === 'notesFallFromAbove') {
-                // 出現直後だけ上空から落ちてきてレーンに着地し、以降は通常のノーツと同じ高さ・
-                // 横移動でレーンを流れて判定線で打つ（判定タイミングは不変）
+            if (notesFallFromAbove) {
+                // 横向きの判定線に向かって、出現から判定タイミングまでずっと上から落ち続ける
                 const beatsRemaining = note.beat - currentBeat;
-                const fallWindowStart = LOOKAHEAD_BEATS + 1;
-                const fallWindowEnd = LOOKAHEAD_BEATS - 1.5;
-                if (beatsRemaining > fallWindowEnd) {
-                    const fallProgress = 1 - Math.max(0, Math.min(1, (beatsRemaining - fallWindowEnd) / (fallWindowStart - fallWindowEnd)));
-                    ny = 40 + fallProgress * (ny - 40);
-                }
+                const fallProgress = Math.max(0, Math.min(1, 1 - beatsRemaining / LOOKAHEAD_BEATS));
+                ny = 40 + fallProgress * (ny - 40);
             }
             ny += laneOffset;
             // noteShuffle特有のx計算は既にRhythmSystem.getNotesForRender側(接近方向のシャッフル)
@@ -2930,6 +2996,20 @@ class GameController {
                     this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing);
                 }
 
+                // 能力の効果範囲を可視化する(どこまで届いたか分かりやすくする)
+                const psx = this.localPlayer.x - this.stage.scrollX, psy = this.localPlayer.y - 40;
+                if (this.localPlayer.charId === 'swordsman') {
+                    this.renderer.addRangeCircle(psx, psy, 250, '#ff6b35');
+                } else if (this.localPlayer.charId === 'archer') {
+                    this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 450, '#4a90d9');
+                } else if (this.localPlayer.charId === 'fighter') {
+                    this.renderer.addRangeCircle(psx, psy, 450, '#e67e22');
+                    this.renderer.addRangeCircle(psx, psy, 650, '#e67e22');
+                } else if (this.localPlayer.charId === 'beast') {
+                    this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 250, '#27ae60');
+                    this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 400, '#27ae60');
+                }
+
                 this.renderer.shake(5, 0.2);
                 this.audio.playAbilitySound();
             }
@@ -2940,6 +3020,7 @@ class GameController {
             const currentBeat = this.audio.getCurrentBeat();
             if (currentBeat >= this.thiefCombo.nextBeat) {
                 const outcome = applyAbility('thief', this.thiefCombo.ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+                this.renderer.addRangeCircle(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, this.localPlayer.getAttackRange(), '#9b59b6');
                 let nearest = null, nearestDist = Infinity;
                 outcome.hits.forEach(({ enemy, dmg }) => {
                     this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
