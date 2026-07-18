@@ -414,6 +414,7 @@ class RhythmSystem {
         this.giantNote = null;
         this.giantNoteExploded = false;
         this.damageNotes = [];
+        this.rapidFireNextBeat = null;
     }
 
     startSwordBurst(beats, gimmick) {
@@ -542,12 +543,12 @@ class RhythmSystem {
             }
         });
 
-        // 巨大ノーツを見逃した場合、missedのまま放置すると二度と新しい巨大ノーツが
-        // 生成されなくなってしまう（giantNoteが非nullのまま残るため）。参照をクリアして
-        // 次の間合い到達時に新しい巨大ノーツ（giantStage 3）を生成できるようにする。
+        // 巨大ノーツを見逃した場合、それまで積んだgiantStageの進捗を失わせず、
+        // 同じ縮小段階のまま次の小節で再接近させる（爆発済みでない限り最初からやり直しにしない）。
         if (this.giantNote && this.giantNote.missed) {
-            this.swordNotes = this.swordNotes.filter(n => n !== this.giantNote);
-            this.giantNote = null;
+            this.giantNote.missed = false;
+            this.giantNote.hit = false;
+            this.giantNote.beat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
         }
 
         // Check ability completion
@@ -682,7 +683,7 @@ class RhythmSystem {
         const speedMult = gimmick.noteSpeedMult || 1;
         const lineOffset = gimmick.judgeLineOffset || 0;
         const rawCurrentBeat = this.audio.getCurrentBeat();
-        const currentBeat = gimmick.special === 'steppedMotion' ? Math.floor(rawCurrentBeat) : rawCurrentBeat;
+        const currentBeat = gimmick.special === 'steppedMotion' ? Math.floor(rawCurrentBeat * 2) / 2 : rawCurrentBeat;
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = LOOKAHEAD_BEATS + 1;
 
@@ -697,9 +698,16 @@ class RhythmSystem {
         }).map(n => {
             const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
             const base = 300 + lineOffset;
+            let approachesFromDefendSide = n.type === 'defend';
+            if (gimmick.special === 'noteShuffle') {
+                // カウンターと攻撃/能力ノーツの接近方向をノーツごとにシャッフルし、
+                // 種別によらずどちらの向きからも来るようにする（判定は距離のみで変わらない）
+                const seed = Math.sin(n.id * 91.737) * 34521.19;
+                approachesFromDefendSide = (seed - Math.floor(seed)) < 0.5;
+            }
             return {
                 ...n,
-                x: n.type === 'defend' ? base - offset : base + offset,
+                x: approachesFromDefendSide ? base - offset : base + offset,
             };
         });
     }
@@ -719,6 +727,7 @@ class RhythmSystem {
         this.giantNote = null;
         this.giantNoteExploded = false;
         this.damageNotes = [];
+        this.rapidFireNextBeat = null;
     }
 }
 
@@ -2063,13 +2072,21 @@ class Renderer {
         }
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
-            const nx = targetX + (note.x - 300);
+            let nx = targetX + (note.x - 300);
+            if (gimmick.special === 'notesFallFromAbove') {
+                // 判定線に収束せず、レーン内の様々な場所に固定のx座標で降らせる
+                // （判定タイミング・到達時間は変わらない、見た目のみ）
+                const seed = Math.sin(note.id * 53.173) * 91731.7;
+                nx = 60 + (seed - Math.floor(seed)) * (barW - 120);
+            }
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
                 const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
                 if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
             }
-            const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -20 : 20) : 0;
+            const laneOffset = gimmick.special === 'laneSplit' ? (note.id % 2 === 0 ? -20 : 20)
+                : gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
+                : 0;
 
             let ny = barY + barH/2;
             const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
@@ -2110,19 +2127,37 @@ class Renderer {
                 ctx.fill();
                 ctx.shadowBlur = 0;
             } else if (note.type === 'defend') {
-                ctx.fillStyle = '#e74c3c';
-                ctx.shadowColor = '#e74c3c';
-                ctx.shadowBlur = 15;
-                ctx.beginPath();
-                ctx.moveTo(shuffledNx, ny - size/2);
-                ctx.lineTo(shuffledNx + size/2, ny);
-                ctx.lineTo(shuffledNx, ny + size/2);
-                ctx.lineTo(shuffledNx - size/2, ny);
-                ctx.closePath();
-                ctx.fill();
-                ctx.shadowBlur = 0;
+                if (note.isHold) {
+                    const holdSize = size * 1.4;
+                    ctx.fillStyle = '#f1c40f';
+                    ctx.shadowColor = '#f1c40f';
+                    ctx.shadowBlur = 22;
+                    ctx.beginPath();
+                    ctx.moveTo(shuffledNx, ny - holdSize/2);
+                    ctx.lineTo(shuffledNx + holdSize/2, ny);
+                    ctx.lineTo(shuffledNx, ny + holdSize/2);
+                    ctx.lineTo(shuffledNx - holdSize/2, ny);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                } else {
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.shadowColor = '#e74c3c';
+                    ctx.shadowBlur = 15;
+                    ctx.beginPath();
+                    ctx.moveTo(shuffledNx, ny - size/2);
+                    ctx.lineTo(shuffledNx + size/2, ny);
+                    ctx.lineTo(shuffledNx, ny + size/2);
+                    ctx.lineTo(shuffledNx - size/2, ny);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
             } else if (note.type === 'trap') {
-                const trapNy = ny - 30;
+                const trapNy = ny - 60;
                 ctx.fillStyle = '#8e44ad';
                 ctx.shadowColor = '#8e44ad';
                 ctx.shadowBlur = 15;
@@ -2387,7 +2422,7 @@ class GameController {
             if (this.state !== 'playing') return;
             this.audio.playMetronomeTick();
             if (this.localPlayer.getActiveGimmick().special === 'resonanceShake') {
-                this.renderer.shake(5, 0.3);
+                this.renderer.shake(14, 0.35);
             }
         };
 
@@ -2689,14 +2724,30 @@ class GameController {
                 }
             }
         } else if (activeGimmick.special === 'rapidFire') {
-            if (!this.rhythm.swordBurstActive) {
-                this.rhythm.startSwordBurst(4, activeGimmick);
+            if (this.rhythm.rapidFireNextBeat === null) {
+                // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降は0.5拍間隔で休みなく生成する
+                this.rhythm.swordNotes = [];
+                this.rhythm.rapidFireNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
             }
-        } else if (!this.rhythm.swordBurstActive) {
-            const inRange = this.stage.enemies.some(e => !e.dead &&
-                Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
-            if (inRange) {
-                this.rhythm.startSwordBurst(4, activeGimmick);
+            const rapidFireHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
+            while (this.rhythm.rapidFireNextBeat < rapidFireHorizon) {
+                this.rhythm.swordNotes.push({
+                    id: this.rhythm.noteId++,
+                    beat: this.rhythm.rapidFireNextBeat,
+                    type: 'sword',
+                    hit: false,
+                    missed: false,
+                });
+                this.rhythm.rapidFireNextBeat += 0.5;
+            }
+        } else {
+            if (this.rhythm.rapidFireNextBeat !== null) this.rhythm.rapidFireNextBeat = null;
+            if (!this.rhythm.swordBurstActive) {
+                const inRange = this.stage.enemies.some(e => !e.dead &&
+                    Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
+                if (inRange) {
+                    this.rhythm.startSwordBurst(4, activeGimmick);
+                }
             }
         }
 
