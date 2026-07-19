@@ -70,12 +70,23 @@ function makePlayer(charId) {
     if (!(ahead.x > xBefore)) throw new Error('beast ability should knock the target back a little, x moved by ' + (ahead.x - xBefore));
 }
 
-// 魔法使い「ノーツメテオ」: 距離を問わず生存中の敵全員にヒットする
+// 魔法使い「ノーツメテオ」: 距離を問わず生存中の敵から、全員ではなくランダムな数体(1体以上、
+// 生存数以下)にだけヒットする
 {
     const player = makePlayer('mage');
-    const enemies = [new Enemy('normal', 100, 0, 1), new Enemy('normal', 5000, 0, 1)];
-    const outcome = applyAbility('mage', 1, player, enemies, 0);
-    if (outcome.hits.length !== 2) throw new Error('mage ability should hit every alive enemy regardless of distance, got ' + outcome.hits.length);
+    for (let trial = 0; trial < 20; trial++) {
+        // 弱ダメージとはいえ繰り返し当てると倒れてしまうため、毎回新しい敵で試行する
+        const enemies = [new Enemy('normal', 100, 0, 1), new Enemy('normal', 5000, 0, 1), new Enemy('normal', -300, 0, 1)];
+        const outcome = applyAbility('mage', 1, player, enemies, 0);
+        if (outcome.hits.length < 1 || outcome.hits.length > enemies.length) {
+            throw new Error('mage ability should hit between 1 and all alive enemies, got ' + outcome.hits.length);
+        }
+        const hitEnemies = new Set(outcome.hits.map(h => h.enemy));
+        if (hitEnemies.size !== outcome.hits.length) throw new Error('mage ability should not hit the same enemy twice');
+        outcome.hits.forEach(h => {
+            if (!enemies.includes(h.enemy)) throw new Error('mage ability hit an enemy that was not in the provided list');
+        });
+    }
 }
 
 // 全Missでも最低性能で発動する(0ダメージにはならない)

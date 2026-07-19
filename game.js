@@ -46,8 +46,10 @@ const CHARACTER_GIMMICKS = {
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
     mage: [{ special: 'driftingJudgeLine' }, { special: 'arrowCue' }],
 };
-const GIMMICK_NORMAL_SECONDS = 20;
-const GIMMICK_SPECIAL_SECONDS = 8;
+// 固有ギミック(特殊フェーズ)をより長く、通常フェーズをより短くして
+// ギミックに触れている時間の割合を増やす
+const GIMMICK_NORMAL_SECONDS = 12;
+const GIMMICK_SPECIAL_SECONDS = 15;
 
 const UPGRADES = [
     { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
@@ -238,9 +240,10 @@ class AudioSystem {
         return elapsed / (60 / this.bpm);
     }
 
-    // 入力判定専用の「現在拍」。無線イヤホン等で音が遅れて届く場合、プレイヤーは
-    // 実際より遅いタイミングで反応してしまうため、その分だけ判定側の時計を
-    // 巻き戻して補正する(ノーツの描画位置には影響しない)。
+    // 入力判定・見た目のアニメーション(ノーツの描画位置やビート連動演出)の両方で使う
+    // 「補正後の現在拍」。無線イヤホン等で音が遅れて届く場合、プレイヤーには実際より
+    // 遅れて音が聞こえるため、判定だけでなく画面に見えるものも同じ分だけ巻き戻して
+    // 補正する(実際の音声スケジューリング自体=getCurrentBeat()は変更しない)。
     getInputBeat() {
         if (!this.isPlaying) return 0;
         const elapsed = (this.ctx.currentTime - this.latencyOffset) - this.startTime;
@@ -609,7 +612,10 @@ class RhythmSystem {
     }
 
     update() {
-        const currentBeat = this.audio.getCurrentBeat();
+        // ミス判定はcheckInput/checkInputAnyと同じ補正後の時計(getInputBeat)を使う。
+        // ここだけ無補正のgetCurrentBeatのままだと、遅延補正で本来まだ判定可能なはずの
+        // タイミングでも先にmissed扱いになってしまう
+        const currentBeat = this.audio.getInputBeat();
         this.defendMissThisFrame = false;
 
         // Mark missed notes
@@ -770,7 +776,10 @@ class RhythmSystem {
         gimmick = gimmick || {};
         const speedMult = gimmick.noteSpeedMult || 1;
         const lineOffset = gimmick.judgeLineOffset || 0;
-        const rawCurrentBeat = this.audio.getCurrentBeat();
+        // ノーツの描画位置(見た目)も入力判定と同じ補正後の時計に合わせる。
+        // こうしないと、無線イヤホン等で聞こえる音自体が遅れているのに、
+        // ノーツの見た目だけは補正前(本来)のタイミングで判定線に届いてしまい、ずれて見える
+        const rawCurrentBeat = this.audio.getInputBeat();
         const currentBeat = gimmick.special === 'steppedMotion' ? Math.floor(rawCurrentBeat * 2) / 2 : rawCurrentBeat;
         const beatInterval = 60 / this.audio.bpm;
         const visibleBeats = LOOKAHEAD_BEATS + 1;
@@ -906,10 +915,13 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
                 });
             break;
         }
-        case 'mage':
-            // ノーツメテオ: 生存中の敵全体に攻撃(弱)
-            alive.forEach(e => hit(e, Math.floor(POWER_TIERS.weak * player.upgrades.ability * power)));
+        case 'mage': {
+            // ノーツメテオ: 生存中の敵全員ではなく、距離を問わずランダムに選んだ数体(1〜4体)にだけ攻撃(弱)
+            const meteorCount = Math.min(alive.length, 1 + Math.floor(Math.random() * 4));
+            const shuffled = [...alive].sort(() => Math.random() - 0.5);
+            shuffled.slice(0, meteorCount).forEach(e => hit(e, Math.floor(POWER_TIERS.weak * player.upgrades.ability * power)));
             break;
+        }
         default:
             alive.forEach(e => hit(e, Math.floor(POWER_TIERS.medium * player.upgrades.ability * power)));
     }
@@ -955,6 +967,7 @@ class Player {
         this.flashTimer = 0;
         this.dashTimer = 0;
         this.dashDir = 1;
+        this.dashSpeedMult = 3;
         this.pulseTimer = 0;
         this.gimmickPhase = 'normal';
         this.gimmickTimer = GIMMICK_NORMAL_SECONDS;
@@ -1024,10 +1037,11 @@ class Player {
 
         if (this.dashTimer > 0) {
             this.dashTimer -= dt;
-            this.vx = this.dashDir * CONSTANTS.PLAYER_SPEED * this.char.speed * 3;
+            this.vx = this.dashDir * CONSTANTS.PLAYER_SPEED * this.char.speed * this.dashSpeedMult;
             if (this.dashTimer <= 0) {
                 this.dashTimer = 0;
                 this.vx = 0;
+                this.dashSpeedMult = 3;
             }
         } else if (!this.isAttacking && !this.isUsingAbility && this.pulseTimer <= 0) {
             let nearest = null, nearestDist = Infinity;
@@ -1107,6 +1121,16 @@ class Player {
     perfectDash(dir) {
         this.dashTimer = 0.15;
         this.dashDir = dir || this.facing;
+        this.dashSpeedMult = 3;
+    }
+
+    // 盗賊B「連打」中、攻撃ノーツをPerfectで叩いた時専用の本当の(見た目だけでなく実際の)
+    // 画面端から端までの高速ダッシュ。update()側の移動範囲クランプがあるため、
+    // 速度を大きくしても画面外へ出ることはなく、端に到達してそこで止まる
+    edgeDash(dir) {
+        this.dashTimer = 0.25;
+        this.dashDir = dir || this.facing;
+        this.dashSpeedMult = 25;
     }
 
     perfectPulse() {
@@ -1174,6 +1198,10 @@ class Enemy {
         this.spawnDelay = 0;
         this.hueShift = 0;
         this.brightnessShift = 1;
+        // 上空から降ってくる出現演出用。spawnWaveが使う時だけfalling=trueにし、
+        // 通常のコンストラクタ経由(テスト等)ではyはそのまま(即着地扱い)にする
+        this.falling = false;
+        this.groundY = y;
 
         if (Math.random() < 0.25 * stageMod) {
             const types = ['sword', 'ability'];
@@ -1184,6 +1212,17 @@ class Enemy {
     update(dt, players, scrollX, allEnemies) {
         if (this.spawnDelay > 0) {
             this.spawnDelay -= dt;
+            return;
+        }
+        // 上空から落下してくる演出。着地(groundY到達)するまでは移動・攻撃を行わない
+        if (this.falling) {
+            this.vy += 1400 * dt;
+            this.y += this.vy * dt;
+            if (this.y >= this.groundY) {
+                this.y = this.groundY;
+                this.vy = 0;
+                this.falling = false;
+            }
             return;
         }
         if (this.dead) {
@@ -1329,6 +1368,10 @@ class StageManager {
         this.totalScore = 0;
         this.difficultyMult = 1;
         this.transitioning = false;
+        // 前のウェーブの敵を全滅させ切らなくても、この割合まで数が減っていれば
+        // 次のウェーブを重ねて投入する(戦闘が間延びしないようにする)
+        this.waveAdvanceRemainingRatio = 0.3;
+        this.lastWaveSize = 0;
     }
 
     getStageMod() {
@@ -1342,13 +1385,17 @@ class StageManager {
         this.waveTimer = 1;
         this.completed = false;
         this.scrollX = 0;
+        this.lastWaveSize = 0;
     }
 
     update(dt, players) {
         if (this.completed || this.transitioning) return;
 
         this.waveTimer -= dt;
-        if (this.waveTimer <= 0 && this.enemies.length === 0 && this.currentWave < this.totalWaves) {
+        // 前のウェーブを全滅させ切っていなくても、残数が一定割合まで減っていれば
+        // 次のウェーブを重ねて投入する(0体になるのを待つと間延びするため)
+        const enoughCleared = this.enemies.length <= this.lastWaveSize * this.waveAdvanceRemainingRatio;
+        if (this.waveTimer <= 0 && enoughCleared && this.currentWave < this.totalWaves) {
             this.spawnWave();
             this.currentWave++;
             this.waveTimer = this.waveIntervalSeconds;
@@ -1357,6 +1404,7 @@ class StageManager {
         this.enemies.forEach(e => e.update(dt, players, this.scrollX, this.enemies));
         this.enemies = this.enemies.filter(e => !e.dead || e.knockbackTimer > 0);
 
+        // ステージ全体のクリア判定は引き続き「最終ウェーブまで消化し、敵が0体」を要求する
         if (this.currentWave >= this.totalWaves && this.enemies.length === 0) {
             this.completed = true;
         }
@@ -1381,16 +1429,19 @@ class StageManager {
         if (this.stage >= 4) types.push('large');
 
         const waveSize = Math.min(50, 35 + Math.floor(this.getStageMod() * 8));
+        this.lastWaveSize = waveSize;
         for (let i = 0; i < waveSize; i++) {
             const type = types[Math.floor(Math.random() * types.length)];
-            const fromLeft = Math.random() < 0.5;
-            const x = fromLeft
-                ? -60 - Math.random() * 150
-                : CONSTANTS.CANVAS_WIDTH + 60 + Math.random() * 150;
-            const y = CONSTANTS.GROUND_Y + (Math.random() - 0.5) * 30;
-            const enemy = new Enemy(type, x, y, mod);
+            // ランダムな位置(画面内外を問わない)の上空から落ちてくる形で出現する
+            const x = this.scrollX + Math.random() * (CONSTANTS.CANVAS_WIDTH + 400) - 200;
+            const groundY = CONSTANTS.GROUND_Y + (Math.random() - 0.5) * 30;
+            const skyY = groundY - 500 - Math.random() * 300;
+            const enemy = new Enemy(type, x, skyY, mod);
+            enemy.groundY = groundY;
+            enemy.falling = true;
             enemy.atk *= 0.35;
-            enemy.spawnDelay = Math.random() * 3;
+            // まとめて一斉に降ってくるのではなく、1体ずつ順番に出現させる
+            enemy.spawnDelay = i * 0.25 + Math.random() * 0.15;
             enemy.hueShift = (Math.random() - 0.5) * 40;
             enemy.brightnessShift = 0.85 + Math.random() * 0.3;
             this.enemies.push(enemy);
@@ -1595,9 +1646,9 @@ class Renderer {
     }
 
     renderLaunchedNotes(ctx) {
-        const duration = 0.35;
-        const kickPhase = 0.3;
-        const kickHeight = 50;
+        const duration = 0.5;
+        const kickPhase = 0.25;
+        const kickHeight = 60;
         for (let i = this.launchedNotes.length - 1; i >= 0; i--) {
             const n = this.launchedNotes[i];
             n.t += 1 / 60;
@@ -1610,15 +1661,42 @@ class Renderer {
             } else {
                 const p = (progress - kickPhase) / (1 - kickPhase);
                 x = n.fromX + (n.toX - n.fromX) * p;
-                const arc = Math.sin(Math.PI * p) * 40;
+                const arc = Math.sin(Math.PI * p) * 50;
                 y = (n.fromY - kickHeight) + (n.toY - (n.fromY - kickHeight)) * p - arc;
             }
+
+            // 光の尾(コメット風の軌跡)を残す
+            n.trail = n.trail || [];
+            n.trail.push({ x, y });
+            if (n.trail.length > 8) n.trail.shift();
+
             ctx.save();
+            n.trail.forEach((pt, idx) => {
+                const trailAlpha = (idx / n.trail.length) * 0.5;
+                ctx.globalAlpha = trailAlpha;
+                ctx.fillStyle = n.color;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 9, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+
+            // ノーツそのものが飛んでいくような菱形(ダイヤ型)の見た目、常に本体を回転させて目立たせる
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(progress * Math.PI * 4);
             ctx.fillStyle = n.color;
+            ctx.shadowColor = n.color;
+            ctx.shadowBlur = 20;
             ctx.beginPath();
-            ctx.arc(x, y, 11, 0, Math.PI * 2);
+            ctx.moveTo(0, -17);
+            ctx.lineTo(17, 0);
+            ctx.lineTo(0, 17);
+            ctx.lineTo(-17, 0);
+            ctx.closePath();
             ctx.fill();
             ctx.restore();
+
             if (progress >= 1) this.launchedNotes.splice(i, 1);
         }
     }
@@ -1682,7 +1760,7 @@ class Renderer {
         }
 
         // 拍に連動した縦揺れ量（拍の頭でしゃがみ、拍の半分で最も浮く）
-        const beatPhase = game.audio.isPlaying ? (game.audio.getCurrentBeat() % 1) : 0;
+        const beatPhase = game.audio.isPlaying ? (game.audio.getInputBeat() % 1) : 0;
         const beatBob = Math.sin(beatPhase * Math.PI) * 4;
 
         // Render enemies
@@ -2304,7 +2382,9 @@ class Renderer {
         const barY = CONSTANTS.CANVAS_HEIGHT - 90;
         const barW = CONSTANTS.CANVAS_WIDTH;
         const barH = 90;
-        const currentBeat = game.audio.getCurrentBeat();
+        // リズムUIの見た目(判定線の揺れ・ノーツの点滅・矢印のタイミング等)も
+        // 補正後の時計に合わせ、聞こえる音とズレないようにする
+        const currentBeat = game.audio.getInputBeat();
         const beatInterval = 60 / game.audio.bpm;
         const pixelsPerBeat = CONSTANTS.NOTE_SPEED * beatInterval;
         const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
@@ -2434,7 +2514,7 @@ class Renderer {
             let nx = targetX + (note.x - 300);
             if (nx < -50 || nx > barW + 50) return;
             if (gimmick.special === 'invisibleApproach') {
-                const beatsUntilHit = note.beat - game.audio.getCurrentBeat();
+                const beatsUntilHit = note.beat - game.audio.getInputBeat();
                 if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
             }
             const laneOffset = gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
@@ -2489,7 +2569,7 @@ class Renderer {
                 }
             } else if (note.type === 'ability') {
                 const abilityNy = gimmick.abilityPulseLine
-                    ? ny + Math.sin(game.audio.getCurrentBeat() * 3) * 15
+                    ? ny + Math.sin(game.audio.getInputBeat() * 3) * 15
                     : ny;
                 ctx.fillStyle = '#4a90d9';
                 ctx.shadowColor = '#4a90d9';
@@ -2961,10 +3041,12 @@ class GameController {
         if (result.note.rapidFireNote) {
             if (result.judge === 'perfect') {
                 this.rapidFirePerfectCount++;
-                // 攻撃ノーツをPerfectで叩いた時だけ、画面端から端までの駆け抜け演出を出す
-                // (実際のプレイヤー座標は動かさない、見た目だけの演出)
+                // 攻撃ノーツをPerfectで叩いた時だけ、実際に画面端から端まで高速ダッシュさせる
+                // (プレイヤーの実座標も動かす。見た目の光の筋も合わせて出す)
                 if (result.note.type === 'sword') {
-                    this.renderer.addEdgeDash(this.localPlayer.y - 40, this.localPlayer.facing, '#ff6b35');
+                    const dir = this.localPlayer.facing;
+                    this.localPlayer.edgeDash(dir);
+                    this.renderer.addEdgeDash(this.localPlayer.y - 40, dir, '#ff6b35');
                 }
             }
             return;
@@ -3065,7 +3147,9 @@ class GameController {
             if (dist < nearestDist) { nearestDist = dist; nearest = e; }
         });
         this.audio.playSwordSound();
-        if (!nearest || nearestDist >= this.localPlayer.getAttackRange()) return;
+        // 飛んでいくノーツ自体が単体を追尾する遠隔攻撃のため、近接の攻撃間合いでは制限しない
+        // (間合い外の敵が発生源の防御ノーツを打った時にも、演出とダメージが必ず出るようにする)
+        if (!nearest) return;
 
         const isSword = result.note.type === 'sword';
         const baseDamage = isSword ? 10 : 8;
@@ -3570,6 +3654,7 @@ const GameLogic = {
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,
+    GIMMICK_NORMAL_SECONDS, GIMMICK_SPECIAL_SECONDS,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;

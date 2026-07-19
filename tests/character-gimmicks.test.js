@@ -4,7 +4,7 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem } = globalThis.GameLogic;
+const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem, GIMMICK_NORMAL_SECONDS, GIMMICK_SPECIAL_SECONDS } = globalThis.GameLogic;
 
 // CHARACTER_GIMMICKSは全6キャラに2つずつギミックを定義している
 ['swordsman', 'archer', 'thief', 'fighter', 'beast', 'mage'].forEach(id => {
@@ -34,21 +34,21 @@ const p = new Player('p1', 'thief', true);
 if (p.gimmickPhase !== 'normal') throw new Error('gimmickPhase should start as normal');
 if (Object.keys(p.getActiveGimmick()).length !== 0) throw new Error('getActiveGimmick should return {} during the normal phase');
 
-// 20秒経過するとspecialフェーズに切り替わり、該当キャラのギミックが返る
-p.update(20.1, 0, []);
-if (p.gimmickPhase !== 'special') throw new Error('gimmickPhase should switch to special after 20s');
+// GIMMICK_NORMAL_SECONDS経過するとspecialフェーズに切り替わり、該当キャラのギミックが返る
+p.update(GIMMICK_NORMAL_SECONDS + 0.1, 0, []);
+if (p.gimmickPhase !== 'special') throw new Error('gimmickPhase should switch to special after GIMMICK_NORMAL_SECONDS');
 const active = p.getActiveGimmick();
 const expectedFirst = CHARACTER_GIMMICKS.thief[0];
 if (JSON.stringify(active) !== JSON.stringify(expectedFirst)) {
     throw new Error('active gimmick should match CHARACTER_GIMMICKS.thief[0], got ' + JSON.stringify(active));
 }
 
-// さらに8秒経過するとnormalに戻る
-p.update(8.1, 0, []);
+// さらにGIMMICK_SPECIAL_SECONDS経過するとnormalに戻る
+p.update(GIMMICK_SPECIAL_SECONDS + 0.1, 0, []);
 if (p.gimmickPhase !== 'normal') throw new Error('gimmickPhase should return to normal after the special phase elapses');
 
 // 次のspecialフェーズではgimmickIndexが反転し、2つ目のギミックになる
-p.update(20.1, 0, []);
+p.update(GIMMICK_NORMAL_SECONDS + 0.1, 0, []);
 const active2 = p.getActiveGimmick();
 const expectedSecond = CHARACTER_GIMMICKS.thief[1];
 if (JSON.stringify(active2) !== JSON.stringify(expectedSecond)) {

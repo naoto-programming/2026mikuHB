@@ -31,11 +31,16 @@ stage.spawnWave();
 
 if (stage.enemies.length === 0) throw new Error('spawnWave should create enemies');
 
+// 敵は上空から1体ずつ順番に降ってくるため、spawnDelayは出現順に応じて広く分散する
+// (まとめて一斉に降ってこないよう、後の敵ほど遅く出現する)
 const delays = new Set();
+const maxExpectedDelay = stage.enemies.length * 0.25 + 1;
 stage.enemies.forEach(en => {
-    if (en.spawnDelay < 0 || en.spawnDelay >= 3) throw new Error('spawnDelay should be within [0,3), got ' + en.spawnDelay);
+    if (en.spawnDelay < 0 || en.spawnDelay >= maxExpectedDelay) throw new Error('spawnDelay should be within [0,' + maxExpectedDelay + '), got ' + en.spawnDelay);
     delays.add(en.spawnDelay);
-    if (Math.abs(en.y - CONSTANTS.GROUND_Y) > 15) throw new Error('enemy y should stay within GROUND_Y ± 15, got ' + en.y);
+    if (!en.falling) throw new Error('a freshly spawned enemy should start in the falling(from-the-sky) state');
+    if (en.y >= en.groundY) throw new Error('a freshly spawned enemy should start above its groundY (falling from the sky), got y=' + en.y + ' groundY=' + en.groundY);
+    if (Math.abs(en.groundY - CONSTANTS.GROUND_Y) > 15) throw new Error('enemy groundY (landing spot) should stay within GROUND_Y ± 15, got ' + en.groundY);
     if (en.hueShift < -20 || en.hueShift >= 20) throw new Error('hueShift should be within [-20,20), got ' + en.hueShift);
     if (en.brightnessShift < 0.85 || en.brightnessShift >= 1.15) throw new Error('brightnessShift should be within [0.85,1.15), got ' + en.brightnessShift);
 });
