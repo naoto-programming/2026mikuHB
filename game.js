@@ -969,6 +969,7 @@ class Player {
         this.dashTimer = 0;
         this.dashDir = 1;
         this.dashSpeedMult = 3;
+        this.moveTargetEnemy = null;
         this.pulseTimer = 0;
         this.gimmickPhase = 'normal';
         this.gimmickTimer = GIMMICK_NORMAL_SECONDS;
@@ -1045,12 +1046,21 @@ class Player {
                 this.dashSpeedMult = 3;
             }
         } else if (!this.isAttacking && !this.isUsingAbility && this.pulseTimer <= 0) {
-            let nearest = null, nearestDist = Infinity;
+            // 移動目標として追う敵はロックオン式にする。複数の敵がほぼ同距離にいると、
+            // 「最も近い敵」が毎フレーム入れ替わってしまい、その度に向き・移動方向が
+            // 反転してプルプルと震える原因になるため、明確に(30px以上)近い敵が
+            // 現れない限り、今追っている敵を優先して追い続ける
+            let nearest = this.moveTargetEnemy;
+            if (nearest && (nearest.dead || nearest.falling || !(enemies || []).includes(nearest))) {
+                nearest = null;
+            }
+            let nearestDist = nearest ? Math.abs(nearest.x - this.x) : Infinity;
             (enemies || []).forEach(e => {
                 if (e.dead || e.falling) return;
                 const dist = Math.abs(e.x - this.x);
-                if (dist < nearestDist) { nearestDist = dist; nearest = e; }
+                if (!nearest || dist < nearestDist - 30) { nearestDist = dist; nearest = e; }
             });
+            this.moveTargetEnemy = nearest;
 
             if (nearest) {
                 // 敵と重なるほど近いと差分が0付近で揺れ動き、向きが毎フレーム反転してしまう
@@ -1446,7 +1456,7 @@ class StageManager {
             const enemy = new Enemy(type, x, skyY, mod);
             enemy.groundY = groundY;
             enemy.falling = true;
-            enemy.atk *= 0.35;
+            enemy.atk *= 0.15; // 敵の攻撃力を大幅に下げる
             // まとめて一斉に降ってくるのではなく、1体ずつ順番に出現させる
             enemy.spawnDelay = i * 0.25 + Math.random() * 0.15;
             enemy.hueShift = (Math.random() - 0.5) * 40;
@@ -2654,9 +2664,6 @@ class GameController {
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
         this.thiefCombo = null;
-        this.rapidFirePerfectCount = 0;
-        this.rapidFireWasActive = false;
-        this.thiefRapidFirePayout = null;
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
         this.tutorialBoxTimer = null;
@@ -2991,9 +2998,6 @@ class GameController {
         this.gameTime = 0;
         this.abilityCooldown = 0;
         this.thiefCombo = null;
-        this.rapidFirePerfectCount = 0;
-        this.rapidFireWasActive = false;
-        this.thiefRapidFirePayout = null;
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
 
@@ -3049,11 +3053,11 @@ class GameController {
         const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
 
-        // 盗賊B「連打」: 発動中はカウンターも攻撃もせず、Perfectで打てた数だけを数える。
-        // 実際の攻撃はギミック終了直後にまとめて発動する。
+        // 盗賊B「連打」: 発動中はカウンターも攻撃もしないが、Perfectを取った瞬間に
+        // (ギミック終了後にまとめて払い出すのではなく)画面上の全ての敵へ弱攻撃を即時発動する。
         if (result.note.rapidFireNote) {
             if (result.judge === 'perfect') {
-                this.rapidFirePerfectCount++;
+                this.resolveRapidFireGroupHit();
                 // 攻撃ノーツをPerfectで叩いた時だけ、実際に画面端から端まで高速ダッシュさせる。
                 // 1回目は片方の端へ、2回目は逆の端へ…と左右交互に片道ダッシュする(往復しない)
                 if (result.note.type === 'sword') {
@@ -3149,6 +3153,22 @@ class GameController {
             return !!this.rhythm.giantNote;
         }
         return false;
+    }
+
+    // 盗賊B「連打」: ギミック終了後にまとめて払い出すのではなく、Perfectを取った
+    // その瞬間に画面上の全ての敵へ弱攻撃を即時に与える
+    resolveRapidFireGroupHit() {
+        const dmg = Math.floor(this.localPlayer.getDamage(4, 'perfect'));
+        this.stage.enemies.forEach(e => {
+            if (e.dead || e.falling) return;
+            const actualDmg = e.takeDamage(dmg, 'ability');
+            this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#9b59b6', 6);
+            this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#9b59b6', 14);
+            if (e.dead) {
+                this.stage.totalScore += e.data.score;
+            }
+        });
+        this.audio.playAbilitySound();
     }
 
     // 弓士B「ノーツ発射」: 打ったノーツが判定線から弾かれ、ランダムに選んだ敵へ飛んでいき
@@ -3339,14 +3359,6 @@ class GameController {
         const activeGimmick = this.localPlayer.getActiveGimmick();
         const isRapidFire = activeGimmick.special === 'rapidFire';
 
-        // ちょうど連打ギミックが終わった瞬間: 発動中に溜めたPerfectの数だけ、
-        // 実際の攻撃をこの直後にまとめて払い出す
-        if (this.rapidFireWasActive && !isRapidFire && this.rapidFirePerfectCount > 0) {
-            this.thiefRapidFirePayout = { remaining: this.rapidFirePerfectCount, nextBeat: this.audio.getCurrentBeat() };
-            this.rapidFirePerfectCount = 0;
-        }
-        this.rapidFireWasActive = isRapidFire;
-
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
         if (!isRapidFire) this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
@@ -3503,34 +3515,6 @@ class GameController {
                 this.thiefCombo.remaining--;
                 this.thiefCombo.nextBeat += 0.25;
                 if (this.thiefCombo.remaining <= 0) this.thiefCombo = null;
-            }
-        }
-
-        // 盗賊B「連打」の払い出し: ギミック終了直後、発動中に打てたPerfectの数だけ
-        // 0.25拍ごとに実際の攻撃を連続で叩き込む
-        if (this.thiefRapidFirePayout) {
-            const currentBeat = this.audio.getCurrentBeat();
-            if (currentBeat >= this.thiefRapidFirePayout.nextBeat) {
-                // 払い出しは1回につき1体単体への攻撃(まとめて範囲攻撃にはしない)、
-                // 威力もやや控えめにする
-                const range = this.localPlayer.getAttackRange();
-                const dmg = Math.floor(this.localPlayer.getDamage(10, 'perfect') * 0.9);
-                let nearest = null, nearestDist = Infinity;
-                this.stage.enemies.forEach(e => {
-                    if (e.dead || e.falling) return;
-                    const dist = Math.abs(e.x - this.localPlayer.x);
-                    if (dist < nearestDist) { nearestDist = dist; nearest = e; }
-                });
-                if (nearest && nearestDist < range) {
-                    nearest.takeDamage(dmg, 'ability');
-                    this.renderer.addParticle(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size/2, '#9b59b6', 8);
-                    this.renderer.addFloatingText(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size, `${dmg}`, '#9b59b6', 18);
-                    this.localPlayer.perfectDash(Math.sign(nearest.x - this.localPlayer.x) || this.localPlayer.facing);
-                }
-                this.audio.playAbilitySound();
-                this.thiefRapidFirePayout.remaining--;
-                this.thiefRapidFirePayout.nextBeat += 0.25;
-                if (this.thiefRapidFirePayout.remaining <= 0) this.thiefRapidFirePayout = null;
             }
         }
 
