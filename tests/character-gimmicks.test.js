@@ -19,7 +19,7 @@ const expectedSpecials = {
     thief: ['resonanceShake', 'rapidFire'],
     fighter: ['steppedMotion', 'flipMirror'],
     beast: ['invisibleApproach', 'centerJudgeCircle'],
-    mage: ['driftingJudgeLine', 'arrowCue'],
+    mage: ['driftingJudgeLine', 'eventNote'],
 };
 Object.keys(expectedSpecials).forEach(id => {
     expectedSpecials[id].forEach((special, i) => {

@@ -44,7 +44,7 @@ const CHARACTER_GIMMICKS = {
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
-    mage: [{ special: 'driftingJudgeLine' }, { special: 'arrowCue' }],
+    mage: [{ special: 'driftingJudgeLine' }, { special: 'eventNote' }],
 };
 // 固有ギミック(特殊フェーズ)をより長く、通常フェーズをより短くして
 // ギミックに触れている時間の割合を増やす
@@ -522,19 +522,6 @@ class RhythmSystem {
             type: 'defend',
             hit: false,
             missed: false,
-        };
-        this.defendNotes.push(note);
-        this.maybeCorruptOnSpawn([note], !!gimmick && gimmick.special === 'corruptedNote');
-    }
-
-    generateFlickUpNote(beat, gimmick) {
-        const note = {
-            id: this.noteId++,
-            beat: beat,
-            type: 'defend',
-            hit: false,
-            missed: false,
-            flickUp: true,
         };
         this.defendNotes.push(note);
         this.maybeCorruptOnSpawn([note], !!gimmick && gimmick.special === 'corruptedNote');
@@ -1086,10 +1073,11 @@ class Player {
             const attackRange = this.getAttackRange();
             let targetX = centerX;
             if (nearest && nearestDist < attackRange * 4) {
-                // ここでもMath.sign(nearest.x - this.x)を毎フレーム独立に計算すると、
-                // 敵と重なった瞬間に符号が反転を繰り返しプレイヤーがプルプルと震えてしまう。
-                // 既に不感帯で安定させたfacingを使うことで、向きが安定してから移動目標を決める
-                targetX = this.x + this.facing * attackRange * 0.5;
+                // 目標地点を「自分の現在地 + 向き×距離」で決めると、目標自体が毎フレーム
+                // 前方へ動き続けてしまい、敵を通り過ぎては引き返す振り子運動(左右の揺れ)の
+                // 原因になる。敵の実座標を基準にした固定の目標地点にすることで、
+                // ちゃんとその場で立ち止まれるようにする
+                targetX = nearest.x - this.facing * attackRange * 0.5;
             }
 
             const toTarget = targetX - this.x;
@@ -1448,6 +1436,15 @@ class StageManager {
     }
 
     spawnWave() {
+        const waveSize = Math.min(50, 35 + Math.floor(this.getStageMod() * 8));
+        this.lastWaveSize = waveSize;
+        this.spawnEnemies(waveSize);
+    }
+
+    // 上空からランダムな位置に、1体ずつ順番に降ってくる形で敵をcount体出現させる。
+    // spawnWave(通常のウェーブ進行)からも、魔法使い「イベントノーツ」ミス時の
+    // 敵大量投下からも共通で使う
+    spawnEnemies(count) {
         const mod = this.getStageMod();
         const types = ['normal'];
         if (this.stage >= 2) types.push('ranged');
@@ -1456,9 +1453,7 @@ class StageManager {
         if (this.stage >= 3) types.push('healer');
         if (this.stage >= 4) types.push('large');
 
-        const waveSize = Math.min(50, 35 + Math.floor(this.getStageMod() * 8));
-        this.lastWaveSize = waveSize;
-        for (let i = 0; i < waveSize; i++) {
+        for (let i = 0; i < count; i++) {
             const type = types[Math.floor(Math.random() * types.length)];
             // ランダムな位置(画面内外を問わない)の上空から落ちてくる形で出現する
             const x = this.scrollX + Math.random() * (CONSTANTS.CANVAS_WIDTH + 400) - 200;
@@ -1729,6 +1724,57 @@ class Renderer {
         }
     }
 
+    // 剣士「上に弾くノーツ」: 蓄積したノーツの山を画面最下部に表示する
+    // (ギミックが発動している間だけ見える、蓄積数が伝わればいいシンプルな表示)
+    renderStoredNotes(ctx, game) {
+        const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
+        const count = game.swordsmanStoredNotes || 0;
+        if (gimmick.special !== 'flickUpNote' || count <= 0) return;
+        const w = this.canvas.width;
+        const y = this.canvas.height - 14;
+        const shown = Math.min(count, 20);
+        for (let i = 0; i < shown; i++) {
+            const x = w / 2 + (i - (shown - 1) / 2) * 16;
+            ctx.save();
+            ctx.fillStyle = '#f1c40f';
+            ctx.shadowColor = '#f1c40f';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+        ctx.save();
+        ctx.fillStyle = '#f1c40f';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`蓄積: ${count}`, w / 2, y - 16);
+        ctx.restore();
+    }
+
+    // 剣士「上に弾くノーツ」: ギミック終了直後の「ノーツ噴火」演出。
+    // ランダムなx位置から画面最下部まで降り注ぐ(敵の位置を狙っているわけではない)
+    renderFlickUpEruption(ctx, game) {
+        (game.eruptingNotes || []).forEach(n => {
+            const progress = Math.min(1, n.t / n.duration);
+            const y = progress * this.canvas.height;
+            ctx.save();
+            ctx.translate(n.x, y);
+            ctx.rotate(progress * Math.PI * 3);
+            ctx.fillStyle = '#f1c40f';
+            ctx.shadowColor = '#f1c40f';
+            ctx.shadowBlur = 16;
+            ctx.beginPath();
+            ctx.moveTo(0, -14);
+            ctx.lineTo(14, 0);
+            ctx.lineTo(0, 14);
+            ctx.lineTo(-14, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        });
+    }
+
     addFloatingText(x, y, text, color, size = 22) {
         this.floatingTexts.push({ x, y, text, color, size, life: 1, vy: -2.5, alpha: 1 });
     }
@@ -1814,6 +1860,10 @@ class Renderer {
 
         // 弓士B「ノーツ発射」で打ったノーツが敵へ飛んでいく演出
         this.renderLaunchedNotes(ctx);
+
+        // 剣士「上に弾くノーツ」: 蓄積したノーツの山、およびギミック終了直後の噴火演出
+        this.renderStoredNotes(ctx, game);
+        this.renderFlickUpEruption(ctx, game);
 
         // Floating texts
         this.renderFloatingTexts(ctx);
@@ -2485,37 +2535,6 @@ class Renderer {
         }
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
-            // 魔法使いB「矢印キュー」: ノーツ自体は完全に非表示にし、判定のちょうど半拍前になった
-            // 瞬間だけ判定線の上に方向矢印を出して、どちら側から来るノーツかを伝える
-            if (gimmick.special === 'arrowCue') {
-                const beatsUntilHit = note.beat - currentBeat;
-                if (beatsUntilHit > 0 && beatsUntilHit <= 0.5) {
-                    const fromLeft = note.type === 'defend';
-                    const arrowX = targetX;
-                    const arrowY = barY - 26;
-                    const color = note.type === 'defend' ? '#e74c3c' : note.type === 'ability' ? '#4a90d9' : '#ff6b35';
-                    ctx.save();
-                    ctx.fillStyle = color;
-                    ctx.shadowColor = color;
-                    ctx.shadowBlur = 12;
-                    ctx.beginPath();
-                    if (fromLeft) {
-                        // 左から来て右へ進む: 右向き矢印
-                        ctx.moveTo(arrowX - 18, arrowY - 14);
-                        ctx.lineTo(arrowX + 18, arrowY);
-                        ctx.lineTo(arrowX - 18, arrowY + 14);
-                    } else {
-                        // 右から来て左へ進む: 左向き矢印
-                        ctx.moveTo(arrowX + 18, arrowY - 14);
-                        ctx.lineTo(arrowX - 18, arrowY);
-                        ctx.lineTo(arrowX + 18, arrowY + 14);
-                    }
-                    ctx.closePath();
-                    ctx.fill();
-                    ctx.restore();
-                }
-                return;
-            }
             if (centerJudgeCircle) {
                 const angle = (note.id % 8) * (Math.PI / 4);
                 const spawnRadius = 420;
@@ -2607,39 +2626,17 @@ class Renderer {
                 ctx.fill();
                 ctx.shadowBlur = 0;
             } else if (note.type === 'defend') {
-                if (note.flickUp) {
-                    // 上に弾くノーツ: 金色の上向き矢印で、通常の防御ノーツと区別する
-                    const flickSize = size * 1.3;
-                    ctx.fillStyle = '#f1c40f';
-                    ctx.shadowColor = '#f1c40f';
-                    ctx.shadowBlur = 22;
-                    ctx.beginPath();
-                    ctx.moveTo(shuffledNx, ny - flickSize/2);
-                    ctx.lineTo(shuffledNx + flickSize/2, ny + flickSize/4);
-                    ctx.lineTo(shuffledNx + flickSize/4, ny + flickSize/4);
-                    ctx.lineTo(shuffledNx + flickSize/4, ny + flickSize/2);
-                    ctx.lineTo(shuffledNx - flickSize/4, ny + flickSize/2);
-                    ctx.lineTo(shuffledNx - flickSize/4, ny + flickSize/4);
-                    ctx.lineTo(shuffledNx - flickSize/2, ny + flickSize/4);
-                    ctx.closePath();
-                    ctx.fill();
-                    ctx.lineWidth = 3;
-                    ctx.strokeStyle = '#ffffff';
-                    ctx.stroke();
-                    ctx.shadowBlur = 0;
-                } else {
-                    ctx.fillStyle = '#e74c3c';
-                    ctx.shadowColor = '#e74c3c';
-                    ctx.shadowBlur = 15;
-                    ctx.beginPath();
-                    ctx.moveTo(shuffledNx, ny - size/2);
-                    ctx.lineTo(shuffledNx + size/2, ny);
-                    ctx.lineTo(shuffledNx, ny + size/2);
-                    ctx.lineTo(shuffledNx - size/2, ny);
-                    ctx.closePath();
-                    ctx.fill();
-                    ctx.shadowBlur = 0;
-                }
+                ctx.fillStyle = '#e74c3c';
+                ctx.shadowColor = '#e74c3c';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.moveTo(shuffledNx, ny - size/2);
+                ctx.lineTo(shuffledNx + size/2, ny);
+                ctx.lineTo(shuffledNx, ny + size/2);
+                ctx.lineTo(shuffledNx - size/2, ny);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
             }
         });
 
@@ -2677,6 +2674,9 @@ class GameController {
         this.thiefCombo = null;
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
+        this.swordsmanStoredNotes = 0;
+        this.eruptingNotes = [];
+        this.flickUpWasActive = false;
         this.tutorialBoxTimer = null;
         this.gimmickIndicatorTimer = null;
         this.gimmickIndicatorWasSpecial = false;
@@ -3011,6 +3011,9 @@ class GameController {
         this.thiefCombo = null;
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
+        this.swordsmanStoredNotes = 0;
+        this.eruptingNotes = [];
+        this.flickUpWasActive = false;
 
         // 操作説明のポップアップは最初の1回だけ表示し、時間経過で消す
         // (ステージ切り替えのたびにstartGame()が呼ばれるが、2回目以降は既にタイマー済みなので再表示しない)
@@ -3052,6 +3055,11 @@ class GameController {
         // Rhythm judge callback
         this.rhythm.onJudge = (judge, points, combo) => {
             this.showJudgeEffect(judge, points, combo);
+            // 魔法使いB「イベントノーツ」のミス時効果(敵大量投下)は、タップでは発生しない
+            // (ノーツを取りこぼした時のミス判定=onJudge経由でのみ発生する)ためここで処理する
+            if (judge === 'miss' && this.localPlayer.getActiveGimmick().special === 'eventNote') {
+                this.resolveEventNote('miss');
+            }
         };
 
         this.lastTime = performance.now();
@@ -3064,20 +3072,19 @@ class GameController {
         const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
 
-        // 盗賊B「連打」: 発動中はカウンターも攻撃もしないが、Perfectを取った瞬間に
-        // (ギミック終了後にまとめて払い出すのではなく)画面上の全ての敵へ弱攻撃を即時発動する。
+        // 盗賊B「連打」: ギミック中はカウンター(防御)ノーツも攻撃ノーツと同じように扱い、
+        // Perfectを取った瞬間に(ギミック終了後にまとめて払い出すのではなく)
+        // 画面上の全ての敵へ弱攻撃を即時発動する。ノーツの種類による区別はしない。
         if (result.note.rapidFireNote) {
             if (result.judge === 'perfect') {
                 this.resolveRapidFireGroupHit();
-                // 攻撃ノーツをPerfectで叩いた時だけ、実際に画面端から端まで高速ダッシュさせる。
+                // 実際に画面端から端まで高速ダッシュさせる。攻撃・カウンターどちらのノーツでも
                 // 1回目は片方の端へ、2回目は逆の端へ…と左右交互に片道ダッシュする(往復しない)
-                if (result.note.type === 'sword') {
-                    this.rapidFireDashDir = -this.rapidFireDashDir;
-                    this.localPlayer.edgeDash(this.rapidFireDashDir);
-                    this.renderer.addEdgeDash(this.localPlayer.y - 40, this.rapidFireDashDir, '#ff6b35');
-                    // ダッシュの道中ですれ違った敵に弱攻撃を入れる(このダッシュ中の重複ヒットは防ぐ)
-                    this.rapidFireSweepHitIds = new Set();
-                }
+                this.rapidFireDashDir = -this.rapidFireDashDir;
+                this.localPlayer.edgeDash(this.rapidFireDashDir);
+                this.renderer.addEdgeDash(this.localPlayer.y - 40, this.rapidFireDashDir, '#ff6b35');
+                // ダッシュの道中ですれ違った敵に弱攻撃を入れる(このダッシュ中の重複ヒットは防ぐ)
+                this.rapidFireSweepHitIds = new Set();
             }
             return;
         }
@@ -3102,6 +3109,22 @@ class GameController {
             return;
         }
 
+        // 剣士「上に弾くノーツ」: ギミック発動中は通常攻撃を一切行わず、種類を問わず
+        // ノーツを打つたびに画面下部に蓄積するだけにする。実際の攻撃は
+        // ギミック終了直後の「ノーツ噴火」でまとめて発動する
+        if (gimmick.special === 'flickUpNote' && (result.note.type === 'sword' || result.note.type === 'defend')) {
+            if (result.judge !== 'miss') this.accumulateFlickUpNote();
+            return;
+        }
+
+        // 魔法使いB「イベントノーツ」: 全てのノーツの種類を問わず、通常の攻撃・防御・能力の
+        // 効果は一切発生せず、代わりに判定の良し悪しによって発動する効果が変わる
+        // (ミス時の効果はonJudgeコールバック側で処理する。タップでの判定はmissにならないため)
+        if (gimmick.special === 'eventNote') {
+            if (result.judge !== 'miss') this.resolveEventNote(result.judge);
+            return;
+        }
+
         const noteType = result.note.type;
         if (noteType === 'sword') {
             this.resolveSwordHit(result);
@@ -3117,17 +3140,6 @@ class GameController {
                     this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
                         `-${Math.floor(dmg)}`, '#e74c3c', 16);
                 }
-            }
-            // 上に弾くノーツ: PerfectかGreatで超カウンター(周囲の敵に大ダメージ+スタン)
-            if (result.note.flickUp && (result.judge === 'perfect' || result.judge === 'great')) {
-                this.stage.enemies.forEach(e => {
-                    if (e.dead || e.falling) return;
-                    if (Math.abs(e.x - this.localPlayer.x) < 250) {
-                        e.takeDamage(this.localPlayer.getDamage(30, 'perfect'), 'ability');
-                        e.stunTimer = 1.5;
-                    }
-                });
-                this.renderer.shake(6, 0.2);
             }
         }
         // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
@@ -3167,9 +3179,10 @@ class GameController {
     }
 
     // 盗賊B「連打」: ギミック終了後にまとめて払い出すのではなく、Perfectを取った
-    // その瞬間に画面上の全ての敵へ弱攻撃を即時に与える
+    // その瞬間に画面上の全ての敵へ弱攻撃を即時に与える。
+    // (大幅に弱体化: 基礎威力を下げ、Perfect補正(upgrades.perfect倍率)も乗らないようにする)
     resolveRapidFireGroupHit() {
-        const dmg = Math.floor(this.localPlayer.getDamage(4, 'perfect'));
+        const dmg = Math.floor(this.localPlayer.getDamage(1, 'good'));
         this.stage.enemies.forEach(e => {
             if (e.dead || e.falling) return;
             const actualDmg = e.takeDamage(dmg, 'ability');
@@ -3180,6 +3193,97 @@ class GameController {
             }
         });
         this.audio.playAbilitySound();
+    }
+
+    // 剣士「上に弾くノーツ」: ノーツを打った分だけ画面下部への蓄積数を1増やす
+    // (実際の攻撃はギミック終了直後のノーツ噴火でまとめて発動する)
+    accumulateFlickUpNote() {
+        this.swordsmanStoredNotes++;
+        this.renderer.addParticle(
+            CONSTANTS.CANVAS_WIDTH / 2, CONSTANTS.CANVAS_HEIGHT - 20, '#f1c40f', 6
+        );
+    }
+
+    // 剣士「上に弾くノーツ」: ギミック終了直後、蓄積した数だけノーツを一斉に「噴火」させる。
+    // 降り注ぐ位置は敵の位置ではなく完全ランダムで、たまたま敵に当たれば中攻撃、
+    // 当たらなくてもそのまま画面最下部まで流れ落ちて消える
+    triggerFlickUpEruption() {
+        const count = this.swordsmanStoredNotes;
+        this.swordsmanStoredNotes = 0;
+        if (count <= 0) return;
+        for (let i = 0; i < count; i++) {
+            this.eruptingNotes.push({
+                x: Math.random() * CONSTANTS.CANVAS_WIDTH,
+                t: 0,
+                duration: 0.7,
+                hasHit: false,
+            });
+        }
+        this.renderer.shake(4, 0.2);
+        this.audio.playAbilitySound();
+    }
+
+    // ノーツ噴火で降ってくる各ノーツの進行を更新し、地面の高さを通過する瞬間に
+    // たまたまその位置にいた敵へ中攻撃を与える(狙って落ちてくるわけではない)
+    updateFlickUpEruption(dt) {
+        if (this.eruptingNotes.length === 0) return;
+        for (let i = this.eruptingNotes.length - 1; i >= 0; i--) {
+            const n = this.eruptingNotes[i];
+            n.t += dt;
+            const progress = Math.min(1, n.t / n.duration);
+            const y = progress * CONSTANTS.CANVAS_HEIGHT;
+            if (!n.hasHit && y >= CONSTANTS.GROUND_Y) {
+                n.hasHit = true;
+                const worldX = n.x + this.stage.scrollX;
+                let target = null;
+                this.stage.enemies.forEach(e => {
+                    if (e.dead || e.falling) return;
+                    if (Math.abs(e.x - worldX) < 40) target = e;
+                });
+                if (target) {
+                    const dmg = Math.floor(this.localPlayer.getDamage(25, 'perfect'));
+                    const actualDmg = target.takeDamage(dmg, 'sword');
+                    this.renderer.addParticle(n.x, CONSTANTS.GROUND_Y, target.data.color, 10);
+                    this.renderer.addFloatingText(n.x, CONSTANTS.GROUND_Y - 20, `${actualDmg}`, '#ff6b35', 16);
+                    if (target.dead) {
+                        this.stage.totalScore += target.data.score;
+                    }
+                }
+            }
+            if (progress >= 1) this.eruptingNotes.splice(i, 1);
+        }
+    }
+
+    // 魔法使いB「イベントノーツ」: 全てのノーツが種類を問わず「イベントノーツ」になり、
+    // 通常の攻撃・防御・能力の効果の代わりに、判定の良し悪しによって効果が変わる
+    resolveEventNote(judge) {
+        if (judge === 'perfect') {
+            // 弱いノーツメテオ: ランダムな1体に、通常の能力メテオより小さいダメージ
+            const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling);
+            if (candidates.length > 0) {
+                const target = candidates[Math.floor(Math.random() * candidates.length)];
+                const dmg = Math.floor(this.localPlayer.getDamage(8, 'perfect'));
+                const actualDmg = target.takeDamage(dmg, 'ability');
+                this.renderer.addMeteorNote(target.x - this.stage.scrollX, target.y - target.data.size / 2);
+                this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size, `${actualDmg}`, '#4a90d9', 16);
+                if (target.dead) this.stage.totalScore += target.data.score;
+            }
+            this.audio.playAbilitySound();
+        } else if (judge === 'great') {
+            // 自分のHPを1回復
+            this.localPlayer.heal(1);
+            this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 60, '+1', '#2ecc71', 16);
+        } else if (judge === 'good') {
+            // 敵全体の攻撃力がほんの少し下がる
+            this.stage.enemies.forEach(e => {
+                if (e.dead || e.falling) return;
+                e.atk *= 0.97;
+            });
+        } else if (judge === 'miss') {
+            // 敵大量投下
+            this.stage.spawnEnemies(6);
+            this.renderer.shake(5, 0.25);
+        }
     }
 
     // 弓士B「ノーツ発射」: 打ったノーツが判定線から弾かれ、ランダムに選んだ敵へ飛んでいき
@@ -3370,6 +3474,14 @@ class GameController {
         const activeGimmick = this.localPlayer.getActiveGimmick();
         const isRapidFire = activeGimmick.special === 'rapidFire';
 
+        // 剣士「上に弾くノーツ」がちょうど終わった瞬間: 蓄積したノーツを一斉に噴火させる
+        const isFlickUpNote = activeGimmick.special === 'flickUpNote';
+        if (this.flickUpWasActive && !isFlickUpNote) {
+            this.triggerFlickUpEruption();
+        }
+        this.flickUpWasActive = isFlickUpNote;
+        this.updateFlickUpEruption(dt);
+
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
         if (!isRapidFire) this.stage.enemies.forEach(e => {
             if (e.attackWarning && !e.defendNoteSpawned) {
@@ -3382,13 +3494,8 @@ class GameController {
                 if (this.rhythm.hasAbilityNoteAtBeat(defendBeat)) {
                     defendBeat += 0.5;
                 }
-                const activeGimmickSpecial = this.localPlayer.getActiveGimmick().special;
                 if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
-                    if (activeGimmickSpecial === 'flickUpNote') {
-                        this.rhythm.generateFlickUpNote(defendBeat, activeGimmick);
-                    } else {
-                        this.rhythm.generateDefendNote(defendBeat, activeGimmick);
-                    }
+                    this.rhythm.generateDefendNote(defendBeat, activeGimmick);
                 }
 
                 e.attackTimer = (defendBeat - currentBeat) * beatInterval;
@@ -3397,7 +3504,7 @@ class GameController {
         });
 
         // 弓士A「ウイルス化」: ノーツの感染は各ノーツの生成関数(startSwordBurst/startAbility/
-        // generateDefendNote/generateFlickUpNote)の中で、生成された瞬間にだけ判定される
+        // generateDefendNote)の中で、生成された瞬間にだけ判定される
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
@@ -3459,7 +3566,13 @@ class GameController {
         const abilityResult = this.rhythm.update();
         if (abilityResult && abilityResult.type === 'ability_complete') {
             const ratio = abilityResult.hitCount / abilityResult.total;
-            if (this.localPlayer.charId === 'thief') {
+            if (this.localPlayer.charId === 'swordsman' && isFlickUpNote) {
+                // 剣士「上に弾くノーツ」: 能力バーストも通常攻撃は行わず、ノーツの数だけ蓄積する
+                for (let i = 0; i < abilityResult.total; i++) this.accumulateFlickUpNote();
+            } else if (this.localPlayer.charId === 'mage' && this.localPlayer.getActiveGimmick().special === 'eventNote') {
+                // 魔法使いB「イベントノーツ」: 能力バーストの通常効果(ノーツメテオ)は発動せず、
+                // バースト中の各ノーツは既にhandleUniversalInput側で判定ごとの効果を処理済み
+            } else if (this.localPlayer.charId === 'thief') {
                 // 4回攻撃: 0.25拍間隔で4回、基本攻撃と同じ間合いの敵全てに繰り返しヒットさせる
                 this.thiefCombo = {
                     ratio,
