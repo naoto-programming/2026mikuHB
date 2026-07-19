@@ -197,14 +197,23 @@
         .hp-fill.mid { background: #f39c12; }
         .hp-fill.low { background: #e74c3c; }
 
-        /* 固有ギミック発動などのポップアップ通知は画面上部中央(HUDパネルの下)に表示する */
+        /* 固有ギミック発動などのポップアップ通知は画面中央に大きく表示する */
         #topNotice {
             position: absolute;
-            top: 70px;
+            top: 50%;
             left: 50%;
-            transform: translateX(-50%);
+            transform: translate(-50%, -50%);
             z-index: 16;
             pointer-events: none;
+        }
+        #topNotice .tutorial-box {
+            font-size: 1.8em;
+            padding: 18px 40px;
+            border-width: 2px;
+            white-space: nowrap;
+            color: #ff6b35;
+            font-weight: bold;
+            text-shadow: 0 0 16px rgba(255,107,53,0.6);
         }
 
         #bottomHud {
@@ -343,7 +352,8 @@
             .hud-label { font-size: 0.55em; letter-spacing: 0.5px; }
             .hud-value { font-size: 0.95em; }
             .hp-bar { width: 60px; }
-            #topNotice { top: 46px; max-width: 92%; }
+            #topNotice { max-width: 92%; }
+            #topNotice .tutorial-box { font-size: 1.1em; padding: 12px 20px; white-space: normal; text-align: center; }
             #bottomHud { bottom: 10%; width: 92%; gap: 5px; }
             .combo-count { font-size: 2em; }
             .combo-label { font-size: 0.75em; letter-spacing: 1.5px; }

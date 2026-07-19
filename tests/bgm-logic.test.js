@@ -16,6 +16,14 @@ for (let i = 0; i < 50; i++) {
     if (!BGM_TRACKS.includes(t)) throw new Error('pickRandomTrack returned a track not in BGM_TRACKS');
 }
 
+// excludeTrackを渡すと、同じ曲が連続で選ばれない
+for (let i = 0; i < 50; i++) {
+    const prev = BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
+    const next = pickRandomTrack(prev);
+    if (next.file === prev.file) throw new Error('pickRandomTrack should not repeat the excluded (previous) track');
+    if (!BGM_TRACKS.includes(next)) throw new Error('pickRandomTrack(exclude) returned a track not in BGM_TRACKS');
+}
+
 const waves = computeTotalWaves(90, 15);
 if (waves !== 3) throw new Error('computeTotalWaves(90,15) wrong: ' + waves);
 

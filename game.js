@@ -92,7 +92,12 @@ const bpmFromTrackFilename = function(filename) {
     return parseInt(match[1], 10);
 };
 
-const pickRandomTrack = function() {
+// excludeTrackを渡すと、その曲を除いた候補から選ぶ(同じ曲が連続で流れるのを防ぐ)
+const pickRandomTrack = function(excludeTrack) {
+    if (excludeTrack && BGM_TRACKS.length > 1) {
+        const candidates = BGM_TRACKS.filter(t => t.file !== excludeTrack.file);
+        return candidates[Math.floor(Math.random() * candidates.length)];
+    }
     return BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
 };
 
@@ -1093,6 +1098,24 @@ class Player {
         }
 
         this.x += this.vx;
+
+        // 敵と完全に重なった位置で固まらないよう、近すぎる敵からは軽く押し戻す
+        // (攻撃中はヒットボックス計算がぶれないよう適用しない)
+        if (!this.isAttacking) {
+            let separation = 0;
+            (enemies || []).forEach(e => {
+                if (e.dead || e.falling) return;
+                const minDist = 20 + e.data.size * 0.5;
+                const d = this.x - e.x;
+                if (Math.abs(d) < minDist && Math.abs(d) > 0.001) {
+                    separation += Math.sign(d) * (minDist - Math.abs(d));
+                }
+            });
+            if (separation !== 0) {
+                this.x += Math.max(-4, Math.min(4, separation * 0.15));
+            }
+        }
+
         this.x = Math.max(scrollX + 50, Math.min(this.x, scrollX + CONSTANTS.CANVAS_WIDTH - 50));
 
         if (this.animTimer > 0.1) {
@@ -1266,11 +1289,40 @@ class Enemy {
             if (nearest) {
                 const dist = nearest.x - this.x;
                 const attackRange = this.data.ranged ? (this.data.range || 250) : 70;
+                // プレイヤーの座標ちょうどを目指すと全ての敵が同じ場所に固まってしまうため、
+                // 間合いより少し手前(自分の当たり判定サイズ分)で止まり、周辺に位置するようにする
+                const personalSpace = this.data.size * 0.6;
+                const stopDist = Math.max(attackRange * 0.4, attackRange - personalSpace);
 
                 if (Math.abs(dist) < attackRange && !this.isAttacking && this.attackCooldown <= 0) {
                     this.startAttack();
-                } else if (!this.isAttacking) {
+                } else if (!this.isAttacking && Math.abs(dist) > stopDist) {
                     this.x += Math.sign(dist) * Math.abs(this.vx);
+                }
+            }
+
+            // 敵同士・プレイヤーとの重なりを避ける(セパレーション): 攻撃間合いに寄せる動きとは
+            // 別に、近すぎる相手からは軽く離れる方向へ補正をかけ、同じ位置に固まらないようにする
+            if (!this.isAttacking) {
+                let separation = 0;
+                (allEnemies || []).forEach(other => {
+                    if (other === this || other.dead || other.falling) return;
+                    const minDist = (this.data.size + other.data.size) / 2;
+                    const d = this.x - other.x;
+                    if (Math.abs(d) < minDist && Math.abs(d) > 0.001) {
+                        separation += Math.sign(d) * (minDist - Math.abs(d));
+                    }
+                });
+                players.forEach(p => {
+                    if (!p.isAlive()) return;
+                    const minDist = this.data.size * 0.8;
+                    const d = this.x - p.x;
+                    if (Math.abs(d) < minDist && Math.abs(d) > 0.001) {
+                        separation += Math.sign(d) * (minDist - Math.abs(d));
+                    }
+                });
+                if (separation !== 0) {
+                    this.x += Math.max(-6, Math.min(6, separation * 0.2));
                 }
             }
         }
@@ -2565,7 +2617,6 @@ class Renderer {
                 if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
             }
             const laneOffset = gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
-                : gimmick.special === 'flipMirror' ? (note.id % 2 === 0 ? -25 : 25)
                 : 0;
 
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
@@ -2573,10 +2624,10 @@ class Renderer {
             ny += laneOffset;
             let shuffledNx = nx;
 
-            // 拳士B「反転」: 1拍ごとに上下左右反転する
+            // 拳士B「反転」: 上下レーン化はやめ、通常通り1レーンのまま
+            // 1拍ごとに左右だけ反転する
             if (gimmick.special === 'flipMirror' && Math.floor(currentBeat) % 2 === 1) {
                 shuffledNx = barW - shuffledNx;
-                ny = 2 * (barY + barH / 2) - ny;
             }
 
             if (note.corrupted) {
@@ -2661,6 +2712,7 @@ class GameController {
         this.rhythm = new RhythmSystem(this.audio);
         this.stage = new StageManager();
         this.network = { isConnected: false, isHost: false, players: [] };
+        this.lastTrackPlayed = null;
         this.images = {};
         loadAllImages(IMAGE_MANIFEST).then((map) => { this.images = map; });
 
@@ -3035,7 +3087,9 @@ class GameController {
         });
 
         // ランダムにBGMを選び、曲の長さから総ウェーブ数を算出してから再生開始する
-        const track = pickRandomTrack();
+        // (直前と同じ曲が連続で流れないようにする)
+        const track = pickRandomTrack(this.lastTrackPlayed);
+        this.lastTrackPlayed = track;
         const buffer = await this.audio.loadTrack(track);
         this.stage.start(buffer.duration);
         this.stage.transitioning = false;
@@ -3214,7 +3268,9 @@ class GameController {
         for (let i = 0; i < count; i++) {
             this.eruptingNotes.push({
                 x: Math.random() * CONSTANTS.CANVAS_WIDTH,
-                t: 0,
+                // 一斉にではなく、1体ずつ少しずつ時間差をつけて降らせる
+                // (負の値は「まだ画面上に現れていない」を表し、そのまま自然に扱える)
+                t: -i * 0.12,
                 duration: 0.7,
                 hasHit: false,
             });
@@ -3241,7 +3297,7 @@ class GameController {
                     if (Math.abs(e.x - worldX) < 40) target = e;
                 });
                 if (target) {
-                    const dmg = Math.floor(this.localPlayer.getDamage(25, 'perfect'));
+                    const dmg = Math.floor(this.localPlayer.getDamage(16, 'perfect'));
                     const actualDmg = target.takeDamage(dmg, 'sword');
                     this.renderer.addParticle(n.x, CONSTANTS.GROUND_Y, target.data.color, 10);
                     this.renderer.addFloatingText(n.x, CONSTANTS.GROUND_Y - 20, `${actualDmg}`, '#ff6b35', 16);
@@ -3255,10 +3311,15 @@ class GameController {
     }
 
     // 魔法使いB「イベントノーツ」: 全てのノーツが種類を問わず「イベントノーツ」になり、
-    // 通常の攻撃・防御・能力の効果の代わりに、判定の良し悪しによって効果が変わる
+    // 通常の攻撃・防御・能力の効果の代わりに、判定の良し悪しによって効果が変わる。
+    // ノーツメテオ以外(回復・弱体化・ミス)は見た目の変化が乏しく何が起きたか分かりづらかった
+    // ため、それぞれに専用のラベル・演出を必ず出すようにする
     resolveEventNote(judge) {
+        const px = this.localPlayer.x - this.stage.scrollX;
+        const py = this.localPlayer.y - 70;
         if (judge === 'perfect') {
             // 弱いノーツメテオ: ランダムな1体に、通常の能力メテオより小さいダメージ
+            this.renderer.addFloatingText(px, py, 'ミニメテオ!', '#4a90d9', 18);
             const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling);
             if (candidates.length > 0) {
                 const target = candidates[Math.floor(Math.random() * candidates.length)];
@@ -3270,17 +3331,24 @@ class GameController {
             }
             this.audio.playAbilitySound();
         } else if (judge === 'great') {
-            // 自分のHPを1回復
+            // 自分のHPを1回復。地味で気付きにくいため、専用ラベルとパーティクルを必ず出す
             this.localPlayer.heal(1);
-            this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 60, '+1', '#2ecc71', 16);
+            this.renderer.addFloatingText(px, py, 'HP回復 +1', '#2ecc71', 18);
+            this.renderer.addParticle(px, this.localPlayer.y - 30, '#2ecc71', 10);
+            this.audio.playSuccessSound();
         } else if (judge === 'good') {
-            // 敵全体の攻撃力がほんの少し下がる
+            // 敵全体の攻撃力がほんの少し下がる。見た目の変化が一切なかったため、
+            // 専用ラベルと各敵への弱体化マークを追加する
+            this.renderer.addFloatingText(px, py, '敵の攻撃力低下', '#9b59b6', 18);
             this.stage.enemies.forEach(e => {
                 if (e.dead || e.falling) return;
                 e.atk *= 0.97;
+                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, 'ATK↓', '#9b59b6', 14);
             });
+            this.audio.playCounterSound();
         } else if (judge === 'miss') {
-            // 敵大量投下
+            // 敵大量投下。何が起きたか伝わるよう専用ラベルを出す
+            this.renderer.addFloatingText(px, py, '敵増援!', '#e74c3c', 20);
             this.stage.spawnEnemies(6);
             this.renderer.shake(5, 0.25);
         }
