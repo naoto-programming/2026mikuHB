@@ -77,6 +77,24 @@ const BGM_TRACKS = [
     { file: '79拍:分2.mp3', bpm: 79 },
     { file: '90拍:分.mp3', bpm: 90 },
     { file: '110拍:分.mp3', bpm: 110 },
+    { file: '52(1).mp3', bpm: 52 },
+    { file: '79(1).mp3', bpm: 79 },
+    { file: '79(2).mp3', bpm: 79 },
+    { file: '79(3).mp3', bpm: 79 },
+    { file: '79(4).mp3', bpm: 79 },
+    { file: '82(1).mp3', bpm: 82 },
+    { file: '84(1).mp3', bpm: 84 },
+    { file: '89(1).mp3', bpm: 89 },
+    { file: '90(1).mp3', bpm: 90 },
+    { file: '94(1).mp3', bpm: 94 },
+    { file: '94(2).mp3', bpm: 94 },
+    { file: '100(1).mp3', bpm: 100 },
+    { file: '110(1).mp3', bpm: 110 },
+    { file: '111(1).mp3', bpm: 111 },
+    { file: '128(1).mp3', bpm: 128 },
+    { file: '132(1).mp3', bpm: 132 },
+    { file: '132(2).mp3', bpm: 132 },
+    { file: '134(1).mp3', bpm: 134 },
 ];
 
 const SFX_FILES = {
@@ -1017,6 +1035,12 @@ class Player {
     }
 
     update(dt, scrollX, enemies, holdGimmickTimer) {
+        // 力尽きたプレイヤーは(協力プレイで他の仲間がまだ生きている場合)ステージクリアまで
+        // その場で待機する。攻撃・移動AIは一切行わない(ステージクリア時に復活する)
+        if (!this.isAlive()) {
+            this.vx = 0;
+            return;
+        }
         this.animTimer += dt;
         if (this.invincible > 0) this.invincible -= dt;
         if (this.flashTimer > 0) this.flashTimer -= dt;
@@ -1208,8 +1232,12 @@ class Player {
 // ============================================================
 // Enemy
 // ============================================================
+// LANマルチプレイ時、クライアント側はホストが権威的に管理する敵の状態を
+// このIDで突き合わせて同期する(配列の添字は敵の生死で変わってしまうため不向き)
+let enemyNetIdCounter = 0;
 class Enemy {
     constructor(type, x, y, stageMod = 1) {
+        this.netId = ++enemyNetIdCounter;
         this.type = type;
         this.data = ENEMY_TYPES[type];
         this.x = x;
@@ -2134,7 +2162,7 @@ class Renderer {
         if (game.network && game.network.isConnected && game.players.length > 1) {
             ctx.fillStyle = 'rgba(0,0,0,0.5)';
             ctx.font = '10px sans-serif';
-            const name = p.isLocal ? 'YOU' : `P${p.id}`;
+            const name = p.isLocal ? 'YOU' : (p.char ? p.char.name : 'P');
             const tw = ctx.measureText(name).width;
             ctx.fillRect(x - tw/2 - 4, py - 24, tw + 8, 14);
             ctx.fillStyle = p.isLocal ? '#ff6b35' : '#aaa';
@@ -2711,7 +2739,16 @@ class GameController {
         if (!isNaN(savedLatency)) this.audio.latencyOffset = Math.max(0, Math.min(CONSTANTS.MAX_LATENCY_OFFSET, savedLatency));
         this.rhythm = new RhythmSystem(this.audio);
         this.stage = new StageManager();
-        this.network = { isConnected: false, isHost: false, players: [] };
+        // LANマルチプレイ(WebRTC/PeerJS)の状態。role: 'solo'|'host'|'client'
+        this.network = {
+            isConnected: false, isHost: false, players: [],
+            role: 'solo', peer: null, conns: {}, hostConn: null,
+            roomCode: null, roster: {}, myPeerId: null, myName: null,
+            remotePlayerStates: {},
+        };
+        // キャラクター選択画面がどの文脈で呼ばれたか('solo'|'host'|'client')。
+        // 参加者は難易度を選べないようにし、決定時の挙動も変える
+        this.charSelectContext = 'solo';
         this.lastTrackPlayed = null;
         this.images = {};
         loadAllImages(IMAGE_MANIFEST).then((map) => { this.images = map; });
@@ -2807,16 +2844,58 @@ class GameController {
         this.hideAllScreens();
         document.getElementById('menuScreen').classList.remove('hidden');
         this.audio.stop();
+        this.disconnectNetwork();
+    }
+
+    // LANマルチプレイの接続を後片付けする(メニューへ戻る時など)
+    disconnectNetwork() {
+        if (this.network.peer) {
+            try { this.network.peer.destroy(); } catch (e) {}
+        }
+        this.network.role = 'solo';
+        this.network.isConnected = false;
+        this.network.isHost = false;
+        this.network.peer = null;
+        this.network.conns = {};
+        this.network.hostConn = null;
+        this.network.roomCode = null;
+        this.network.roster = {};
+        this.network.remotePlayerStates = {};
+        this.charSelectContext = 'solo';
+        document.getElementById('connStatus').classList.add('hidden');
+        document.getElementById('connStatus').classList.remove('host', 'online');
     }
 
     showModeSelect() {
         this.hideAllScreens();
         document.getElementById('modeScreen').classList.remove('hidden');
+        // ロビー画面等から「戻る」で来た場合、途中まで確立していた接続を後片付けする
+        if (this.network.role !== 'solo') this.disconnectNetwork();
     }
 
-    showCharSelect() {
+    // context: 'solo'(1人プレイ) | 'host'(LANホスト自身の選択) | 'client'(LAN参加者)。
+    // 参加者は難易度を選べない(ホストが選ぶ)ため、難易度ボタンを隠す
+    showCharSelect(context) {
+        this.charSelectContext = context || 'solo';
         this.hideAllScreens();
         document.getElementById('charScreen').classList.remove('hidden');
+        const isClient = this.charSelectContext === 'client';
+        document.getElementById('difficultyGroup').classList.toggle('hidden', isClient);
+        document.getElementById('difficultyHostNote').classList.toggle('hidden', !isClient);
+    }
+
+    showWaitingScreen() {
+        this.hideAllScreens();
+        document.getElementById('waitingScreen').classList.remove('hidden');
+    }
+
+    showLobbyHostPanel() {
+        this.hideAllScreens();
+        document.getElementById('lobbyScreen').classList.remove('hidden');
+        document.getElementById('lobbyContent').classList.add('hidden');
+        document.getElementById('joinPanel').classList.add('hidden');
+        document.getElementById('hostPanel').classList.remove('hidden');
+        this.updatePlayerList();
     }
 
     showLobby() {
@@ -2973,10 +3052,12 @@ class GameController {
     // ==================== Game Flow ====================
 
     startSinglePlayer() {
-        this.showCharSelect();
+        this.showCharSelect('solo');
     }
 
     setDifficulty(level) {
+        // 参加者(ホストではない側)は難易度を選べない
+        if (this.charSelectContext === 'client') return;
         this.difficulty = level;
         document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
         const btn = document.getElementById(`difficulty-${level}`);
@@ -2984,6 +3065,16 @@ class GameController {
     }
 
     confirmChar() {
+        if (this.charSelectContext === 'client') {
+            // 参加者: キャラクターをホストに伝えるだけで、ホストの開始を待つ
+            // (難易度はホストが決めるため、ここでは送らない)
+            if (this.network.hostConn) {
+                try { this.network.hostConn.send({ type: 'selectChar', charId: this.selectedChar }); } catch (e) {}
+            }
+            this.showWaitingScreen();
+            return;
+        }
+
         this.players = [];
         this.localPlayer = new Player('p1', this.selectedChar, true);
         this.players.push(this.localPlayer);
@@ -2991,58 +3082,325 @@ class GameController {
         this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
         this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
 
+        if (this.charSelectContext === 'host') {
+            // ホスト: 自分のキャラクターを決めただけではまだ開始しない。
+            // ロビーに戻り、「ゲーム開始」ボタンを押すまで参加者を待つ
+            this.showLobbyHostPanel();
+            return;
+        }
+
         this.startGame();
     }
 
-    createHost() {
-        this.network.isHost = true;
-        this.network.isConnected = true;
-        document.getElementById('lobbyContent').classList.add('hidden');
-        document.getElementById('hostPanel').classList.remove('hidden');
-        document.getElementById('connStatus').classList.remove('hidden');
-        document.getElementById('connStatus').classList.add('host');
-        document.getElementById('connStatus').textContent = 'HOST';
+    // ==================== LANマルチプレイ(WebRTC/PeerJS) ====================
+    // GitHub Pages(静的ホスティング)は自前のサーバーを持てないため、WebRTCの接続確立
+    // (シグナリング)には無料の公開ブローカー(PeerJSのデフォルトサーバー)を使う。
+    // 実際のゲームデータはブローカーを介さず、確立されたP2Pのデータチャネルで直接やり取りする。
 
-        // Simulate local IP display
-        document.getElementById('hostIP').textContent = '127.0.0.1';
-        this.updatePlayerList();
+    createHost() {
+        if (typeof Peer === 'undefined') {
+            alert('通信ライブラリの読み込みに失敗しました。通信環境をご確認の上、再読み込みしてください。');
+            return;
+        }
+        document.getElementById('lobbyContent').classList.add('hidden');
+        document.getElementById('joinPanel').classList.add('hidden');
+        document.getElementById('hostPanel').classList.remove('hidden');
+        document.getElementById('hostIP').textContent = '接続中...';
+        document.getElementById('startMultiBtn').disabled = true;
+
+        this.network.role = 'host';
+        this.network.isHost = true;
+        this.connectAsHost(5);
+    }
+
+    // 4桁の部屋コードでPeerを作成する。同じ公開ブローカー上で他の誰かが偶然
+    // 同じコードを使っていた場合(unavailable-id)は、コードを変えて数回まで再試行する
+    connectAsHost(attemptsLeft) {
+        const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+        const code = Array.from({ length: 4 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+        const peer = new Peer(`beatsword-room-${code}`);
+
+        peer.on('open', id => {
+            this.network.peer = peer;
+            this.network.roomCode = code;
+            this.network.myPeerId = id;
+            this.network.isConnected = true;
+            document.getElementById('hostIP').textContent = code;
+            document.getElementById('connStatus').classList.remove('hidden');
+            document.getElementById('connStatus').classList.add('host');
+            document.getElementById('connStatus').textContent = 'HOST';
+            // ホスト自身もキャラクターを選ばないと開始できないようにする
+            this.showCharSelect('host');
+        });
+        peer.on('connection', conn => this.onHostConnection(conn));
+        peer.on('error', err => {
+            if (err && err.type === 'unavailable-id' && attemptsLeft > 0) {
+                this.connectAsHost(attemptsLeft - 1);
+                return;
+            }
+            document.getElementById('hostIP').textContent = '接続エラー';
+        });
+    }
+
+    onHostConnection(conn) {
+        conn.on('open', () => {
+            this.network.conns[conn.peer] = conn;
+            this.network.roster[conn.peer] = { name: '参加者', charId: null };
+            this.updatePlayerList();
+        });
+        conn.on('data', data => this.onHostMessage(conn, data));
+        conn.on('close', () => {
+            delete this.network.conns[conn.peer];
+            delete this.network.roster[conn.peer];
+            delete this.network.remotePlayerStates[conn.peer];
+            this.updatePlayerList();
+        });
+    }
+
+    // 参加者から届いたメッセージを処理する。1件の異常なメッセージでゲーム全体を
+    // 壊さないよう、必ずtry/catchで囲む
+    onHostMessage(conn, data) {
+        if (!data || typeof data !== 'object') return;
+        try {
+            if (data.type === 'hello') {
+                if (this.network.roster[conn.peer]) this.network.roster[conn.peer].name = data.name || '参加者';
+                this.updatePlayerList();
+            } else if (data.type === 'selectChar') {
+                if (this.network.roster[conn.peer]) this.network.roster[conn.peer].charId = data.charId;
+                this.updatePlayerList();
+            } else if (data.type === 'playerState') {
+                this.network.remotePlayerStates[conn.peer] = data.state;
+                const puppet = this.players.find(p => p.id === conn.peer);
+                if (puppet && data.state) {
+                    puppet.x = data.state.x; puppet.y = data.state.y;
+                    puppet.hp = data.state.hp; puppet.maxHp = data.state.maxHp;
+                    puppet.facing = data.state.facing; puppet.state = data.state.state;
+                }
+            } else if (data.type === 'enemyDamage') {
+                const enemy = this.stage.enemies.find(e => e.netId === data.netId);
+                if (enemy) enemy.takeDamage(data.dmg, data.dmgType);
+            }
+        } catch (e) { /* 1件の不正なメッセージでゲームを止めない */ }
     }
 
     joinHost() {
-        const ip = document.getElementById('joinIP').value;
-        document.getElementById('joinStatus').textContent = `接続中... ${ip}:8080`;
+        if (typeof Peer === 'undefined') {
+            document.getElementById('joinStatus').textContent = '通信ライブラリの読み込みに失敗しました。通信環境をご確認の上、再読み込みしてください。';
+            document.getElementById('joinStatus').style.color = '#e74c3c';
+            return;
+        }
+        const code = (document.getElementById('joinIP').value || '').trim().toUpperCase();
+        if (!code) {
+            document.getElementById('joinStatus').textContent = '部屋コードを入力してください';
+            document.getElementById('joinStatus').style.color = '#e74c3c';
+            return;
+        }
+        document.getElementById('joinStatus').textContent = '接続中...';
+        document.getElementById('joinStatus').style.color = '#888';
 
-        // Simulate connection
-        setTimeout(() => {
-            this.network.isConnected = true;
-            this.network.isHost = false;
-            document.getElementById('joinStatus').textContent = '接続成功！';
-            document.getElementById('joinStatus').style.color = '#2ecc71';
-            document.getElementById('connStatus').classList.remove('hidden');
-            document.getElementById('connStatus').classList.add('online');
-            document.getElementById('connStatus').textContent = 'ONLINE';
-
-            // Show character select for multiplayer
-            setTimeout(() => this.showCharSelect(), 500);
-        }, 800);
+        this.network.role = 'client';
+        const peer = new Peer();
+        peer.on('open', myId => {
+            this.network.peer = peer;
+            this.network.myPeerId = myId;
+            const conn = peer.connect(`beatsword-room-${code}`, { reliable: true });
+            this.network.hostConn = conn;
+            conn.on('open', () => {
+                this.network.isConnected = true;
+                this.network.isHost = false;
+                conn.send({ type: 'hello', name: 'ゲスト' });
+                document.getElementById('joinStatus').textContent = '接続成功！';
+                document.getElementById('joinStatus').style.color = '#2ecc71';
+                document.getElementById('connStatus').classList.remove('hidden');
+                document.getElementById('connStatus').classList.add('online');
+                document.getElementById('connStatus').textContent = 'ONLINE';
+                this.showCharSelect('client');
+            });
+            conn.on('data', data => this.onClientMessage(data));
+            conn.on('close', () => {
+                this.network.isConnected = false;
+                if (this.state !== 'playing') {
+                    document.getElementById('joinStatus').textContent = 'ホストとの接続が切れました';
+                    document.getElementById('joinStatus').style.color = '#e74c3c';
+                }
+            });
+            conn.on('error', () => {
+                document.getElementById('joinStatus').textContent = '接続に失敗しました。部屋コードをご確認ください';
+                document.getElementById('joinStatus').style.color = '#e74c3c';
+            });
+        });
+        peer.on('error', err => {
+            document.getElementById('joinStatus').textContent = '接続に失敗しました。部屋コードをご確認ください';
+            document.getElementById('joinStatus').style.color = '#e74c3c';
+        });
     }
 
+    // ホストから届いたメッセージを処理する
+    onClientMessage(data) {
+        if (!data || typeof data !== 'object') return;
+        try {
+            if (data.type === 'gameStart') {
+                this.difficulty = data.difficulty;
+                this.players = [];
+                this.localPlayer = new Player('p1', this.selectedChar, true);
+                this.players.push(this.localPlayer);
+                // ホスト・他の参加者それぞれの「分身」を追加する。実際のAI/リズム処理は
+                // それぞれの端末側で行われるため、ここではworldState同期で見た目だけ更新する
+                (data.roster || []).forEach(entry => {
+                    if (entry.id === this.network.myPeerId || !entry.charId) return;
+                    const puppet = new Player(entry.id, entry.charId, false);
+                    puppet.isRemotePuppet = true;
+                    this.players.push(puppet);
+                });
+                this.stage = new StageManager();
+                this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
+                this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
+                this.startGame(data.track);
+            } else if (data.type === 'worldState') {
+                this.applyWorldState(data);
+            }
+        } catch (e) { /* 1件の不正なメッセージでゲームを止めない */ }
+    }
+
+    // ホストの権威的な状態(敵・他プレイヤー)を自分の表示に反映する
+    applyWorldState(data) {
+        const existing = {};
+        this.stage.enemies.forEach(e => { existing[e.netId] = e; });
+        const nextEnemies = [];
+        (data.enemies || []).forEach(es => {
+            let e = existing[es.netId];
+            if (!e) {
+                e = new Enemy(es.type, es.x, es.y, 1);
+                e.netId = es.netId;
+            }
+            e.x = es.x; e.y = es.y; e.hp = es.hp; e.maxHp = es.maxHp;
+            e.dead = es.dead; e.falling = es.falling;
+            if (es.groundY !== undefined) e.groundY = es.groundY;
+            nextEnemies.push(e);
+        });
+        this.stage.enemies = nextEnemies;
+        if (typeof data.wave === 'number') this.stage.currentWave = data.wave;
+        if (typeof data.totalWaves === 'number') this.stage.totalWaves = data.totalWaves;
+        if (data.stageCompleted) this.stage.completed = true;
+
+        (data.players || []).forEach(ps => {
+            if (ps.id === this.network.myPeerId) return;
+            let puppet = this.players.find(p => p.id === ps.id);
+            if (!puppet && ps.charId) {
+                puppet = new Player(ps.id, ps.charId, false);
+                puppet.isRemotePuppet = true;
+                this.players.push(puppet);
+            }
+            if (puppet) {
+                puppet.x = ps.x; puppet.y = ps.y; puppet.hp = ps.hp; puppet.maxHp = ps.maxHp;
+                puppet.facing = ps.facing; puppet.state = ps.state;
+            }
+        });
+    }
+
+    // ホストは権威的な世界の状態(敵・全プレイヤー)を全参加者へ配信し、
+    // 参加者(クライアント)は自分自身の状態をホストへ送る(約10Hz)
+    syncNetworkState() {
+        if (this.network.role === 'host') {
+            const enemies = this.stage.enemies.map(e => ({
+                netId: e.netId, type: e.type, x: e.x, y: e.y, hp: e.hp, maxHp: e.maxHp,
+                dead: e.dead, falling: e.falling, groundY: e.groundY,
+            }));
+            const players = [this.publicPlayerState(this.localPlayer, 'host')];
+            Object.entries(this.network.remotePlayerStates).forEach(([id, s]) => {
+                if (s) players.push({ id, ...s });
+            });
+            const payload = {
+                type: 'worldState', enemies, players,
+                wave: this.stage.currentWave, totalWaves: this.stage.totalWaves,
+                stageCompleted: this.stage.completed,
+            };
+            Object.values(this.network.conns).forEach(conn => {
+                try { conn.send(payload); } catch (e) {}
+            });
+        } else if (this.network.role === 'client' && this.network.hostConn) {
+            try {
+                this.network.hostConn.send({
+                    type: 'playerState',
+                    state: this.publicPlayerState(this.localPlayer, this.network.myPeerId),
+                });
+            } catch (e) {}
+        }
+    }
+
+    // レンダリング・スコア表示に必要な最低限の公開情報だけを取り出す
+    // (敵の詳細な内部状態などは含めない)
+    publicPlayerState(p, id) {
+        return {
+            id, charId: p.charId, x: p.x, y: p.y, hp: p.hp, maxHp: p.maxHp,
+            facing: p.facing, state: p.state,
+            combo: this.rhythm ? this.rhythm.combo : 0,
+            score: this.rhythm ? this.rhythm.score : 0,
+        };
+    }
+
+    // ホストが「ゲーム開始」を押した時に呼ばれる。参加者へ開始を通知しつつ、
+    // ホスト自身のゲームも開始する
     startMultiplayer() {
+        if (!this.selectedChar) return;
+        const track = pickRandomTrack(this.lastTrackPlayed);
+        this.lastTrackPlayed = track;
+
         this.players = [];
         this.localPlayer = new Player('host', this.selectedChar, true);
         this.players.push(this.localPlayer);
+
+        // 参加者ごとに、そのキャラクターを操作する「分身」を追加する。分身の実際の
+        // AI・リズム処理は各参加者自身の端末側で行われ、ホスト側ではworldState同期で
+        // 届く見た目だけを反映する(二重にAI処理をして状態がズレるのを防ぐ)
+        Object.entries(this.network.roster).forEach(([peerId, info]) => {
+            if (!info.charId) return;
+            const puppet = new Player(peerId, info.charId, false);
+            puppet.isRemotePuppet = true;
+            this.players.push(puppet);
+        });
+
         this.stage = new StageManager();
-        this.startGame();
+        this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
+        this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
+
+        const roster = [{ id: 'host', charId: this.selectedChar }].concat(
+            Object.entries(this.network.roster).map(([id, info]) => ({ id, charId: info.charId }))
+        );
+        Object.values(this.network.conns).forEach(conn => {
+            try { conn.send({ type: 'gameStart', difficulty: this.difficulty, track, roster }); } catch (e) {}
+        });
+
+        this.startGame(track);
     }
 
     updatePlayerList() {
         const list = document.getElementById('playerList');
-        list.innerHTML = '<div class="player-tag">Host (YOU)</div>';
-        document.getElementById('startMultiBtn').textContent = `ゲーム開始 (1/${CONSTANTS.MAX_PLAYERS})`;
-        document.getElementById('startMultiBtn').disabled = false;
+        list.innerHTML = '';
+        const hostChar = this.selectedChar && CHARACTERS.find(c => c.id === this.selectedChar);
+        // 参加者の名前はネットワーク経由で届く(信頼できない)値のため、innerHTMLへの
+        // 文字列埋め込みは避け、textContentで安全にDOMへ反映する
+        const addTag = (label, value) => {
+            const div = document.createElement('div');
+            div.className = 'player-tag';
+            div.textContent = `${label}: ${value}`;
+            list.appendChild(div);
+        };
+        addTag('ホスト(あなた)', hostChar ? hostChar.name : '未選択');
+        Object.values(this.network.roster).forEach(p => {
+            const char = p.charId && CHARACTERS.find(c => c.id === p.charId);
+            addTag(String(p.name || '参加者'), char ? char.name : '選択中...');
+        });
+        const readyCount = (hostChar ? 1 : 0) + Object.values(this.network.roster).filter(p => p.charId).length;
+        const total = 1 + Object.keys(this.network.roster).length;
+        document.getElementById('startMultiBtn').textContent = `ゲーム開始 (${readyCount}/${total})`;
+        // ホスト自身がキャラクターを選ぶまでは開始できない
+        document.getElementById('startMultiBtn').disabled = !hostChar;
     }
 
-    async startGame() {
+    // forcedTrack: LANマルチプレイでホストが選んだ曲を参加者側でも同じものにするため、
+    // 指定された場合はランダム選曲をせずそのまま使う
+    async startGame(forcedTrack) {
         this.state = 'playing';
         this.stage.completed = false;
         // loadTrack()のawait中もrequestAnimationFrameの毎フレームupdate()は走り続けるため、
@@ -3087,8 +3445,9 @@ class GameController {
         });
 
         // ランダムにBGMを選び、曲の長さから総ウェーブ数を算出してから再生開始する
-        // (直前と同じ曲が連続で流れないようにする)
-        const track = pickRandomTrack(this.lastTrackPlayed);
+        // (直前と同じ曲が連続で流れないようにする。LANマルチプレイの参加者側は
+        // ホストが選んだ曲(forcedTrack)をそのまま使い、全員のBGMを揃える)
+        const track = forcedTrack || pickRandomTrack(this.lastTrackPlayed);
         this.lastTrackPlayed = track;
         const buffer = await this.audio.loadTrack(track);
         this.stage.start(buffer.duration);
@@ -3122,6 +3481,8 @@ class GameController {
     // ==================== Input Handling ====================
 
     handleUniversalInput() {
+        // 力尽きて待機中は入力を受け付けない(ステージクリアで復活するまで何もできない)
+        if (!this.localPlayer.isAlive()) return;
         const gimmick = this.localPlayer.getActiveGimmick();
         const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
@@ -3232,6 +3593,23 @@ class GameController {
         return false;
     }
 
+    // LANマルチプレイ用: 敵にダメージを与える共通の入口。ソロ/ホスト時はそのまま
+    // 適用するだけだが、クライアント時はホスト(権威側)にも通知し、ホストの状態と
+    // 一致させる(ホストからの次回のworldState同期で最終的に上書き・確定する)
+    dealEnemyDamage(enemy, dmg, type) {
+        const actualDmg = enemy.takeDamage(dmg, type);
+        this.notifyEnemyDamage(enemy, dmg, type);
+        return actualDmg;
+    }
+
+    notifyEnemyDamage(enemy, dmg, type) {
+        if (this.network.role === 'client' && this.network.hostConn) {
+            try {
+                this.network.hostConn.send({ type: 'enemyDamage', netId: enemy.netId, dmg, dmgType: type });
+            } catch (e) { /* 接続が切れていても致命的にしない */ }
+        }
+    }
+
     // 盗賊B「連打」: ギミック終了後にまとめて払い出すのではなく、Perfectを取った
     // その瞬間に画面上の全ての敵へ弱攻撃を即時に与える。
     // (大幅に弱体化: 基礎威力を下げ、Perfect補正(upgrades.perfect倍率)も乗らないようにする)
@@ -3239,7 +3617,7 @@ class GameController {
         const dmg = Math.floor(this.localPlayer.getDamage(1, 'good'));
         this.stage.enemies.forEach(e => {
             if (e.dead || e.falling) return;
-            const actualDmg = e.takeDamage(dmg, 'ability');
+            const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
             this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#9b59b6', 6);
             this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#9b59b6', 14);
             if (e.dead) {
@@ -3298,7 +3676,7 @@ class GameController {
                 });
                 if (target) {
                     const dmg = Math.floor(this.localPlayer.getDamage(16, 'perfect'));
-                    const actualDmg = target.takeDamage(dmg, 'sword');
+                    const actualDmg = this.dealEnemyDamage(target, dmg, 'sword');
                     this.renderer.addParticle(n.x, CONSTANTS.GROUND_Y, target.data.color, 10);
                     this.renderer.addFloatingText(n.x, CONSTANTS.GROUND_Y - 20, `${actualDmg}`, '#ff6b35', 16);
                     if (target.dead) {
@@ -3324,7 +3702,7 @@ class GameController {
             if (candidates.length > 0) {
                 const target = candidates[Math.floor(Math.random() * candidates.length)];
                 const dmg = Math.floor(this.localPlayer.getDamage(8, 'perfect'));
-                const actualDmg = target.takeDamage(dmg, 'ability');
+                const actualDmg = this.dealEnemyDamage(target, dmg, 'ability');
                 this.renderer.addMeteorNote(target.x - this.stage.scrollX, target.y - target.data.size / 2);
                 this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size, `${actualDmg}`, '#4a90d9', 16);
                 if (target.dead) this.stage.totalScore += target.data.score;
@@ -3369,7 +3747,7 @@ class GameController {
         const baseDamage = isSword ? 20 : 16; // 強攻撃: 通常の発射(旧10/8)よりダメージを引き上げる
         const color = isSword ? '#ff6b35' : '#e74c3c';
         const dmg = Math.floor(this.localPlayer.getDamage(baseDamage, result.judge));
-        const actualDmg = target.takeDamage(dmg, isSword ? 'sword' : 'ability');
+        const actualDmg = this.dealEnemyDamage(target, dmg, isSword ? 'sword' : 'ability');
 
         // 演出上の起点はプレイヤーではなく判定線(画面下部中央)にする
         const originX = CONSTANTS.CANVAS_WIDTH / 2;
@@ -3400,7 +3778,7 @@ class GameController {
                 this.stage.enemies.forEach(e => {
                     if (e.dead || e.falling) return;
                     if (Math.abs(e.x - this.localPlayer.x) < 250) {
-                        e.takeDamage(this.localPlayer.getDamage(50, 'perfect'), 'ability');
+                        this.dealEnemyDamage(e, this.localPlayer.getDamage(50, 'perfect'), 'ability');
                     }
                 });
                 this.renderer.shake(8, 0.3);
@@ -3421,7 +3799,7 @@ class GameController {
                 const pBox = this.localPlayer.getAttackHitbox();
                 const eBox = e.getHitbox();
                 if (this.checkCollision(pBox, eBox)) {
-                    const actualDmg = e.takeDamage(dmg, 'sword');
+                    const actualDmg = this.dealEnemyDamage(e, dmg, 'sword');
                     hitCount++;
 
                     // Visual effects
@@ -3528,14 +3906,27 @@ class GameController {
 
         if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
-        // Update players (movement is AI-controlled)
+        // Update players (movement is AI-controlled)。LANマルチプレイの分身
+        // (isRemotePuppet)は、それぞれ本人の端末側でAI・リズム処理が行われるため、
+        // ここでは二重にupdateせず、ネットワーク経由で届く見た目の状態を反映するだけにする
         this.players.forEach(p => {
+            if (p.isRemotePuppet) return;
             const holdGimmickTimer = (p === this.localPlayer) && this.shouldHoldGimmickTimer();
             p.update(dt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer);
         });
 
-        // Update stage
-        this.stage.update(dt, this.players);
+        // Update stage。LANクライアント側は敵AI・ウェーブ進行をホストの権威的な状態に
+        // 委ねるため、自分では進行させない(worldStateを受信した時に反映するのみ)
+        if (this.network.role !== 'client') {
+            this.stage.update(dt, this.players);
+        }
+
+        // LANマルチプレイの状態同期。高頻度に送ると重くなるため約10Hzに間引く
+        this.networkSyncTimer = (this.networkSyncTimer || 0) - dt;
+        if (this.network.role !== 'solo' && this.networkSyncTimer <= 0) {
+            this.networkSyncTimer = 0.1;
+            this.syncNetworkState();
+        }
 
         // 盗賊B「連打」中は、交互のノーツ以外は一切生成しない
         // (防御ノーツ・能力ノーツ含め、他のノーツが混ざらないようにする)
@@ -3649,6 +4040,8 @@ class GameController {
                 };
             } else {
                 const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+                // applyAbility内で既にダメージ適用済みのため、ここではホストへの通知のみ行う
+                outcome.hits.forEach(({ enemy, dmg }) => this.notifyEnemyDamage(enemy, dmg, 'ability'));
 
                 outcome.hits.forEach(({ enemy, dmg }) => {
                     this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
@@ -3691,6 +4084,8 @@ class GameController {
             const currentBeat = this.audio.getCurrentBeat();
             if (currentBeat >= this.thiefCombo.nextBeat) {
                 const outcome = applyAbility('thief', this.thiefCombo.ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+                // applyAbility内で既にダメージ適用済みのため、ここではホストへの通知のみ行う
+                outcome.hits.forEach(({ enemy, dmg }) => this.notifyEnemyDamage(enemy, dmg, 'ability'));
                 this.renderer.addRangeCircle(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, this.localPlayer.getAttackRange(), '#9b59b6');
                 let nearest = null, nearestDist = Infinity;
                 outcome.hits.forEach(({ enemy, dmg }) => {
@@ -3719,7 +4114,7 @@ class GameController {
                     if (e.dead || e.falling) return;
                     if (this.rapidFireSweepHitIds.has(e)) return;
                     if (Math.abs(e.x - this.localPlayer.x) < 60) {
-                        e.takeDamage(sweepDmg, 'sword');
+                        this.dealEnemyDamage(e, sweepDmg, 'sword');
                         this.rapidFireSweepHitIds.add(e);
                         this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#ff6b35', 6);
                     }
@@ -3788,6 +4183,8 @@ class GameController {
     }
 
     showStageClear() {
+        // 途中で力尽きて待機していたプレイヤーも、ステージクリアと同時に復活させる
+        this.players.forEach(p => { if (!p.isAlive()) p.hp = p.maxHp; });
         this.audio.stop();
         const container = document.getElementById('gameContainer');
         const el = document.createElement('div');

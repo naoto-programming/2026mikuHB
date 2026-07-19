@@ -6,7 +6,7 @@ function readFile(path) {
 eval(readFile('./game.js'));
 const { BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves } = globalThis.GameLogic;
 
-if (BGM_TRACKS.length !== 4) throw new Error('expected 4 tracks, got ' + (BGM_TRACKS && BGM_TRACKS.length));
+if (BGM_TRACKS.length !== 22) throw new Error('expected 22 tracks, got ' + (BGM_TRACKS && BGM_TRACKS.length));
 if (bpmFromTrackFilename('79拍:分1.mp3') !== 79) throw new Error('bpm parse 79-1 failed');
 if (bpmFromTrackFilename('90拍:分.mp3') !== 90) throw new Error('bpm parse 90 failed');
 if (bpmFromTrackFilename('110拍:分.mp3') !== 110) throw new Error('bpm parse 110 failed');

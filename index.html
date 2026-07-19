@@ -80,15 +80,24 @@
             <h2>キャラクター選択</h2>
             <div class="subtitle" id="charSelectSubtitle">難易度が低い順</div>
             <div class="char-select" id="charSelect"></div>
-            <div class="btn-group">
+            <div class="btn-group" id="difficultyGroup">
                 <button class="btn difficulty-btn" id="difficulty-easy" onclick="Game.setDifficulty('easy')">EASY</button>
                 <button class="btn difficulty-btn selected" id="difficulty-normal" onclick="Game.setDifficulty('normal')">NORMAL</button>
                 <button class="btn difficulty-btn" id="difficulty-hard" onclick="Game.setDifficulty('hard')">HARD</button>
             </div>
+            <p id="difficultyHostNote" class="hidden" style="color:#888;font-size:0.85em;margin:6px 0;">難易度はホストが選択します</p>
             <div class="btn-group">
                 <button class="btn" onclick="Game.confirmChar()">決定</button>
                 <button class="btn" onclick="Game.showModeSelect()">戻る</button>
             </div>
+        </div>
+
+        <!-- 参加者がキャラクターを決定した後、ホストの開始を待つ画面 -->
+        <div id="waitingScreen" class="screen hidden">
+            <h2>待機中</h2>
+            <div class="subtitle">ホストがゲームを開始するまでお待ちください</div>
+            <div id="waitingPlayerList" style="margin:20px 0;"></div>
+            <button class="btn" onclick="Game.showMenu()" style="margin-top:20px;">やめる</button>
         </div>
 
         <!-- Lobby Screen -->
@@ -101,15 +110,14 @@
                 </div>
             </div>
             <div id="hostPanel" class="hidden" style="text-align:center;margin-top:20px;">
-                <p style="margin:10px 0;">ホストIP: <span id="hostIP" style="color:#ff6b35;font-weight:bold;font-size:1.2em;">127.0.0.1</span></p>
-                <p style="margin:10px 0;">ポート: <span style="color:#ff6b35;font-weight:bold;">8080</span></p>
-                <p style="color:#888;font-size:0.9em;margin-bottom:15px;">同じWi-Fi内のプレイヤーにこのIPを伝えてください</p>
+                <p style="margin:10px 0;">部屋コード: <span id="hostIP" style="color:#ff6b35;font-weight:bold;font-size:1.6em;letter-spacing:2px;">----</span></p>
+                <p style="color:#888;font-size:0.9em;margin-bottom:15px;">同じWi-Fi内のプレイヤーにこの部屋コードを伝えてください</p>
                 <div id="playerList" style="margin:15px 0;"></div>
-                <button class="btn" onclick="Game.startMultiplayer()" id="startMultiBtn" disabled>ゲーム開始 (1/2)</button>
+                <button class="btn" onclick="Game.startMultiplayer()" id="startMultiBtn" disabled>ゲーム開始 (キャラクター未選択)</button>
             </div>
             <div id="joinPanel" class="hidden" style="text-align:center;margin-top:20px;">
-                <p style="margin:10px 0;">ホストIPアドレスを入力:</p>
-                <input type="text" id="joinIP" placeholder="例: 192.168.1.5" value="127.0.0.1">
+                <p style="margin:10px 0;">部屋コードを入力:</p>
+                <input type="text" id="joinIP" placeholder="例: AB12" maxlength="6" style="text-transform:uppercase;">
                 <br>
                 <button class="btn" onclick="Game.joinHost()" style="margin-top:10px;">接続</button>
                 <p id="joinStatus" style="margin:10px;color:#888;"></p>
@@ -172,6 +180,10 @@
         </div>
     </div>
 
+<!-- PeerJS: WebRTCの接続確立(シグナリング)を無料の公開ブローカー経由で行うためのライブラリ。
+     GitHub Pages(静的ホスティング)は自前のサーバーを持てないため、これを使うことで
+     専用サーバーを用意せずに実際のP2P通信(LANマルチプレイ)を実現する -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 <script src="game.js"></script>
 </body>
 </html>
