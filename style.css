@@ -16,7 +16,8 @@
             position: relative;
             width: 100%;
             max-width: 1200px;
-            aspect-ratio: 16/9;
+            /* CONSTANTS.CANVAS_WIDTH/HEIGHT(1280x600)に合わせて縦を少し短くした比率 */
+            aspect-ratio: 1280/600;
             background: #000;
             border: 2px solid #333;
             /* スマホでの両手タップ(2本指の同時タップ)後、ブラウザがピンチズーム等の
@@ -197,12 +198,12 @@
         .hp-fill.mid { background: #f39c12; }
         .hp-fill.low { background: #e74c3c; }
 
-        /* 固有ギミック発動などのポップアップ通知は画面中央に大きく表示する */
+        /* 固有ギミック発動などのポップアップ通知は画面最上部に大きく表示する */
         #topNotice {
             position: absolute;
-            top: 50%;
+            top: 10px;
             left: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%);
             z-index: 16;
             pointer-events: none;
         }
@@ -331,11 +332,11 @@
         }
 
         /* スマホ向けレイアウト: 縦画面の狭い横幅・横画面の低い縦幅どちらでも
-           ゲーム画面(16:9)を歪ませずに収め、HUDやメニューのUIが画面からはみ出さないよう
+           ゲーム画面(1280:600)を歪ませずに収め、HUDやメニューのUIが画面からはみ出さないよう
            折り返し・縮小させる */
         @media (max-width: 700px), (max-height: 500px) {
             #gameContainer {
-                width: min(100vw, calc(100vh * 16 / 9), 1200px);
+                width: min(100vw, calc(100vh * 1280 / 600), 1200px);
                 height: auto;
                 border-width: 1px;
             }
@@ -352,7 +353,7 @@
             .hud-label { font-size: 0.55em; letter-spacing: 0.5px; }
             .hud-value { font-size: 0.95em; }
             .hp-bar { width: 60px; }
-            #topNotice { max-width: 92%; }
+            #topNotice { top: 46px; max-width: 92%; }
             #topNotice .tutorial-box { font-size: 1.1em; padding: 12px 20px; white-space: normal; text-align: center; }
             #bottomHud { bottom: 10%; width: 92%; gap: 5px; }
             .combo-count { font-size: 2em; }

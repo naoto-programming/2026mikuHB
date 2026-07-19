@@ -92,10 +92,10 @@
             </div>
         </div>
 
-        <!-- 参加者がキャラクターを決定した後、ホストの開始を待つ画面 -->
+        <!-- キャラクターを決定した後、他のプレイヤーの選択を待つ画面 -->
         <div id="waitingScreen" class="screen hidden">
             <h2>待機中</h2>
-            <div class="subtitle">ホストがゲームを開始するまでお待ちください</div>
+            <div class="subtitle">他のプレイヤーの選択を待っています...</div>
             <div id="waitingPlayerList" style="margin:20px 0;"></div>
             <button class="btn" onclick="Game.showMenu()" style="margin-top:20px;">やめる</button>
         </div>
@@ -113,7 +113,7 @@
                 <p style="margin:10px 0;">部屋コード: <span id="hostIP" style="color:#ff6b35;font-weight:bold;font-size:1.6em;letter-spacing:2px;">----</span></p>
                 <p style="color:#888;font-size:0.9em;margin-bottom:15px;">同じWi-Fi内のプレイヤーにこの部屋コードを伝えてください</p>
                 <div id="playerList" style="margin:15px 0;"></div>
-                <button class="btn" onclick="Game.startMultiplayer()" id="startMultiBtn" disabled>ゲーム開始 (キャラクター未選択)</button>
+                <button class="btn" onclick="Game.beginCharacterSelectPhase()" id="startMultiBtn">開始(全員でキャラクター選択へ)</button>
             </div>
             <div id="joinPanel" class="hidden" style="text-align:center;margin-top:20px;">
                 <p style="margin:10px 0;">部屋コードを入力:</p>

@@ -5,9 +5,10 @@
 
 const CONSTANTS = {
     CANVAS_WIDTH: 1280,
-    CANVAS_HEIGHT: 720,
+    // 画面の縦の長さを少し短くする(720→600、GROUND_Yも同じ比率で調整)
+    CANVAS_HEIGHT: 600,
     GRAVITY: 0.6,
-    GROUND_Y: 600,
+    GROUND_Y: 500,
     PLAYER_SPEED: 6,
     BASE_BPM: 120,
     NOTE_SPEED: 280,
@@ -77,7 +78,7 @@ const BGM_TRACKS = [
     { file: '79拍:分2.mp3', bpm: 79 },
     { file: '90拍:分.mp3', bpm: 90 },
     { file: '110拍:分.mp3', bpm: 110 },
-    { file: '52(1).mp3', bpm: 52 },
+    { file: '103(1).mp3', bpm: 103 },
     { file: '79(1).mp3', bpm: 79 },
     { file: '79(2).mp3', bpm: 79 },
     { file: '79(3).mp3', bpm: 79 },
@@ -152,6 +153,11 @@ const IMAGE_MANIFEST = {
     weapons: {
         swordIcon: '剣.png',
         arrow: '矢.png',
+    },
+    // 剣士「ノーツの雨」・弓士「ノーツ弾き」の着弾演出用の爆発アニメーション(8枚)
+    effects: {
+        explosion1: '爆発1.png', explosion2: '爆発2.png', explosion3: '爆発3.png', explosion4: '爆発4.png',
+        explosion5: '爆発5.png', explosion6: '爆発6.png', explosion7: '爆発7.png', explosion8: '爆発8.png',
     },
 };
 
@@ -364,6 +370,23 @@ class AudioSystem {
         osc.stop(now + 0.2);
     }
 
+    // 剣士「ノーツの雨」・弓士「ノーツ弾き」の着弾爆発用の効果音
+    playExplosionSound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.3);
+        gain.gain.setValueAtTime(0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+        osc.start(now);
+        osc.stop(now + 0.35);
+    }
+
     playSwordSound() {
         this.playSfx('attack');
     }
@@ -514,6 +537,7 @@ class RhythmSystem {
             missed: false,
         }));
         this.maybeCorruptOnSpawn(this.swordNotes, gimmick.special === 'corruptedNote');
+        this.maybeMakeGiantOnSpawn(this.swordNotes, gimmick.special === 'giantNote');
     }
 
     startAbility(beats, gimmick) {
@@ -550,18 +574,16 @@ class RhythmSystem {
         this.maybeCorruptOnSpawn([note], !!gimmick && gimmick.special === 'corruptedNote');
     }
 
-    generateGiantNote(beat) {
-        const note = {
-            id: this.noteId++,
-            beat: beat,
-            type: 'sword',
-            hit: false,
-            missed: false,
-            isGiant: true,
-            giantStage: 3,
-        };
-        this.giantNote = note;
-        this.swordNotes.push(note);
+    // 剣士B「巨大ノーツ」: ウイルスノーツと同様、新しく生成された攻撃ノーツの中から
+    // ランダムに1つを巨大化させる(専用の独立したノーツを生成するわけではない)。
+    // 2回叩くと壊れる
+    maybeMakeGiantOnSpawn(newNotes, gimmickActive) {
+        if (!gimmickActive || this.giantNote || !newNotes || newNotes.length === 0) return false;
+        const pick = newNotes[Math.floor(Math.random() * newNotes.length)];
+        pick.isGiant = true;
+        pick.giantStage = 2;
+        this.giantNote = pick;
+        return true;
     }
 
     resolveGiantHit() {
@@ -1106,7 +1128,11 @@ class Player {
                 // 前方へ動き続けてしまい、敵を通り過ぎては引き返す振り子運動(左右の揺れ)の
                 // 原因になる。敵の実座標を基準にした固定の目標地点にすることで、
                 // ちゃんとその場で立ち止まれるようにする
-                targetX = nearest.x - this.facing * attackRange * 0.5;
+                const engageX = nearest.x - this.facing * attackRange * 0.5;
+                // プレイヤーは画面中央を好む: 敵が間合いのすぐ近くにいる時ほど積極的に
+                // 迎撃位置へ寄り、遠くにいるだけの敵には過剰に引っ張られず中央寄りに留まる
+                const closeness = 1 - Math.min(1, nearestDist / (attackRange * 4));
+                targetX = centerX + (engageX - centerX) * closeness;
             }
 
             const toTarget = targetX - this.x;
@@ -1578,6 +1604,7 @@ class Renderer {
         this.rangeIndicators = [];
         this.edgeDashes = [];
         this.launchedNotes = [];
+        this.explosions = [];
         this.shakeTimer = 0;
         this.shakeIntensity = 0;
         this.bgStars = [];
@@ -1804,6 +1831,39 @@ class Renderer {
         }
     }
 
+    // 剣士「ノーツの雨」・弓士「ノーツ弾き」の着弾演出(8枚の爆発アニメーション)
+    addExplosion(x, y, scale = 1) {
+        this.explosions.push({ x, y, scale, frame: 0, frameTimer: 0 });
+    }
+
+    renderExplosions(ctx, game) {
+        const frameDuration = 0.045;
+        for (let i = this.explosions.length - 1; i >= 0; i--) {
+            const ex = this.explosions[i];
+            ex.frameTimer += 1 / 60;
+            if (ex.frameTimer >= frameDuration) {
+                ex.frameTimer -= frameDuration;
+                ex.frame++;
+            }
+            if (ex.frame >= 8) { this.explosions.splice(i, 1); continue; }
+            const key = 'explosion' + (ex.frame + 1);
+            const img = game.images && game.images[IMAGE_MANIFEST.effects[key]];
+            const size = 90 * ex.scale;
+            if (img) {
+                ctx.drawImage(img, ex.x - size / 2, ex.y - size / 2, size, size);
+            } else {
+                // 画像未ロード時の簡易フォールバック
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, 1 - ex.frame / 8);
+                ctx.fillStyle = '#ffae42';
+                ctx.beginPath();
+                ctx.arc(ex.x, ex.y, size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+    }
+
     // 剣士「上に弾くノーツ」: 蓄積したノーツの山を画面最下部に表示する
     // (ギミックが発動している間だけ見える、蓄積数が伝わればいいシンプルな表示)
     renderStoredNotes(ctx, game) {
@@ -1894,8 +1954,12 @@ class Renderer {
             ctx.fill();
         });
 
+        // 拍に連動した縦揺れ量（拍の頭でしゃがみ、拍の半分で最も浮く）
+        const beatPhase = game.audio.isPlaying ? (game.audio.getInputBeat() % 1) : 0;
+        const beatBob = Math.sin(beatPhase * Math.PI) * 4;
+
         // Parallax layers
-        this.renderBackground(ctx, scrollX, w, h, game.images);
+        this.renderBackground(ctx, scrollX, w, h, game.images, beatPhase);
 
         // Ground
         ctx.fillStyle = '#121225';
@@ -1912,10 +1976,6 @@ class Renderer {
             ctx.lineTo(i + 50, CONSTANTS.GROUND_Y + 10);
             ctx.stroke();
         }
-
-        // 拍に連動した縦揺れ量（拍の頭でしゃがみ、拍の半分で最も浮く）
-        const beatPhase = game.audio.isPlaying ? (game.audio.getInputBeat() % 1) : 0;
-        const beatBob = Math.sin(beatPhase * Math.PI) * 4;
 
         // Render enemies
         game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX, game.images, beatBob));
@@ -1945,6 +2005,9 @@ class Renderer {
         this.renderStoredNotes(ctx, game);
         this.renderFlickUpEruption(ctx, game);
 
+        // 着弾爆発アニメーション(剣士「ノーツの雨」・弓士「ノーツ弾き」共通)
+        this.renderExplosions(ctx, game);
+
         // Floating texts
         this.renderFloatingTexts(ctx);
 
@@ -1965,10 +2028,12 @@ class Renderer {
         ctx.restore();
     }
 
-    renderBackground(ctx, scrollX, w, h, images) {
+    renderBackground(ctx, scrollX, w, h, images, beatPhase = 0) {
         const groundSky = images && images[IMAGE_MANIFEST.background.groundSky];
         const sun = images && images[IMAGE_MANIFEST.background.sun];
         const tree = images && images[IMAGE_MANIFEST.background.tree];
+        // 拍の頭(phase=0)で基準サイズ、拍の半分(phase=0.5)で最も膨らむ/浮くように揺らす
+        const beatPulse = Math.sin(beatPhase * Math.PI * 2);
 
         if (groundSky) {
             const tileW = groundSky.width * (h / groundSky.height) * 0.6;
@@ -1977,15 +2042,21 @@ class Renderer {
                 ctx.drawImage(groundSky, x, 0, tileW, h);
             }
             if (sun) {
-                const sunW = 140, sunH = sunW * (sun.height / sun.width);
-                ctx.drawImage(sun, w - sunW - 80, 40, sunW, sunH);
+                // 太陽はリズムに合わせて中心位置を保ったまま拡大縮小する
+                const baseSunW = 140, baseSunH = baseSunW * (sun.height / sun.width);
+                const sunScale = 1 + beatPulse * 0.08;
+                const sunW = baseSunW * sunScale, sunH = baseSunH * sunScale;
+                const centerX = w - 80 - baseSunW / 2, centerY = 40 + baseSunH / 2;
+                ctx.drawImage(sun, centerX - sunW / 2, centerY - sunH / 2, sunW, sunH);
             }
             if (tree) {
-                const treeW = 90, treeH = treeW * (tree.height / tree.width);
-                const spacing = 220;
+                // 木を少し大きく表示し、リズムに合わせて縦に揺れさせる
+                const treeW = 150, treeH = treeW * (tree.height / tree.width);
+                const spacing = 260;
                 const toffset = -(scrollX * 0.5) % spacing;
+                const treeBob = beatPulse * 5;
                 for (let x = toffset - spacing; x < w + spacing; x += spacing) {
-                    ctx.drawImage(tree, x, CONSTANTS.GROUND_Y - treeH, treeW, treeH);
+                    ctx.drawImage(tree, x, CONSTANTS.GROUND_Y - treeH - treeBob, treeW, treeH);
                 }
             }
             return;
@@ -2898,6 +2969,28 @@ class GameController {
         this.updatePlayerList();
     }
 
+    // ホストがロビーの「開始」ボタンを押した時に呼ばれる。全員(ホスト含む)を
+    // キャラクター選択画面へ進める(この時点ではまだゲームは始まらない)
+    beginCharacterSelectPhase() {
+        Object.values(this.network.conns).forEach(conn => {
+            try { conn.send({ type: 'goToCharSelect' }); } catch (e) {}
+        });
+        this.showCharSelect('host');
+    }
+
+    // ホスト自身、または参加者からのキャラクター選択が届くたびに呼ばれる。
+    // ホスト自身を含む全員がキャラクターを決定していれば、そのままゲームを開始する
+    checkAllReadyAndMaybeStart() {
+        if (this.network.role !== 'host') return;
+        if (!this.selectedChar) return;
+        const allReady = Object.values(this.network.roster).every(p => p.charId);
+        if (allReady) {
+            this.startMultiplayer();
+        } else {
+            this.showWaitingScreen();
+        }
+    }
+
     showLobby() {
         this.hideAllScreens();
         document.getElementById('lobbyScreen').classList.remove('hidden');
@@ -3083,9 +3176,9 @@ class GameController {
         this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
 
         if (this.charSelectContext === 'host') {
-            // ホスト: 自分のキャラクターを決めただけではまだ開始しない。
-            // ロビーに戻り、「ゲーム開始」ボタンを押すまで参加者を待つ
-            this.showLobbyHostPanel();
+            // ホスト: 自分のキャラクターを決めただけでは、まだ全員が決定していない限り
+            // 開始しない。全員(ホスト含む)が決定済みなら、そのままゲームを開始する
+            this.checkAllReadyAndMaybeStart();
             return;
         }
 
@@ -3129,8 +3222,10 @@ class GameController {
             document.getElementById('connStatus').classList.remove('hidden');
             document.getElementById('connStatus').classList.add('host');
             document.getElementById('connStatus').textContent = 'HOST';
-            // ホスト自身もキャラクターを選ばないと開始できないようにする
-            this.showCharSelect('host');
+            // 部屋コードが見える状態のまま、参加者が集まるのを待つ
+            // (以前はここで即キャラクター選択へ進んでしまい、コードを共有する前に
+            // 画面が切り替わってしまっていた)
+            this.showLobbyHostPanel();
         });
         peer.on('connection', conn => this.onHostConnection(conn));
         peer.on('error', err => {
@@ -3168,6 +3263,7 @@ class GameController {
             } else if (data.type === 'selectChar') {
                 if (this.network.roster[conn.peer]) this.network.roster[conn.peer].charId = data.charId;
                 this.updatePlayerList();
+                this.checkAllReadyAndMaybeStart();
             } else if (data.type === 'playerState') {
                 this.network.remotePlayerStates[conn.peer] = data.state;
                 const puppet = this.players.find(p => p.id === conn.peer);
@@ -3239,7 +3335,9 @@ class GameController {
     onClientMessage(data) {
         if (!data || typeof data !== 'object') return;
         try {
-            if (data.type === 'gameStart') {
+            if (data.type === 'goToCharSelect') {
+                this.showCharSelect('client');
+            } else if (data.type === 'gameStart') {
                 this.difficulty = data.difficulty;
                 this.players = [];
                 this.localPlayer = new Player('p1', this.selectedChar, true);
@@ -3275,6 +3373,9 @@ class GameController {
             }
             e.x = es.x; e.y = es.y; e.hp = es.hp; e.maxHp = es.maxHp;
             e.dead = es.dead; e.falling = es.falling;
+            e.attackWarning = !!es.attackWarning;
+            e.isAttacking = !!es.isAttacking;
+            e.attackTimer = es.attackTimer;
             if (es.groundY !== undefined) e.groundY = es.groundY;
             nextEnemies.push(e);
         });
@@ -3302,9 +3403,14 @@ class GameController {
     // 参加者(クライアント)は自分自身の状態をホストへ送る(約10Hz)
     syncNetworkState() {
         if (this.network.role === 'host') {
+            // attackWarning/isAttacking/attackTimerも同期する。これが無いと、参加者側では
+            // 敵がいつ攻撃するか分からず、防御ノーツが一切生成されなくなってしまう
+            // (defendNoteSpawnedは各端末ローカルの状態のため同期しない。同期すると、
+            // ホストが既に自分の防御ノーツを出した時点で参加者側も出せなくなってしまう)
             const enemies = this.stage.enemies.map(e => ({
                 netId: e.netId, type: e.type, x: e.x, y: e.y, hp: e.hp, maxHp: e.maxHp,
                 dead: e.dead, falling: e.falling, groundY: e.groundY,
+                attackWarning: e.attackWarning, isAttacking: e.isAttacking, attackTimer: e.attackTimer,
             }));
             const players = [this.publicPlayerState(this.localPlayer, 'host')];
             Object.entries(this.network.remotePlayerStates).forEach(([id, s]) => {
@@ -3374,28 +3480,25 @@ class GameController {
         this.startGame(track);
     }
 
+    // 部屋コードのロビー画面(まだキャラクター選択前)の参加者一覧を更新する。
+    // 「開始」ボタンはここでは常に押せる(ホストが好きなタイミングで全員をキャラクター
+    // 選択へ進められる)。参加者の名前はネットワーク経由で届く(信頼できない)値のため、
+    // innerHTMLへの文字列埋め込みは避け、textContentで安全にDOMへ反映する
     updatePlayerList() {
         const list = document.getElementById('playerList');
         list.innerHTML = '';
-        const hostChar = this.selectedChar && CHARACTERS.find(c => c.id === this.selectedChar);
-        // 参加者の名前はネットワーク経由で届く(信頼できない)値のため、innerHTMLへの
-        // 文字列埋め込みは避け、textContentで安全にDOMへ反映する
-        const addTag = (label, value) => {
+        const addTag = (label) => {
             const div = document.createElement('div');
             div.className = 'player-tag';
-            div.textContent = `${label}: ${value}`;
+            div.textContent = label;
             list.appendChild(div);
         };
-        addTag('ホスト(あなた)', hostChar ? hostChar.name : '未選択');
+        addTag('ホスト(あなた)');
         Object.values(this.network.roster).forEach(p => {
-            const char = p.charId && CHARACTERS.find(c => c.id === p.charId);
-            addTag(String(p.name || '参加者'), char ? char.name : '選択中...');
+            addTag(String(p.name || '参加者'));
         });
-        const readyCount = (hostChar ? 1 : 0) + Object.values(this.network.roster).filter(p => p.charId).length;
         const total = 1 + Object.keys(this.network.roster).length;
-        document.getElementById('startMultiBtn').textContent = `ゲーム開始 (${readyCount}/${total})`;
-        // ホスト自身がキャラクターを選ぶまでは開始できない
-        document.getElementById('startMultiBtn').disabled = !hostChar;
+        document.getElementById('startMultiBtn').textContent = `開始(全員でキャラクター選択へ・現在${total}人)`;
     }
 
     // forcedTrack: LANマルチプレイでホストが選んだ曲を参加者側でも同じものにするため、
@@ -3624,7 +3727,9 @@ class GameController {
                 this.stage.totalScore += e.data.score;
             }
         });
-        this.audio.playAbilitySound();
+        // 通常のPerfect判定音(checkInput内で既に鳴っている)に重ねてここでも
+        // 能力音を鳴らすと、連打中は0.5拍おきに音が二重に重なって聞こえ、
+        // 音がズレているように感じる原因になっていたため、ここでは鳴らさない
     }
 
     // 剣士「上に弾くノーツ」: ノーツを打った分だけ画面下部への蓄積数を1増やす
@@ -3669,23 +3774,38 @@ class GameController {
             if (!n.hasHit && y >= CONSTANTS.GROUND_Y) {
                 n.hasHit = true;
                 const worldX = n.x + this.stage.scrollX;
-                let target = null;
-                this.stage.enemies.forEach(e => {
-                    if (e.dead || e.falling) return;
-                    if (Math.abs(e.x - worldX) < 40) target = e;
-                });
-                if (target) {
-                    const dmg = Math.floor(this.localPlayer.getDamage(16, 'perfect'));
-                    const actualDmg = this.dealEnemyDamage(target, dmg, 'sword');
-                    this.renderer.addParticle(n.x, CONSTANTS.GROUND_Y, target.data.color, 10);
-                    this.renderer.addFloatingText(n.x, CONSTANTS.GROUND_Y - 20, `${actualDmg}`, '#ff6b35', 16);
-                    if (target.dead) {
-                        this.stage.totalScore += target.data.score;
-                    }
-                }
+                // 地面に触れた瞬間に爆発する。着弾点に近いほどダメージが大きい範囲攻撃
+                this.resolveExplosionSplash(worldX, n.x, CONSTANTS.GROUND_Y, 100, 20, 'sword');
             }
             if (progress >= 1) this.eruptingNotes.splice(i, 1);
         }
+    }
+
+    // 剣士「ノーツの雨」・弓士「ノーツ弾き」共通の着弾爆発処理。爆発アニメーション+効果音を
+    // 出し、着弾点(worldX)に近い敵ほど大きいダメージを受ける範囲攻撃を行う。
+    // guaranteedKillTargetを指定すると、その敵だけは距離に関わらず必ず即死させる
+    // (弓士「ノーツ弾き」で着弾点ちょうど真ん中にいた敵が確定死亡する仕様のため)
+    resolveExplosionSplash(worldX, screenX, screenY, radius, maxDamageBase, dmgType, guaranteedKillTarget) {
+        this.stage.enemies.forEach(e => {
+            if (e.dead || e.falling) return;
+            if (e === guaranteedKillTarget) {
+                const actualDmg = this.dealEnemyDamage(e, e.hp + 9999, dmgType);
+                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#ff6b35', 18);
+                if (e.dead) this.stage.totalScore += e.data.score;
+                return;
+            }
+            const dist = Math.abs(e.x - worldX);
+            if (dist >= radius) return;
+            const falloff = 1 - dist / radius;
+            const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(maxDamageBase, 'perfect') * falloff));
+            const actualDmg = this.dealEnemyDamage(e, dmg, dmgType);
+            this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, e.data.color, 8);
+            this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#ff6b35', 16);
+            if (e.dead) this.stage.totalScore += e.data.score;
+        });
+        this.renderer.addExplosion(screenX, screenY, 1);
+        this.audio.playExplosionSound();
+        this.renderer.shake(5, 0.2);
     }
 
     // 魔法使いB「イベントノーツ」: 全てのノーツが種類を問わず「イベントノーツ」になり、
@@ -3732,9 +3852,10 @@ class GameController {
         }
     }
 
-    // 弓士B「ノーツ発射」: 打ったノーツが判定線から弾かれ、ランダムに選んだ敵へ飛んでいき
-    // 強攻撃を与える(最も近い敵固定ではない)。近接範囲攻撃・防御による被ダメ軽減といった
-    // 通常の効果は一切発生しない。攻撃の種類(色・威力)はノーツの種類によって変える
+    // 弓士B「ノーツ発射」: 打ったノーツが判定線から弾かれ、ランダムに選んだ敵へ飛んでいく。
+    // 着弾すると爆発アニメーション+効果音とともに炸裂し、着弾点ちょうど真ん中にいた敵は
+    // 確定死亡、周囲の敵も距離に応じたダメージを受ける範囲攻撃になる。
+    // 近接範囲攻撃・防御による被ダメ軽減といった通常の効果は一切発生しない
     resolveLaunchedNote(result) {
         const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling);
         this.audio.playSwordSound();
@@ -3744,10 +3865,7 @@ class GameController {
         const target = candidates[Math.floor(Math.random() * candidates.length)];
 
         const isSword = result.note.type === 'sword';
-        const baseDamage = isSword ? 20 : 16; // 強攻撃: 通常の発射(旧10/8)よりダメージを引き上げる
         const color = isSword ? '#ff6b35' : '#e74c3c';
-        const dmg = Math.floor(this.localPlayer.getDamage(baseDamage, result.judge));
-        const actualDmg = this.dealEnemyDamage(target, dmg, isSword ? 'sword' : 'ability');
 
         // 演出上の起点はプレイヤーではなく判定線(画面下部中央)にする
         const originX = CONSTANTS.CANVAS_WIDTH / 2;
@@ -3757,15 +3875,12 @@ class GameController {
             target.x - this.stage.scrollX, target.y - target.data.size / 2,
             color
         );
-        this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size, `${actualDmg}`, color, 18);
 
-        if (target.dead) {
-            this.stage.totalScore += target.data.score;
-            this.renderer.shake(4, 0.15);
-            this.renderer.addParticle(target.x - this.stage.scrollX, target.y - target.data.size / 2, '#ffd700', 20, 12);
-            this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size - 30,
-                `+${target.data.score}pts`, '#ffd700', 16);
-        }
+        // 着弾点ちょうど真ん中にいたtargetは確定死亡、周囲の敵は距離減衰ダメージを受ける
+        this.resolveExplosionSplash(
+            target.x, target.x - this.stage.scrollX, target.y - target.data.size / 2,
+            140, isSword ? 20 : 16, isSword ? 'sword' : 'ability', target
+        );
     }
 
     resolveSwordHit(result) {
@@ -3775,13 +3890,12 @@ class GameController {
         if (result.note && result.note.isGiant) {
             this.rhythm.resolveGiantHit();
             if (this.rhythm.giantNoteExploded) {
-                this.stage.enemies.forEach(e => {
-                    if (e.dead || e.falling) return;
-                    if (Math.abs(e.x - this.localPlayer.x) < 250) {
-                        this.dealEnemyDamage(e, this.localPlayer.getDamage(50, 'perfect'), 'ability');
-                    }
-                });
-                this.renderer.shake(8, 0.3);
+                // 2回叩いて壊れた瞬間、爆発アニメーション+効果音とともに炸裂する
+                // (着弾点=プレイヤーの位置に近いほどダメージが大きい範囲攻撃)
+                this.resolveExplosionSplash(
+                    this.localPlayer.x, this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40,
+                    250, 40, 'ability'
+                );
                 this.rhythm.giantNoteExploded = false;
                 this.rhythm.swordNotes = this.rhythm.swordNotes.filter(n => n !== this.rhythm.giantNote);
                 this.rhythm.giantNote = null;
@@ -3942,8 +4056,16 @@ class GameController {
         this.updateFlickUpEruption(dt);
 
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
+        // defendNoteSpawnedは各端末ローカルの状態(ネットワーク同期しない)。LANマルチプレイの
+        // 参加者側では、通常Enemy.startAttack()が行うリセットが自分の端末では実行されない
+        // (敵AIはホストのみが動かすため)ため、attackWarningがfalseになった瞬間に
+        // ここで代わりにリセットしておく(そうしないと次の攻撃予兆で防御ノーツが出せなくなる)
         if (!isRapidFire) this.stage.enemies.forEach(e => {
-            if (e.attackWarning && !e.defendNoteSpawned) {
+            if (!e.attackWarning) {
+                if (e.defendNoteSpawned) e.defendNoteSpawned = false;
+                return;
+            }
+            if (!e.defendNoteSpawned) {
                 const currentBeat = this.audio.getCurrentBeat();
                 const beatInterval = 60 / this.audio.bpm;
                 const rawTargetBeat = currentBeat + e.attackTimer * (this.audio.bpm / 60);
@@ -3966,16 +4088,11 @@ class GameController {
         // generateDefendNote)の中で、生成された瞬間にだけ判定される
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
-        // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
-        if (activeGimmick.special === 'giantNote') {
-            if (!this.rhythm.giantNote) {
-                const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
-                    Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
-                if (inRange) {
-                    this.rhythm.generateGiantNote(this.rhythm.findFreeBeat(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS)));
-                }
-            }
-        } else if (activeGimmick.special === 'rapidFire') {
+        // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）。
+        // 剣士B「巨大ノーツ」: 専用の生成タイミングは持たず、通常の攻撃バースト生成
+        // (下のelse節、startSwordBurst)の中でウイルスノーツと同様にランダムな1つを
+        // 巨大化させるだけなので、ここではgiantNote専用の分岐は不要
+        if (activeGimmick.special === 'rapidFire') {
             if (this.rhythm.rapidFireNextBeat === null) {
                 // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降はカウンターノーツと
                 // 攻撃ノーツが半拍ずつずれて交互に休みなく続く
