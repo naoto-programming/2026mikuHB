@@ -40,11 +40,11 @@ const CHARACTERS = [
 
 const CHARACTER_GIMMICKS = {
     swordsman: [{ special: 'flickUpNote' }, { special: 'giantNote' }],
-    archer: [{ special: 'corruptedNote' }, { special: 'wideWindow', judgeWindowMult: 1.6 }],
+    archer: [{ special: 'corruptedNote' }, { special: 'launchNote' }],
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
-    mage: [{ special: 'driftingJudgeLine' }, { special: 'erraticApproach', judgeWindowMult: 0.7 }],
+    mage: [{ special: 'driftingJudgeLine' }, { special: 'arrowCue' }],
 };
 const GIMMICK_NORMAL_SECONDS = 20;
 const GIMMICK_SPECIAL_SECONDS = 8;
@@ -476,6 +476,7 @@ class RhythmSystem {
             hit: false,
             missed: false,
         }));
+        this.maybeCorruptOnSpawn(this.swordNotes, gimmick.special === 'corruptedNote');
     }
 
     startAbility(beats, gimmick) {
@@ -497,27 +498,32 @@ class RhythmSystem {
             missed: false,
             index,
         }));
+        this.maybeCorruptOnSpawn(this.abilityNotes, gimmick.special === 'corruptedNote');
     }
 
-    generateDefendNote(beat) {
-        this.defendNotes.push({
+    generateDefendNote(beat, gimmick) {
+        const note = {
             id: this.noteId++,
             beat: beat,
             type: 'defend',
             hit: false,
             missed: false,
-        });
+        };
+        this.defendNotes.push(note);
+        this.maybeCorruptOnSpawn([note], !!gimmick && gimmick.special === 'corruptedNote');
     }
 
-    generateFlickUpNote(beat) {
-        this.defendNotes.push({
+    generateFlickUpNote(beat, gimmick) {
+        const note = {
             id: this.noteId++,
             beat: beat,
             type: 'defend',
             hit: false,
             missed: false,
             flickUp: true,
-        });
+        };
+        this.defendNotes.push(note);
+        this.maybeCorruptOnSpawn([note], !!gimmick && gimmick.special === 'corruptedNote');
     }
 
     generateGiantNote(beat) {
@@ -570,20 +576,25 @@ class RhythmSystem {
         return pools.some(pool => pool.some(n => n.corrupted && !n.hit && !n.missed));
     }
 
-    markRandomNoteCorrupted() {
-        const currentBeat = this.audio.getCurrentBeat();
+    // noteを感染させ、同じbeatに別の(打たなければならない)ノーツがあればそれも道連れで
+    // 感染させる（片方だけ選ぶと強制ミスになりコンボが途切れてしまうため）
+    markNoteCorrupted(note) {
+        note.corrupted = true;
         const allActive = [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes];
-        const candidates = allActive.filter(n => !n.hit && !n.missed && !n.corrupted && n.beat > currentBeat);
-        if (candidates.length === 0) return false;
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        pick.corrupted = true;
-        // 同じbeatに別の(打たなければならない)ノーツがあると、片方を選べばもう片方が
-        // 強制ミスになりコンボが途切れてしまうため、同じタイミングのノーツも全て感染させる
         allActive.forEach(n => {
-            if (n !== pick && !n.hit && !n.missed && n.beat === pick.beat) {
+            if (n !== note && !n.hit && !n.missed && n.beat === note.beat) {
                 n.corrupted = true;
             }
         });
+    }
+
+    // 弓士A「ウイルス化」: ノーツが画面に出現する前、生成されたその瞬間にだけ感染判定を行う。
+    // 既に流れている(見えている)ノーツを後から感染させることはしない
+    // (判定直前で切り替わると反応不可能になるため)
+    maybeCorruptOnSpawn(newNotes, gimmickActive) {
+        if (!gimmickActive || this.hasCorruptedNote() || !newNotes || newNotes.length === 0) return false;
+        const pick = newNotes[Math.floor(Math.random() * newNotes.length)];
+        this.markNoteCorrupted(pick);
         return true;
     }
 
@@ -773,15 +784,7 @@ class RhythmSystem {
             const dist = n.beat - currentBeat;
             return dist > -0.5 && dist < visibleBeats && !n.hit;
         }).map(n => {
-            // 魔法使いB「不規則接近」: ノーツごとに見た目の接近速度が不規則に揺れ動く
-            // (常に正の値なので進行方向は変わらず、beat===currentBeatで必ずoffset=0になる
-            // ため、実際の到達タイミング自体は変化しない。見た目だけを読みにくくする)
-            let effectiveSpeedMult = speedMult;
-            if (gimmick.special === 'erraticApproach') {
-                const wobble = 0.3 + 1.4 * (0.5 + 0.5 * Math.sin(n.id * 5.7 + rawCurrentBeat * 2.3));
-                effectiveSpeedMult = speedMult * wobble;
-            }
-            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * effectiveSpeedMult * beatInterval);
+            const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
             const base = 300 + lineOffset;
             const approachesFromDefendSide = n.type === 'defend';
             return {
@@ -1419,6 +1422,8 @@ class Renderer {
         this.meteorNotes = [];
         this.flyingArrows = [];
         this.rangeIndicators = [];
+        this.edgeDashes = [];
+        this.launchedNotes = [];
         this.shakeTimer = 0;
         this.shakeIntensity = 0;
         this.bgStars = [];
@@ -1549,6 +1554,75 @@ class Renderer {
         }
     }
 
+    // 盗賊「連打」ギミック中、攻撃ノーツをPerfectで叩いた時の演出用。
+    // プレイヤーの実座標は動かさず、画面端から端まで駆け抜ける光の筋だけを描く(見た目だけの演出)
+    addEdgeDash(y, dir, color) {
+        this.edgeDashes.push({ y, dir, color, t: 0 });
+    }
+
+    renderEdgeDashes(ctx) {
+        const duration = 0.35;
+        const w = this.canvas.width;
+        for (let i = this.edgeDashes.length - 1; i >= 0; i--) {
+            const d = this.edgeDashes[i];
+            d.t += 1 / 60;
+            const progress = Math.min(1, d.t / duration);
+            const alpha = 0.8 * (1 - progress);
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = d.color;
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(0, d.y);
+            ctx.lineTo(w, d.y);
+            ctx.stroke();
+            // 進行方向へ駆け抜ける光の玉
+            const headX = d.dir >= 0 ? w * progress : w * (1 - progress);
+            ctx.globalAlpha = Math.min(1, alpha * 1.5);
+            ctx.fillStyle = d.color;
+            ctx.beginPath();
+            ctx.arc(headX, d.y, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+            if (progress >= 1) this.edgeDashes.splice(i, 1);
+        }
+    }
+
+    // 弓士B「ノーツ発射」: 打ったノーツが上に弾かれてから最も近い敵へ弧を描いて飛んでいく演出
+    // (ダメージ自体は着弾を待たず、命中判定と同時に即座に適用済み。これは見た目だけの演出)
+    addLaunchedNote(fromX, fromY, toX, toY, color) {
+        this.launchedNotes.push({ fromX, fromY, toX, toY, color, t: 0 });
+    }
+
+    renderLaunchedNotes(ctx) {
+        const duration = 0.35;
+        const kickPhase = 0.3;
+        const kickHeight = 50;
+        for (let i = this.launchedNotes.length - 1; i >= 0; i--) {
+            const n = this.launchedNotes[i];
+            n.t += 1 / 60;
+            const progress = Math.min(1, n.t / duration);
+            let x, y;
+            if (progress < kickPhase) {
+                const p = progress / kickPhase;
+                x = n.fromX;
+                y = n.fromY - kickHeight * p;
+            } else {
+                const p = (progress - kickPhase) / (1 - kickPhase);
+                x = n.fromX + (n.toX - n.fromX) * p;
+                const arc = Math.sin(Math.PI * p) * 40;
+                y = (n.fromY - kickHeight) + (n.toY - (n.fromY - kickHeight)) * p - arc;
+            }
+            ctx.save();
+            ctx.fillStyle = n.color;
+            ctx.beginPath();
+            ctx.arc(x, y, 11, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+            if (progress >= 1) this.launchedNotes.splice(i, 1);
+        }
+    }
+
     addFloatingText(x, y, text, color, size = 22) {
         this.floatingTexts.push({ x, y, text, color, size, life: 1, vy: -2.5, alpha: 1 });
     }
@@ -1628,6 +1702,12 @@ class Renderer {
 
         // 能力の効果範囲を分かりやすく表示する
         this.renderRangeIndicators(ctx);
+
+        // 盗賊「連打」Perfect時の画面端から端までの駆け抜け演出
+        this.renderEdgeDashes(ctx);
+
+        // 弓士B「ノーツ発射」で打ったノーツが敵へ飛んでいく演出
+        this.renderLaunchedNotes(ctx);
 
         // Floating texts
         this.renderFloatingTexts(ctx);
@@ -2297,6 +2377,37 @@ class Renderer {
         }
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
+            // 魔法使いB「矢印キュー」: ノーツ自体は完全に非表示にし、判定のちょうど半拍前になった
+            // 瞬間だけ判定線の上に方向矢印を出して、どちら側から来るノーツかを伝える
+            if (gimmick.special === 'arrowCue') {
+                const beatsUntilHit = note.beat - currentBeat;
+                if (beatsUntilHit > 0 && beatsUntilHit <= 0.5) {
+                    const fromLeft = note.type === 'defend';
+                    const arrowX = targetX;
+                    const arrowY = barY - 26;
+                    const color = note.type === 'defend' ? '#e74c3c' : note.type === 'ability' ? '#4a90d9' : '#ff6b35';
+                    ctx.save();
+                    ctx.fillStyle = color;
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 12;
+                    ctx.beginPath();
+                    if (fromLeft) {
+                        // 左から来て右へ進む: 右向き矢印
+                        ctx.moveTo(arrowX - 18, arrowY - 14);
+                        ctx.lineTo(arrowX + 18, arrowY);
+                        ctx.lineTo(arrowX - 18, arrowY + 14);
+                    } else {
+                        // 右から来て左へ進む: 左向き矢印
+                        ctx.moveTo(arrowX + 18, arrowY - 14);
+                        ctx.lineTo(arrowX - 18, arrowY);
+                        ctx.lineTo(arrowX + 18, arrowY + 14);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.restore();
+                }
+                return;
+            }
             if (centerJudgeCircle) {
                 const angle = (note.id % 8) * (Math.PI / 4);
                 const spawnRadius = 420;
@@ -2331,8 +2442,7 @@ class Renderer {
                 : 0;
 
             let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
-            // 弓士B「判定拡大」: 判定が広くなったことが伝わるよう、ノーツを一回り大きく見せる
-            const size = note.isGiant ? 35 + note.giantStage * 15 : (gimmick.special === 'wideWindow' ? 46 : 35);
+            const size = note.isGiant ? 35 + note.giantStage * 15 : 35;
             ny += laneOffset;
             let shuffledNx = nx;
 
@@ -2849,7 +2959,14 @@ class GameController {
         // 盗賊B「連打」: 発動中はカウンターも攻撃もせず、Perfectで打てた数だけを数える。
         // 実際の攻撃はギミック終了直後にまとめて発動する。
         if (result.note.rapidFireNote) {
-            if (result.judge === 'perfect') this.rapidFirePerfectCount++;
+            if (result.judge === 'perfect') {
+                this.rapidFirePerfectCount++;
+                // 攻撃ノーツをPerfectで叩いた時だけ、画面端から端までの駆け抜け演出を出す
+                // (実際のプレイヤー座標は動かさない、見た目だけの演出)
+                if (result.note.type === 'sword') {
+                    this.renderer.addEdgeDash(this.localPlayer.y - 40, this.localPlayer.facing, '#ff6b35');
+                }
+            }
             return;
         }
 
@@ -2862,6 +2979,14 @@ class GameController {
                 this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
                     `-${Math.floor(dmg)}`, '#e74c3c', 16);
             }
+            return;
+        }
+
+        // 弓士B「ノーツ発射」: ノーツはいつも通り打つが、通常の効果(近接範囲攻撃・防御による
+        // 被ダメ軽減)は一切発生せず、代わりにノーツ自体が最も近い敵へ飛んでいき単体攻撃を与える。
+        // 攻撃の種類はノーツの種類(sword/defend)によって変える
+        if (gimmick.special === 'launchNote' && (result.note.type === 'sword' || result.note.type === 'defend')) {
+            if (result.judge !== 'miss') this.resolveLaunchedNote(result);
             return;
         }
 
@@ -2927,6 +3052,41 @@ class GameController {
             return !!this.rhythm.giantNote;
         }
         return false;
+    }
+
+    // 弓士B「ノーツ発射」: 打ったノーツが上に弾かれてから最も近い敵へ飛んでいき、単体攻撃を与える。
+    // 近接範囲攻撃・防御による被ダメ軽減といった通常の効果は一切発生しない。
+    // 攻撃の種類(色・威力)はノーツの種類によって変える
+    resolveLaunchedNote(result) {
+        let nearest = null, nearestDist = Infinity;
+        this.stage.enemies.forEach(e => {
+            if (e.dead) return;
+            const dist = Math.abs(e.x - this.localPlayer.x);
+            if (dist < nearestDist) { nearestDist = dist; nearest = e; }
+        });
+        this.audio.playSwordSound();
+        if (!nearest || nearestDist >= this.localPlayer.getAttackRange()) return;
+
+        const isSword = result.note.type === 'sword';
+        const baseDamage = isSword ? 10 : 8;
+        const color = isSword ? '#ff6b35' : '#e74c3c';
+        const dmg = Math.floor(this.localPlayer.getDamage(baseDamage, result.judge));
+        const actualDmg = nearest.takeDamage(dmg, isSword ? 'sword' : 'ability');
+
+        this.renderer.addLaunchedNote(
+            this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40,
+            nearest.x - this.stage.scrollX, nearest.y - nearest.data.size / 2,
+            color
+        );
+        this.renderer.addFloatingText(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size, `${actualDmg}`, color, 18);
+
+        if (nearest.dead) {
+            this.stage.totalScore += nearest.data.score;
+            this.renderer.shake(4, 0.15);
+            this.renderer.addParticle(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size / 2, '#ffd700', 20, 12);
+            this.renderer.addFloatingText(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size - 30,
+                `+${nearest.data.score}pts`, '#ffd700', 16);
+        }
     }
 
     resolveSwordHit(result) {
@@ -3104,9 +3264,9 @@ class GameController {
                 const activeGimmickSpecial = this.localPlayer.getActiveGimmick().special;
                 if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
                     if (activeGimmickSpecial === 'flickUpNote') {
-                        this.rhythm.generateFlickUpNote(defendBeat);
+                        this.rhythm.generateFlickUpNote(defendBeat, activeGimmick);
                     } else {
-                        this.rhythm.generateDefendNote(defendBeat);
+                        this.rhythm.generateDefendNote(defendBeat, activeGimmick);
                     }
                 }
 
@@ -3115,11 +3275,9 @@ class GameController {
             }
         });
 
-        // 弓士A「ウイルス化」: 攻撃/能力/カウンターノーツのうち既存の1つを感染させる
-        // (一度に1つまで、専用の独立したノーツは生成しない)
-        if (activeGimmick.special === 'corruptedNote' && !this.rhythm.hasCorruptedNote()) {
-            this.rhythm.markRandomNoteCorrupted();
-        }
+        // 弓士A「ウイルス化」: ノーツの感染は各ノーツの生成関数(startSwordBurst/startAbility/
+        // generateDefendNote/generateFlickUpNote)の中で、生成された瞬間にだけ判定される
+        // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
         if (activeGimmick.special === 'giantNote') {
@@ -3255,21 +3413,22 @@ class GameController {
         if (this.thiefRapidFirePayout) {
             const currentBeat = this.audio.getCurrentBeat();
             if (currentBeat >= this.thiefRapidFirePayout.nextBeat) {
+                // 払い出しは1回につき1体単体への攻撃(まとめて範囲攻撃にはしない)、
+                // 威力もやや控えめにする
                 const range = this.localPlayer.getAttackRange();
-                const dmg = Math.floor(this.localPlayer.getDamage(10, 'perfect') * 1.2);
-                const targets = this.stage.enemies.filter(e => !e.dead && Math.abs(e.x - this.localPlayer.x) < range);
+                const dmg = Math.floor(this.localPlayer.getDamage(10, 'perfect') * 0.9);
                 let nearest = null, nearestDist = Infinity;
-                targets.forEach(e => {
-                    e.takeDamage(dmg, 'ability');
-                    this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size/2, '#9b59b6', 8);
-                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${dmg}`, '#9b59b6', 18);
+                this.stage.enemies.forEach(e => {
+                    if (e.dead) return;
                     const dist = Math.abs(e.x - this.localPlayer.x);
                     if (dist < nearestDist) { nearestDist = dist; nearest = e; }
                 });
-                if (nearest) {
+                if (nearest && nearestDist < range) {
+                    nearest.takeDamage(dmg, 'ability');
+                    this.renderer.addParticle(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size/2, '#9b59b6', 8);
+                    this.renderer.addFloatingText(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size, `${dmg}`, '#9b59b6', 18);
                     this.localPlayer.perfectDash(Math.sign(nearest.x - this.localPlayer.x) || this.localPlayer.facing);
                 }
-                this.renderer.addRangeCircle(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, range, '#9b59b6');
                 this.audio.playAbilitySound();
                 this.thiefRapidFirePayout.remaining--;
                 this.thiefRapidFirePayout.nextBeat += 0.25;

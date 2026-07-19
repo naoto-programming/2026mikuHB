@@ -22,32 +22,54 @@ function makeAudio() {
     return audio;
 }
 
-// markRandomNoteCorruptedは既存の攻撃/能力/カウンターノーツの1つに感染フラグを立てる
-// (専用の独立したノーツを新たに生成するわけではない)
+// 弓士A「ウイルス化」: ノーツが生成される瞬間にだけ、その新規ノーツ群の1つに感染フラグを
+// 立てる(専用の独立したノーツを新たに生成するわけではない)。ギミックが有効でなければ感染しない
 const audio = makeAudio();
 const rhythm = new RhythmSystem(audio);
-rhythm.startSwordBurst(4, {});
-const baseCount = rhythm.swordNotes.length;
-if (!rhythm.markRandomNoteCorrupted()) throw new Error('markRandomNoteCorrupted should succeed when candidate notes exist');
-if (rhythm.swordNotes.length !== baseCount) throw new Error('markRandomNoteCorrupted should not create a new note, only flag an existing one');
-if (!rhythm.swordNotes.some(n => n.corrupted)) throw new Error('one of the existing sword notes should now be flagged corrupted');
-if (!rhythm.hasCorruptedNote()) throw new Error('hasCorruptedNote should report true once a note is corrupted');
+rhythm.startSwordBurst(4, {}); // ギミック無効時は感染しない
+if (rhythm.hasCorruptedNote()) throw new Error('spawning notes without the corruptedNote gimmick active should never corrupt a note');
 
-// 既に感染ノーツがある間は、追加でもう1つ感染させたりはしない（呼び出し側がhasCorruptedNoteで防ぐ）
-const beatInterval = 60 / audio.bpm;
-const corrupted = rhythm.swordNotes.find(n => n.corrupted);
-audio.ctx.currentTime = corrupted.beat * beatInterval;
-const result = rhythm.checkInputAny({});
+const audioB = makeAudio();
+const rhythmB = new RhythmSystem(audioB);
+rhythmB.startSwordBurst(4, { special: 'corruptedNote' });
+const baseCount = rhythmB.swordNotes.length;
+if (rhythmB.swordNotes.length !== baseCount) throw new Error('spawning with the gimmick active should not create a new note, only flag an existing one');
+if (!rhythmB.swordNotes.some(n => n.corrupted)) throw new Error('one of the newly spawned sword notes should now be flagged corrupted');
+if (!rhythmB.hasCorruptedNote()) throw new Error('hasCorruptedNote should report true once a note is corrupted');
+
+// 既に感染ノーツが残っている間は、別のノーツ生成(防御ノーツ等、既存ノーツを上書きしない生成)が
+// 起きても追加でもう1つ感染させたりはしない
+rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 10, { special: 'corruptedNote' });
+const totalCorrupted = rhythmB.swordNotes.filter(n => n.corrupted).length + rhythmB.defendNotes.filter(n => n.corrupted).length;
+if (totalCorrupted !== 1) {
+    throw new Error('only one note should ever be corrupted at a time while an existing corrupted note remains unresolved, got ' + totalCorrupted);
+}
+
+// checkInputAnyは感染ノーツを元の種別のまま通常通り判定する
+const beatInterval = 60 / audioB.bpm;
+const corrupted = rhythmB.swordNotes.find(n => n.corrupted);
+audioB.ctx.currentTime = corrupted.beat * beatInterval;
+const result = rhythmB.checkInputAny({});
 if (!result || !result.note.corrupted) throw new Error('checkInputAny should resolve the corrupted note like any other note of its type, got ' + JSON.stringify(result));
 if (result.note.type !== 'sword') throw new Error('a corrupted note keeps its original underlying type (sword/ability/defend), it is not a separate note type');
+
+// 出現済み(既に画面に流れている)ノーツを後から感染させることはない。
+// 出現時にギミックが無効だったノーツは、その後ギミックが有効になっても遡って感染しない
+const audioC = makeAudio();
+const rhythmC = new RhythmSystem(audioC);
+rhythmC.generateDefendNote(2); // ギミック無効時に生成
+rhythmC.generateDefendNote(3, { special: 'corruptedNote' }); // 有効になった後に生成
+if (rhythmC.defendNotes[0].corrupted) throw new Error('a note spawned before the gimmick was active must never become corrupted retroactively');
+if (!rhythmC.defendNotes[1].corrupted) throw new Error('a note spawned while the gimmick is active should be corrupted at spawn time');
 
 // 同じbeatに別のノーツがあると、片方だけ選ぶと強制ミスになってしまうため、
 // 同じタイミングのノーツも道連れで感染する
 const audio2 = makeAudio();
 const rhythm2 = new RhythmSystem(audio2);
-rhythm2.swordNotes.push({ id: rhythm2.noteId++, beat: 4, type: 'sword', hit: false, missed: false });
+const sameBeatNote = { id: rhythm2.noteId++, beat: 4, type: 'sword', hit: false, missed: false };
+rhythm2.swordNotes.push(sameBeatNote);
 rhythm2.abilityNotes.push({ id: rhythm2.noteId++, beat: 4, type: 'ability', hit: false, missed: false });
-rhythm2.markRandomNoteCorrupted();
+rhythm2.markNoteCorrupted(sameBeatNote);
 if (!rhythm2.swordNotes[0].corrupted || !rhythm2.abilityNotes[0].corrupted) {
     throw new Error('notes sharing the same beat as the corrupted note should also become corrupted, so there is no forced miss');
 }

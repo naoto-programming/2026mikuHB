@@ -303,3 +303,43 @@
             70% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
             100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
         }
+
+        /* スマホ向けレイアウト: 縦画面の狭い横幅・横画面の低い縦幅どちらでも
+           ゲーム画面(16:9)を歪ませずに収め、HUDやメニューのUIが画面からはみ出さないよう
+           折り返し・縮小させる */
+        @media (max-width: 700px), (max-height: 500px) {
+            #gameContainer {
+                width: min(100vw, calc(100vh * 16 / 9), 1200px);
+                height: auto;
+                border-width: 1px;
+            }
+            #hud {
+                top: 4px; left: 4px; right: 4px;
+                flex-wrap: wrap;
+                gap: 4px;
+                justify-content: center;
+            }
+            .hud-panel {
+                min-width: 54px;
+                padding: 4px 7px;
+            }
+            .hud-label { font-size: 0.55em; letter-spacing: 0.5px; }
+            .hud-value { font-size: 0.95em; }
+            .hp-bar { width: 60px; }
+            #bottomHud { bottom: 10%; width: 92%; gap: 5px; }
+            .combo-count { font-size: 2em; }
+            .combo-label { font-size: 0.75em; letter-spacing: 1.5px; }
+            .tutorial-box { font-size: 0.65em; padding: 6px 12px; white-space: normal; text-align: center; }
+
+            .screen { padding: 10px; }
+            h1 { font-size: 1.8em; letter-spacing: 2px; margin-bottom: 6px; }
+            h2 { font-size: 1.3em; margin-bottom: 12px; }
+            .subtitle { font-size: 0.85em; margin-bottom: 16px; }
+            .btn { padding: 10px 20px; margin: 6px; font-size: 1em; }
+            .char-card { width: 92px; padding: 10px; }
+            .char-card .char-name { font-size: 1em; }
+            .char-card .char-desc { font-size: 0.7em; }
+            .upgrade-card { width: 46vw; max-width: 150px; padding: 12px; margin: 6px; }
+            .howto-text { font-size: 0.85em; max-width: 100%; }
+            input[type="text"] { width: 220px; }
+        }
