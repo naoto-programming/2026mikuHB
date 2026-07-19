@@ -4,7 +4,7 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { StageManager, Enemy, CONSTANTS } = globalThis.GameLogic;
+const { StageManager, Enemy, CONSTANTS, applyAbility, Player } = globalThis.GameLogic;
 
 // デフォルトではspawnDelay/hueShift/brightnessShiftは中立値
 const e2 = new Enemy('normal', 100, 600, 1);
@@ -45,5 +45,24 @@ stage.enemies.forEach(en => {
     if (en.brightnessShift < 0.85 || en.brightnessShift >= 1.15) throw new Error('brightnessShift should be within [0.85,1.15), got ' + en.brightnessShift);
 });
 if (delays.size < 2) throw new Error('spawnDelay should vary across enemies in the same wave, not be identical');
+
+// 落下中(falling=true)の敵はまだ「敵」として扱われず、攻撃対象にもダメージ対象にもならない
+const fallingEnemy = new Enemy('normal', 0, -400, 1);
+fallingEnemy.falling = true;
+fallingEnemy.groundY = 600;
+const hpBefore = fallingEnemy.hp;
+const dmgResult = fallingEnemy.takeDamage(9999, 'sword');
+if (dmgResult !== 0) throw new Error('takeDamage should return 0 while an enemy is still falling, got ' + dmgResult);
+if (fallingEnemy.hp !== hpBefore) throw new Error('a falling enemy should take no damage until it lands');
+if (fallingEnemy.dead) throw new Error('a falling enemy should not be killable while still falling');
+
+const player = new Player('p1', 'swordsman', true);
+const outcome = applyAbility('swordsman', 1, player, [fallingEnemy], 0);
+if (outcome.hits.length !== 0) throw new Error('abilities should never target an enemy that is still falling, got ' + outcome.hits.length + ' hits');
+
+// 着地後(falling=false)は通常通り攻撃対象・ダメージ対象になる
+fallingEnemy.falling = false;
+const outcomeAfterLanding = applyAbility('swordsman', 1, player, [fallingEnemy], 0);
+if (outcomeAfterLanding.hits.length !== 1) throw new Error('once landed, the enemy should be a normal valid target again');
 
 console.log('ENEMY WAVE VARIANCE OK');

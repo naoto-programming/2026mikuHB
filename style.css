@@ -190,6 +190,16 @@
         .hp-fill.mid { background: #f39c12; }
         .hp-fill.low { background: #e74c3c; }
 
+        /* 固有ギミック発動などのポップアップ通知は画面上部中央(HUDパネルの下)に表示する */
+        #topNotice {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 16;
+            pointer-events: none;
+        }
+
         #bottomHud {
             position: absolute;
             left: 50%;
@@ -326,6 +336,7 @@
             .hud-label { font-size: 0.55em; letter-spacing: 0.5px; }
             .hud-value { font-size: 0.95em; }
             .hp-bar { width: 60px; }
+            #topNotice { top: 46px; max-width: 92%; }
             #bottomHud { bottom: 10%; width: 92%; gap: 5px; }
             .combo-count { font-size: 2em; }
             .combo-label { font-size: 0.75em; letter-spacing: 1.5px; }

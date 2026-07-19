@@ -833,7 +833,8 @@ class RhythmSystem {
 // destructure of the same name ("Can't create duplicate variable in eval").
 const applyAbility = function(charId, ratio, player, enemies, playerX) {
     const power = 0.4 + ratio * 0.6; // 全Miss:40%, 全成功:100%
-    const alive = enemies.filter(e => !e.dead);
+    // 上空から落下中の敵はまだ「敵」として扱わない(着地するまで攻撃対象・ターゲットにしない)
+    const alive = enemies.filter(e => !e.dead && !e.falling);
     const nearby = alive.filter(e => Math.abs(e.x - playerX) < 250);
     const result = { charId, power, hits: [] };
 
@@ -1046,17 +1047,11 @@ class Player {
         } else if (!this.isAttacking && !this.isUsingAbility && this.pulseTimer <= 0) {
             let nearest = null, nearestDist = Infinity;
             (enemies || []).forEach(e => {
-                if (e.dead) return;
+                if (e.dead || e.falling) return;
                 const dist = Math.abs(e.x - this.x);
                 if (dist < nearestDist) { nearestDist = dist; nearest = e; }
             });
 
-            const centerX = scrollX + CONSTANTS.CANVAS_WIDTH / 2;
-            const attackRange = this.getAttackRange();
-            let targetX = centerX;
-            if (nearest && nearestDist < attackRange * 4) {
-                targetX = this.x + Math.sign(nearest.x - this.x) * attackRange * 0.5;
-            }
             if (nearest) {
                 // 敵と重なるほど近いと差分が0付近で揺れ動き、向きが毎フレーム反転してしまう
                 // ため、はっきり離れている時だけ向きを更新する(不感帯)
@@ -1064,6 +1059,16 @@ class Player {
                 if (Math.abs(dx) > 15) {
                     this.facing = Math.sign(dx);
                 }
+            }
+
+            const centerX = scrollX + CONSTANTS.CANVAS_WIDTH / 2;
+            const attackRange = this.getAttackRange();
+            let targetX = centerX;
+            if (nearest && nearestDist < attackRange * 4) {
+                // ここでもMath.sign(nearest.x - this.x)を毎フレーム独立に計算すると、
+                // 敵と重なった瞬間に符号が反転を繰り返しプレイヤーがプルプルと震えてしまう。
+                // 既に不感帯で安定させたfacingを使うことで、向きが安定してから移動目標を決める
+                targetX = this.x + this.facing * attackRange * 0.5;
             }
 
             const toTarget = targetX - this.x;
@@ -1311,7 +1316,7 @@ class Enemy {
         let target = null;
         let lowestRatio = 1;
         (allEnemies || []).forEach(e => {
-            if (e === this || e.dead || e.hp >= e.maxHp) return;
+            if (e === this || e.dead || e.falling || e.hp >= e.maxHp) return;
             const ratio = e.hp / e.maxHp;
             if (ratio < lowestRatio) { lowestRatio = ratio; target = e; }
         });
@@ -1321,7 +1326,9 @@ class Enemy {
     }
 
     takeDamage(dmg, type = 'normal') {
-        if (this.dead) return 0;
+        // 上空から落下中は、まだ「敵」として着地していないため攻撃を受け付けない
+        // (着地した瞬間から通常のダメージ処理が有効になる)
+        if (this.dead || this.falling) return 0;
         if (this.resistances[type]) dmg *= this.resistances[type];
         if (this.data.defense && type === 'sword') dmg *= 0.5;
 
@@ -1413,7 +1420,7 @@ class StageManager {
     getNearbyEnemyDamage(playerX, radius) {
         let total = 0;
         this.enemies.forEach(e => {
-            if (e.dead) return;
+            if (e.dead || e.falling) return;
             if (Math.abs(e.x - playerX) < radius) total += e.atk;
         });
         return total;
@@ -2650,6 +2657,8 @@ class GameController {
         this.rapidFirePerfectCount = 0;
         this.rapidFireWasActive = false;
         this.thiefRapidFirePayout = null;
+        this.rapidFireDashDir = 1;
+        this.rapidFireSweepHitIds = null;
         this.tutorialBoxTimer = null;
         this.gimmickIndicatorTimer = null;
         this.gimmickIndicatorWasSpecial = false;
@@ -2881,6 +2890,7 @@ class GameController {
         document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
         document.getElementById('hud').classList.add('hidden');
         document.getElementById('bottomHud').classList.add('hidden');
+        document.getElementById('topNotice').classList.add('hidden');
         this.audio.stopGameOverLoop();
         if (this.latencyTestActive) {
             this.latencyTestActive = false;
@@ -2973,6 +2983,7 @@ class GameController {
         this.hideAllScreens();
         document.getElementById('hud').classList.remove('hidden');
         document.getElementById('bottomHud').classList.remove('hidden');
+        document.getElementById('topNotice').classList.remove('hidden');
 
         this.rhythm.reset();
         document.getElementById('comboCount').textContent = '0';
@@ -2983,6 +2994,8 @@ class GameController {
         this.rapidFirePerfectCount = 0;
         this.rapidFireWasActive = false;
         this.thiefRapidFirePayout = null;
+        this.rapidFireDashDir = 1;
+        this.rapidFireSweepHitIds = null;
 
         // 操作説明のポップアップは最初の1回だけ表示し、時間経過で消す
         // (ステージ切り替えのたびにstartGame()が呼ばれるが、2回目以降は既にタイマー済みなので再表示しない)
@@ -3041,12 +3054,14 @@ class GameController {
         if (result.note.rapidFireNote) {
             if (result.judge === 'perfect') {
                 this.rapidFirePerfectCount++;
-                // 攻撃ノーツをPerfectで叩いた時だけ、実際に画面端から端まで高速ダッシュさせる
-                // (プレイヤーの実座標も動かす。見た目の光の筋も合わせて出す)
+                // 攻撃ノーツをPerfectで叩いた時だけ、実際に画面端から端まで高速ダッシュさせる。
+                // 1回目は片方の端へ、2回目は逆の端へ…と左右交互に片道ダッシュする(往復しない)
                 if (result.note.type === 'sword') {
-                    const dir = this.localPlayer.facing;
-                    this.localPlayer.edgeDash(dir);
-                    this.renderer.addEdgeDash(this.localPlayer.y - 40, dir, '#ff6b35');
+                    this.rapidFireDashDir = -this.rapidFireDashDir;
+                    this.localPlayer.edgeDash(this.rapidFireDashDir);
+                    this.renderer.addEdgeDash(this.localPlayer.y - 40, this.rapidFireDashDir, '#ff6b35');
+                    // ダッシュの道中ですれ違った敵に弱攻撃を入れる(このダッシュ中の重複ヒットは防ぐ)
+                    this.rapidFireSweepHitIds = new Set();
                 }
             }
             return;
@@ -3091,7 +3106,7 @@ class GameController {
             // 上に弾くノーツ: PerfectかGreatで超カウンター(周囲の敵に大ダメージ+スタン)
             if (result.note.flickUp && (result.judge === 'perfect' || result.judge === 'great')) {
                 this.stage.enemies.forEach(e => {
-                    if (e.dead) return;
+                    if (e.dead || e.falling) return;
                     if (Math.abs(e.x - this.localPlayer.x) < 250) {
                         e.takeDamage(this.localPlayer.getDamage(30, 'perfect'), 'ability');
                         e.stunTimer = 1.5;
@@ -3109,7 +3124,7 @@ class GameController {
             } else {
                 let nearestEnemy = null, nearestDist = Infinity;
                 this.stage.enemies.forEach(e => {
-                    if (e.dead) return;
+                    if (e.dead || e.falling) return;
                     const dist = Math.abs(e.x - this.localPlayer.x);
                     if (dist < nearestDist) { nearestDist = dist; nearestEnemy = e; }
                 });
@@ -3136,40 +3151,39 @@ class GameController {
         return false;
     }
 
-    // 弓士B「ノーツ発射」: 打ったノーツが上に弾かれてから最も近い敵へ飛んでいき、単体攻撃を与える。
-    // 近接範囲攻撃・防御による被ダメ軽減といった通常の効果は一切発生しない。
-    // 攻撃の種類(色・威力)はノーツの種類によって変える
+    // 弓士B「ノーツ発射」: 打ったノーツが判定線から弾かれ、ランダムに選んだ敵へ飛んでいき
+    // 強攻撃を与える(最も近い敵固定ではない)。近接範囲攻撃・防御による被ダメ軽減といった
+    // 通常の効果は一切発生しない。攻撃の種類(色・威力)はノーツの種類によって変える
     resolveLaunchedNote(result) {
-        let nearest = null, nearestDist = Infinity;
-        this.stage.enemies.forEach(e => {
-            if (e.dead) return;
-            const dist = Math.abs(e.x - this.localPlayer.x);
-            if (dist < nearestDist) { nearestDist = dist; nearest = e; }
-        });
+        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling);
         this.audio.playSwordSound();
         // 飛んでいくノーツ自体が単体を追尾する遠隔攻撃のため、近接の攻撃間合いでは制限しない
         // (間合い外の敵が発生源の防御ノーツを打った時にも、演出とダメージが必ず出るようにする)
-        if (!nearest) return;
+        if (candidates.length === 0) return;
+        const target = candidates[Math.floor(Math.random() * candidates.length)];
 
         const isSword = result.note.type === 'sword';
-        const baseDamage = isSword ? 10 : 8;
+        const baseDamage = isSword ? 20 : 16; // 強攻撃: 通常の発射(旧10/8)よりダメージを引き上げる
         const color = isSword ? '#ff6b35' : '#e74c3c';
         const dmg = Math.floor(this.localPlayer.getDamage(baseDamage, result.judge));
-        const actualDmg = nearest.takeDamage(dmg, isSword ? 'sword' : 'ability');
+        const actualDmg = target.takeDamage(dmg, isSword ? 'sword' : 'ability');
 
+        // 演出上の起点はプレイヤーではなく判定線(画面下部中央)にする
+        const originX = CONSTANTS.CANVAS_WIDTH / 2;
+        const originY = CONSTANTS.CANVAS_HEIGHT - 45;
         this.renderer.addLaunchedNote(
-            this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40,
-            nearest.x - this.stage.scrollX, nearest.y - nearest.data.size / 2,
+            originX, originY,
+            target.x - this.stage.scrollX, target.y - target.data.size / 2,
             color
         );
-        this.renderer.addFloatingText(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size, `${actualDmg}`, color, 18);
+        this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size, `${actualDmg}`, color, 18);
 
-        if (nearest.dead) {
-            this.stage.totalScore += nearest.data.score;
+        if (target.dead) {
+            this.stage.totalScore += target.data.score;
             this.renderer.shake(4, 0.15);
-            this.renderer.addParticle(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size / 2, '#ffd700', 20, 12);
-            this.renderer.addFloatingText(nearest.x - this.stage.scrollX, nearest.y - nearest.data.size - 30,
-                `+${nearest.data.score}pts`, '#ffd700', 16);
+            this.renderer.addParticle(target.x - this.stage.scrollX, target.y - target.data.size / 2, '#ffd700', 20, 12);
+            this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size - 30,
+                `+${target.data.score}pts`, '#ffd700', 16);
         }
     }
 
@@ -3181,7 +3195,7 @@ class GameController {
             this.rhythm.resolveGiantHit();
             if (this.rhythm.giantNoteExploded) {
                 this.stage.enemies.forEach(e => {
-                    if (e.dead) return;
+                    if (e.dead || e.falling) return;
                     if (Math.abs(e.x - this.localPlayer.x) < 250) {
                         e.takeDamage(this.localPlayer.getDamage(50, 'perfect'), 'ability');
                     }
@@ -3200,7 +3214,7 @@ class GameController {
             // Hit enemies in range
             let hitCount = 0;
             this.stage.enemies.forEach(e => {
-                if (e.dead) return;
+                if (e.dead || e.falling) return;
                 const pBox = this.localPlayer.getAttackHitbox();
                 const eBox = e.getHitbox();
                 if (this.checkCollision(pBox, eBox)) {
@@ -3366,7 +3380,7 @@ class GameController {
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
         if (activeGimmick.special === 'giantNote') {
             if (!this.rhythm.giantNote) {
-                const inRange = this.stage.enemies.some(e => !e.dead &&
+                const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
                     Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
                 if (inRange) {
                     this.rhythm.generateGiantNote(this.rhythm.findFreeBeat(snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS)));
@@ -3402,7 +3416,7 @@ class GameController {
         } else {
             if (this.rhythm.rapidFireNextBeat !== null) this.rhythm.rapidFireNextBeat = null;
             if (!this.rhythm.swordBurstActive) {
-                const inRange = this.stage.enemies.some(e => !e.dead &&
+                const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
                     Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
                 if (inRange) {
                     this.rhythm.startSwordBurst(4, activeGimmick);
@@ -3503,7 +3517,7 @@ class GameController {
                 const dmg = Math.floor(this.localPlayer.getDamage(10, 'perfect') * 0.9);
                 let nearest = null, nearestDist = Infinity;
                 this.stage.enemies.forEach(e => {
-                    if (e.dead) return;
+                    if (e.dead || e.falling) return;
                     const dist = Math.abs(e.x - this.localPlayer.x);
                     if (dist < nearestDist) { nearestDist = dist; nearest = e; }
                 });
@@ -3517,6 +3531,25 @@ class GameController {
                 this.thiefRapidFirePayout.remaining--;
                 this.thiefRapidFirePayout.nextBeat += 0.25;
                 if (this.thiefRapidFirePayout.remaining <= 0) this.thiefRapidFirePayout = null;
+            }
+        }
+
+        // 盗賊B「連打」Perfect時のダッシュの道中、通り過ぎた敵に弱攻撃を入れる
+        // (ダッシュ1回につき同じ敵への多重ヒットは防ぐ)
+        if (this.rapidFireSweepHitIds) {
+            if (this.localPlayer.dashTimer > 0) {
+                const sweepDmg = Math.floor(this.localPlayer.getDamage(4, 'good'));
+                this.stage.enemies.forEach(e => {
+                    if (e.dead || e.falling) return;
+                    if (this.rapidFireSweepHitIds.has(e)) return;
+                    if (Math.abs(e.x - this.localPlayer.x) < 60) {
+                        e.takeDamage(sweepDmg, 'sword');
+                        this.rapidFireSweepHitIds.add(e);
+                        this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#ff6b35', 6);
+                    }
+                });
+            } else {
+                this.rapidFireSweepHitIds = null;
             }
         }
 
