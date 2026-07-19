@@ -177,6 +177,17 @@ class AudioSystem {
         this.masterGain = this.ctx.createGain();
         this.masterGain.gain.value = 0.4;
         this.masterGain.connect(this.ctx.destination);
+        // 手動の音声遅延テストをまだ行っていない場合、ブラウザ自身が把握している
+        // 出力遅延(内部バッファ分。無線イヤホン固有の追加遅延までは含まれない)を
+        // 初期値として取り込んでおく。こうすることで、テストを実行する前の
+        // 素の状態でも「パーフェクトの音が遅れて感じる」ズレをある程度自動で緩和できる。
+        // 既に手動で保存済みの補正値がある場合は上書きしない。
+        if (this.latencyOffset === 0) {
+            const reported = this.ctx.outputLatency || this.ctx.baseLatency || 0;
+            if (reported > 0) {
+                this.latencyOffset = Math.max(0, Math.min(CONSTANTS.MAX_LATENCY_OFFSET, reported));
+            }
+        }
     }
 
     scheduleBeats() {
