@@ -16,8 +16,8 @@
             position: relative;
             width: 100%;
             max-width: 1200px;
-            /* CONSTANTS.CANVAS_WIDTH/HEIGHT(1280x600)に合わせて縦を少し短くした比率 */
-            aspect-ratio: 1280/600;
+            /* CONSTANTS.CANVAS_WIDTH/HEIGHT(1280x500)に合わせてさらに縦を短くした比率 */
+            aspect-ratio: 1280/500;
             background: #000;
             border: 2px solid #333;
             /* スマホでの両手タップ(2本指の同時タップ)後、ブラウザがピンチズーム等の
@@ -332,11 +332,11 @@
         }
 
         /* スマホ向けレイアウト: 縦画面の狭い横幅・横画面の低い縦幅どちらでも
-           ゲーム画面(1280:600)を歪ませずに収め、HUDやメニューのUIが画面からはみ出さないよう
+           ゲーム画面(1280:500)を歪ませずに収め、HUDやメニューのUIが画面からはみ出さないよう
            折り返し・縮小させる */
         @media (max-width: 700px), (max-height: 500px) {
             #gameContainer {
-                width: min(100vw, calc(100vh * 1280 / 600), 1200px);
+                width: min(100vw, calc(100vh * 1280 / 500), 1200px);
                 height: auto;
                 border-width: 1px;
             }

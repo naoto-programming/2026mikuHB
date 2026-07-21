@@ -71,8 +71,22 @@
             <div class="btn-group">
                 <button class="btn" onclick="Game.startSinglePlayer()">1人プレイ</button>
                 <button class="btn" onclick="Game.showLobby()">LANマルチプレイ</button>
+                <button class="btn" onclick="Game.showSpecialGame()">特別ゲーム(自分の曲で遊ぶ)</button>
             </div>
             <button class="btn" onclick="Game.showMenu()" style="margin-top:30px;">戻る</button>
+        </div>
+
+        <!-- 特別ゲーム: 自分の音声ファイルをアップロードし、BPMを自動解析してその曲だけの
+             1ステージ限りのゲームを遊ぶ(YouTube等からの直接抽出はブラウザ・GitHub Pagesの
+             制約上できないため、ファイルアップロード方式にしている) -->
+        <div id="specialScreen" class="screen hidden">
+            <h2>特別ゲーム</h2>
+            <div class="subtitle">好きな音声ファイル(mp3等)をアップロードすると、BPMを自動解析してその曲だけの専用ステージで遊べます</div>
+            <div class="btn-group">
+                <input type="file" id="specialFileInput" accept="audio/*" onchange="Game.handleSpecialFileSelected(this.files[0])">
+            </div>
+            <p id="specialStatus" style="margin:15px;color:#888;"></p>
+            <button class="btn" onclick="Game.showModeSelect()" style="margin-top:20px;">戻る</button>
         </div>
 
         <!-- Character Select -->

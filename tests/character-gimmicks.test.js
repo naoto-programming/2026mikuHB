@@ -14,7 +14,7 @@ const { Player, CHARACTER_GIMMICKS, RhythmSystem, AudioSystem, GIMMICK_NORMAL_SE
 });
 
 const expectedSpecials = {
-    swordsman: ['flickUpNote', 'giantNote'],
+    swordsman: ['flickUpNote', 'zeroGravity'],
     archer: ['corruptedNote', 'launchNote'],
     thief: ['resonanceShake', 'rapidFire'],
     fighter: ['steppedMotion', 'flipMirror'],
