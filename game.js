@@ -40,7 +40,7 @@ const CHARACTERS = [
 ];
 
 const CHARACTER_GIMMICKS = {
-    swordsman: [{ special: 'flickUpNote' }, { special: 'zeroGravity' }],
+    swordsman: [{ special: 'flickUpNote' }, { special: 'blackHole' }],
     archer: [{ special: 'corruptedNote' }, { special: 'launchNote' }],
     thief: [{ special: 'resonanceShake' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
@@ -1074,7 +1074,7 @@ class Player {
         return Math.floor(dmg * (this.char.atk / 10));
     }
 
-    update(dt, scrollX, enemies, holdGimmickTimer, zeroGravity) {
+    update(dt, scrollX, enemies, holdGimmickTimer) {
         // 力尽きたプレイヤーは(協力プレイで他の仲間がまだ生きている場合)ステージクリアまで
         // その場で待機する。攻撃・移動AIは一切行わない(ステージクリア時に復活する)
         if (!this.isAlive()) {
@@ -1104,21 +1104,7 @@ class Player {
             }
         }
 
-        if (zeroGravity) {
-            // 剣士「無重力」中: 通常の間合いAIを完全に停止し、敵と同じくふわふわと
-            // 緩やかに漂うだけにする(お互いに近づいたり間合いを詰めたりしない)
-            this.floatDriftTimer = (this.floatDriftTimer || 0) - dt;
-            if (this.floatVX === undefined || this.floatDriftTimer <= 0) {
-                this.floatVX = (Math.random() - 0.5) * 1.2;
-                this.floatVY = (Math.random() - 0.5) * 1.2;
-                this.floatDriftTimer = 1 + Math.random();
-            }
-            this.x += this.floatVX;
-            this.y += this.floatVY;
-            this.x = Math.max(scrollX + 50, Math.min(this.x, scrollX + CONSTANTS.CANVAS_WIDTH - 50));
-            this.y = Math.max(CONSTANTS.GROUND_Y - 180, Math.min(this.y, CONSTANTS.GROUND_Y));
-            this.state = 'idle';
-        } else if (this.dashTimer > 0) {
+        if (this.dashTimer > 0) {
             this.dashTimer -= dt;
             this.vx = this.dashDir * CONSTANTS.PLAYER_SPEED * this.char.speed * this.dashSpeedMult;
             if (this.dashTimer <= 0) {
@@ -1182,28 +1168,26 @@ class Player {
             this.vx *= 0.8;
         }
 
-        if (!zeroGravity) {
-            this.x += this.vx;
+        this.x += this.vx;
 
-            // 敵と完全に重なった位置で固まらないよう、近すぎる敵からは軽く押し戻す
-            // (攻撃中はヒットボックス計算がぶれないよう適用しない)
-            if (!this.isAttacking) {
-                let separation = 0;
-                (enemies || []).forEach(e => {
-                    if (e.dead || e.falling) return;
-                    const minDist = 20 + e.data.size * 0.5;
-                    const d = this.x - e.x;
-                    if (Math.abs(d) < minDist && Math.abs(d) > 0.001) {
-                        separation += Math.sign(d) * (minDist - Math.abs(d));
-                    }
-                });
-                if (separation !== 0) {
-                    this.x += Math.max(-4, Math.min(4, separation * 0.15));
+        // 敵と完全に重なった位置で固まらないよう、近すぎる敵からは軽く押し戻す
+        // (攻撃中はヒットボックス計算がぶれないよう適用しない)
+        if (!this.isAttacking) {
+            let separation = 0;
+            (enemies || []).forEach(e => {
+                if (e.dead || e.falling) return;
+                const minDist = 20 + e.data.size * 0.5;
+                const d = this.x - e.x;
+                if (Math.abs(d) < minDist && Math.abs(d) > 0.001) {
+                    separation += Math.sign(d) * (minDist - Math.abs(d));
                 }
+            });
+            if (separation !== 0) {
+                this.x += Math.max(-4, Math.min(4, separation * 0.15));
             }
-
-            this.x = Math.max(scrollX + 50, Math.min(this.x, scrollX + CONSTANTS.CANVAS_WIDTH - 50));
         }
+
+        this.x = Math.max(scrollX + 50, Math.min(this.x, scrollX + CONSTANTS.CANVAS_WIDTH - 50));
 
         if (this.animTimer > 0.1) {
             this.animFrame = (this.animFrame + 1) % 4;
@@ -1337,7 +1321,7 @@ class Enemy {
         }
     }
 
-    update(dt, players, scrollX, allEnemies, zeroGravity) {
+    update(dt, players, scrollX, allEnemies) {
         if (this.spawnDelay > 0) {
             this.spawnDelay -= dt;
             return;
@@ -1366,18 +1350,15 @@ class Enemy {
         this.animTimer += dt;
         if (this.animTimer > 0.15) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
 
-        if (zeroGravity) {
-            // 剣士「無重力」中: 敵もプレイヤーへ近づいたり攻撃したりせず、
-            // ふわふわと緩やかに漂うだけになる
-            this.floatDriftTimer = (this.floatDriftTimer || 0) - dt;
-            if (this.floatVX === undefined || this.floatDriftTimer <= 0) {
-                this.floatVX = (Math.random() - 0.5) * 1.2;
-                this.floatVY = (Math.random() - 0.5) * 1.2;
-                this.floatDriftTimer = 1 + Math.random();
-            }
-            this.x += this.floatVX;
-            this.y += this.floatVY;
-            this.y = Math.max(this.groundY - 160, Math.min(this.y, this.groundY));
+        if (this.blackHoleState === 'sucked') {
+            // 剣士「ブラックホール」: 吸い込まれている間は爆発で解放されるまで完全に静止する
+            return;
+        } else if (this.blackHoleState === 'flying') {
+            // ブラックホール爆発で吹き飛ばされ宙を飛んでいる間は通常AIを止め、弾道だけを動かす
+            // (他の敵への衝突ダメージ・着地ダメージ・状態解除はGameController側が担当する)
+            this.flyVY = (this.flyVY || 0) + 1400 * dt;
+            this.x += this.flyVX * dt;
+            this.y += this.flyVY * dt;
         } else if (this.data.healer) {
             this.x += Math.sign(this.vx) * Math.abs(this.vx) * 0.4;
             if (!this.isAttacking && this.attackCooldown <= 0) this.startAttack();
@@ -1559,7 +1540,7 @@ class StageManager {
         this.lastWaveSize = 0;
     }
 
-    update(dt, players, zeroGravity) {
+    update(dt, players) {
         if (this.completed || this.transitioning) return;
 
         this.waveTimer -= dt;
@@ -1572,7 +1553,7 @@ class StageManager {
             this.waveTimer = this.waveIntervalSeconds;
         }
 
-        this.enemies.forEach(e => e.update(dt, players, this.scrollX, this.enemies, zeroGravity));
+        this.enemies.forEach(e => e.update(dt, players, this.scrollX, this.enemies));
         this.enemies = this.enemies.filter(e => !e.dead || e.knockbackTimer > 0);
 
         // ステージ全体のクリア判定は引き続き「最終ウェーブまで消化し、敵が0体」を要求する
@@ -1882,19 +1863,20 @@ class Renderer {
 
     // 剣士「ノーツの雨」・弓士「ノーツ弾き」の着弾演出。
     // 画像(PNG)は使わず、ゲーム全体のドット絵の質感に合わせて四角いピクセルだけで
-    // 自作描画する(グラデーション・シャドウ・画像描画を使わないので軽い)
+    // 自作描画する(グラデーション・シャドウ・画像描画を使わないので軽い)。
+    // 大きく派手に見えるよう、飛び散るピクセル数・飛距離・コアサイズを増やしてある
     addExplosion(x, y, scale = 1) {
         const pixels = [];
-        const count = 8;
+        const count = 16;
         for (let i = 0; i < count; i++) {
             const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
-            const dist = (12 + Math.random() * 16) * scale;
+            const dist = (26 + Math.random() * 34) * scale;
             pixels.push({
                 dx: Math.cos(angle) * dist, dy: Math.sin(angle) * dist,
-                size: (3 + Math.floor(Math.random() * 3)) * scale,
+                size: (5 + Math.floor(Math.random() * 5)) * scale,
             });
         }
-        this.explosions.push({ x, y, scale, t: 0, duration: 0.3, pixels });
+        this.explosions.push({ x, y, scale, t: 0, duration: 0.4, pixels });
     }
 
     renderExplosions(ctx, game) {
@@ -1904,9 +1886,16 @@ class Renderer {
             const progress = ex.t / ex.duration;
             if (progress >= 1) { this.explosions.splice(i, 1); continue; }
 
-            // 中心のドット状コア(白→黄→オレンジと色が変わりながら縮む)
-            const coreSize = (24 - progress * 18) * ex.scale;
-            ctx.fillStyle = progress < 0.3 ? '#fffbe0' : progress < 0.6 ? '#ffd23f' : '#ff6b35';
+            // 発生直後の一瞬だけ画面全体に白いフラッシュのリングを出し、派手さを強調する
+            if (progress < 0.15) {
+                const ringSize = (70 + progress * 260) * ex.scale;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(ex.x - ringSize / 2, ex.y - ringSize / 2, ringSize, ringSize);
+            }
+
+            // 中心のドット状コア(白→黄→オレンジ→暗い残り火と色が変わりながら縮む)
+            const coreSize = (46 - progress * 34) * ex.scale;
+            ctx.fillStyle = progress < 0.2 ? '#fffbe0' : progress < 0.5 ? '#ffd23f' : progress < 0.75 ? '#ff6b35' : '#7a3b1e';
             ctx.fillRect(ex.x - coreSize / 2, ex.y - coreSize / 2, coreSize, coreSize);
 
             // 放射状に飛び散るドット
@@ -1920,17 +1909,24 @@ class Renderer {
         }
     }
 
-    // 剣士「無重力」: 漂う浮遊爆弾をドット絵風に表示する(軽量な四角描画のみ)
-    renderZeroGravityMines(ctx, game, scrollX) {
-        (game.zeroGravityMines || []).forEach(mine => {
-            const x = mine.x - scrollX;
-            const pulse = 1 + Math.sin(game.gameTime * 6) * 0.15;
-            const size = 14 * pulse;
-            ctx.fillStyle = '#e74c3c';
-            ctx.fillRect(x - size / 2, mine.y - size / 2, size, size);
-            ctx.fillStyle = '#ffd23f';
-            ctx.fillRect(x - size / 4, mine.y - size / 4, size / 2, size / 2);
-        });
+    // 剣士「ブラックホール」: ギミック発動中、画面中央に出現する
+    renderBlackHole(ctx, game) {
+        const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
+        if (gimmick.special !== 'blackHole') return;
+        const cx = CONSTANTS.CANVAS_WIDTH / 2;
+        const cy = CONSTANTS.CANVAS_HEIGHT / 2;
+        const pulse = 1 + Math.sin(game.gameTime * 4) * 0.08;
+        ctx.save();
+        ctx.fillStyle = '#1a0d2e';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 60 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#9b59b6';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 60 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
     }
 
     // 剣士「上に弾くノーツ」: 蓄積したノーツの山を画面最下部に表示する
@@ -2046,6 +2042,9 @@ class Renderer {
             ctx.stroke();
         }
 
+        // 剣士「ブラックホール」: 発動中は画面中央に出現する(敵より奥に描く)
+        this.renderBlackHole(ctx, game);
+
         // Render enemies
         game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX, game.images, beatBob));
 
@@ -2076,9 +2075,6 @@ class Renderer {
 
         // 着弾爆発アニメーション(剣士「ノーツの雨」・弓士「ノーツ弾き」共通)
         this.renderExplosions(ctx, game);
-
-        // 剣士「無重力」: 浮遊爆弾
-        this.renderZeroGravityMines(ctx, game, scrollX);
 
         // Floating texts
         this.renderFloatingTexts(ctx);
@@ -2912,8 +2908,8 @@ class GameController {
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
-        this.zeroGravityMines = [];
-        this.zeroGravityWasActive = false;
+        this.blackHoleWasActive = false;
+        this.blackHoleDamageMult = 1;
         this.specialStageOnly = false;
         this.specialTrack = null;
         this.tutorialBoxTimer = null;
@@ -3663,8 +3659,8 @@ class GameController {
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
-        this.zeroGravityMines = [];
-        this.zeroGravityWasActive = false;
+        this.blackHoleWasActive = false;
+        this.blackHoleDamageMult = 1;
 
         // 操作説明のポップアップは最初の1回だけ表示し、時間経過で消す
         // (ステージ切り替えのたびにstartGame()が呼ばれるが、2回目以降は既にタイマー済みなので再表示しない)
@@ -3781,18 +3777,6 @@ class GameController {
             return;
         }
 
-        // 剣士「無重力」: パーフェクトで打った攻撃/防御ノーツは、通常の効果の代わりに
-        // 敵やプレイヤーと同じく無重力中をぷかぷかと漂う浮遊爆弾になる。
-        // (パーフェクト以外の判定は通常通りの効果のまま)
-        if (gimmick.special === 'zeroGravity' && result.judge === 'perfect' &&
-            (result.note.type === 'sword' || result.note.type === 'defend')) {
-            this.spawnZeroGravityMine(this.localPlayer.x, this.localPlayer.y - 40);
-            if (result.note.type === 'sword') this.localPlayer.attack();
-            else this.localPlayer.defend();
-            this.audio.playSfx('perfectHit');
-            return;
-        }
-
         const noteType = result.note.type;
         if (noteType === 'sword') {
             this.resolveSwordHit(result);
@@ -3812,6 +3796,17 @@ class GameController {
         }
         // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
         // バースト完了時の一括効果はupdate()側のability_complete処理で変更なく発動する。
+
+        // 剣士「ブラックホール」: 発動中、パーフェクトのカウンター(防御)ノーツは敵を1体
+        // ブラックホールへ吸い込み、パーフェクトの攻撃/能力ノーツは終了時に爆発する
+        // ダメージを蓄積する(通常のノーツ効果に加えて発生する)
+        if (gimmick.special === 'blackHole' && result.judge === 'perfect') {
+            if (noteType === 'defend') {
+                this.suckEnemyIntoBlackHole();
+            } else if (noteType === 'sword' || noteType === 'ability') {
+                this.blackHoleDamageMult++;
+            }
+        }
 
         if (noteType === 'sword' && result.judge === 'perfect') {
             if (this.localPlayer.char.rangeMultiplier > 1) {
@@ -3962,34 +3957,74 @@ class GameController {
         this.renderer.shake(5, 0.2);
     }
 
-    // 剣士「無重力」: パーフェクトノーツから生まれる浮遊爆弾を1つ追加する。
-    // 敵やプレイヤーと同じくふわふわと緩やかに漂う
-    spawnZeroGravityMine(x, y) {
-        this.zeroGravityMines.push({
-            x, y,
-            vx: (Math.random() - 0.5) * 2.5,
-            vy: (Math.random() - 0.5) * 2.5,
-        });
+    // 剣士「ブラックホール」: パーフェクトのカウンターノーツで、まだ吸い込まれていない敵を
+    // 1体選んで画面中央のブラックホールへ吸い込む。吸い込まれた敵は爆発で解放されるまで
+    // (Enemy.update側の分岐により)完全に静止する
+    suckEnemyIntoBlackHole() {
+        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState);
+        if (candidates.length === 0) return;
+        const target = candidates[Math.floor(Math.random() * candidates.length)];
+        target.blackHoleState = 'sucked';
+        target.x = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
+        target.y = CONSTANTS.CANVAS_HEIGHT / 2;
+        this.renderer.addParticle(CONSTANTS.CANVAS_WIDTH / 2, CONSTANTS.CANVAS_HEIGHT / 2, '#9b59b6', 10);
     }
 
-    // 無重力ギミック中、浮遊爆弾を漂わせ続け、偶然敵に触れたら小さな爆発
-    // (ダメージも範囲も小さい)を起こして消滅させる
-    updateZeroGravityMines(dt) {
-        if (this.zeroGravityMines.length === 0) return;
-        for (let i = this.zeroGravityMines.length - 1; i >= 0; i--) {
-            const mine = this.zeroGravityMines[i];
-            mine.x += mine.vx;
-            mine.y += mine.vy;
-            mine.x = Math.max(this.stage.scrollX + 30, Math.min(mine.x, this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 30));
-            mine.y = Math.max(CONSTANTS.GROUND_Y - 220, Math.min(mine.y, CONSTANTS.GROUND_Y));
+    // 剣士「ブラックホール」: ギミック終了時、吸い込んでいた敵を全てランダムな方向へ
+    // 吹き飛ばす(実際の着地ダメージ・衝突ダメージはupdateBlackHoleFlyingEnemiesが処理する)
+    explodeBlackHole() {
+        const cx = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
+        const cy = CONSTANTS.CANVAS_HEIGHT / 2;
+        const sucked = this.stage.enemies.filter(e => e.blackHoleState === 'sucked');
+        sucked.forEach(e => {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 300 + Math.random() * 200;
+            e.blackHoleState = 'flying';
+            e.flyVX = Math.cos(angle) * speed;
+            e.flyVY = Math.sin(angle) * speed;
+            e.blackHoleHitIds = new Set();
+        });
+        this.renderer.addExplosion(cx - this.stage.scrollX, cy, 2.5);
+        this.audio.playExplosionSound();
+        this.renderer.shake(12, 0.35);
+        this.blackHoleDamageMult = 1;
+    }
 
-            const hitEnemy = this.stage.enemies.find(e => !e.dead && !e.falling &&
-                Math.abs(e.x - mine.x) < e.data.size * 0.5 + 14 && Math.abs(e.y - mine.y) < e.data.size * 0.5 + 14);
-            if (hitEnemy) {
-                this.resolveExplosionSplash(mine.x, mine.x - this.stage.scrollX, mine.y, 60, 8, 'ability');
-                this.zeroGravityMines.splice(i, 1);
+    // 剣士「ブラックホール」: 爆発で吹き飛ばされ宙を飛んでいる敵を毎フレーム処理する。
+    // 他の敵に触れたら小ダメージ(その敵1体につき1回だけ)、地面・壁・天井に
+    // 当たった瞬間に蓄積したダメージ(blackHoleDamageMult)を1回だけ与えて通常状態へ戻す
+    updateBlackHoleFlyingEnemies(dt) {
+        const flying = this.stage.enemies.filter(e => e.blackHoleState === 'flying');
+        if (flying.length === 0) return;
+        flying.forEach(e => {
+            this.stage.enemies.forEach(other => {
+                if (other === e || other.dead || other.falling || other.blackHoleState) return;
+                if (e.blackHoleHitIds.has(other)) return;
+                const dist = Math.hypot(e.x - other.x, e.y - other.y);
+                if (dist < (e.data.size + other.data.size) / 2) {
+                    e.blackHoleHitIds.add(other);
+                    const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(6, 'good')));
+                    const actualDmg = this.dealEnemyDamage(other, dmg, 'ability');
+                    this.renderer.addFloatingText(other.x - this.stage.scrollX, other.y - other.data.size, `${actualDmg}`, '#9b59b6', 14);
+                    if (other.dead) this.stage.totalScore += other.data.score;
+                }
+            });
+
+            const groundY = e.groundY;
+            const hitGround = e.y >= groundY;
+            const hitCeiling = e.y <= groundY - 300;
+            const hitWall = e.x <= this.stage.scrollX + 10 || e.x >= this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 10;
+            if (hitGround || hitCeiling || hitWall) {
+                e.y = Math.max(groundY - 300, Math.min(e.y, groundY));
+                e.x = Math.max(this.stage.scrollX + 10, Math.min(e.x, this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 10));
+                const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(10 * this.blackHoleDamageMult, 'perfect')));
+                const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#ff6b35', 18);
+                if (e.dead) this.stage.totalScore += e.data.score;
+                e.blackHoleState = null;
+                e.blackHoleHitIds = null;
             }
-        }
+        });
     }
 
     // 魔法使いB「イベントノーツ」: 全てのノーツが種類を問わず「イベントノーツ」になり、
@@ -4194,16 +4229,12 @@ class GameController {
         const activeGimmick = this.localPlayer.getActiveGimmick();
         const isRapidFire = activeGimmick.special === 'rapidFire';
 
-        // 剣士「無重力」: 発動中は敵・プレイヤーが全員宙に浮きふわふわ漂うだけになる
-        // (お互いに近づいたりしない)。終了した瞬間、無重力を解除し浮遊爆弾も全て消滅させる
-        const zeroGravityActive = activeGimmick.special === 'zeroGravity';
-        if (!zeroGravityActive && this.zeroGravityWasActive) {
-            this.zeroGravityMines = [];
-            // 宙に浮いたままにならないよう、地面の高さへ戻す
-            this.players.forEach(p => { if (!p.isRemotePuppet) p.y = CONSTANTS.GROUND_Y; });
-            this.stage.enemies.forEach(e => { e.y = e.groundY; });
+        // 剣士「ブラックホール」: ギミックが終了した瞬間にブラックホールを爆発させる
+        const blackHoleActive = activeGimmick.special === 'blackHole';
+        if (!blackHoleActive && this.blackHoleWasActive) {
+            this.explodeBlackHole();
         }
-        this.zeroGravityWasActive = zeroGravityActive;
+        this.blackHoleWasActive = blackHoleActive;
 
         // Update players (movement is AI-controlled)。LANマルチプレイの分身
         // (isRemotePuppet)は、それぞれ本人の端末側でAI・リズム処理が行われるため、
@@ -4211,15 +4242,15 @@ class GameController {
         this.players.forEach(p => {
             if (p.isRemotePuppet) return;
             const holdGimmickTimer = (p === this.localPlayer) && this.shouldHoldGimmickTimer();
-            p.update(dt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer, zeroGravityActive);
+            p.update(dt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer);
         });
 
         // Update stage。LANクライアント側は敵AI・ウェーブ進行をホストの権威的な状態に
         // 委ねるため、自分では進行させない(worldStateを受信した時に反映するのみ)
         if (this.network.role !== 'client') {
-            this.stage.update(dt, this.players, zeroGravityActive);
+            this.stage.update(dt, this.players);
         }
-        this.updateZeroGravityMines(dt);
+        this.updateBlackHoleFlyingEnemies(dt);
 
         // LANマルチプレイの状態同期。高頻度に送ると重くなるため約10Hzに間引く
         this.networkSyncTimer = (this.networkSyncTimer || 0) - dt;
@@ -4557,9 +4588,12 @@ if (typeof window !== 'undefined') {
         startLatencyTest: () => game.startLatencyTest(),
         resetLatencyOffset: () => game.resetLatencyOffset(),
         startSinglePlayer: () => game.startSinglePlayer(),
+        showSpecialGame: () => game.showSpecialGame(),
+        handleSpecialFileSelected: (file) => game.handleSpecialFileSelected(file),
         confirmChar: () => game.confirmChar(),
         setDifficulty: (level) => game.setDifficulty(level),
         createHost: () => game.createHost(),
+        beginCharacterSelectPhase: () => game.beginCharacterSelectPhase(),
         showJoin: () => game.showJoin(),
         joinHost: () => game.joinHost(),
         startMultiplayer: () => game.startMultiplayer(),
