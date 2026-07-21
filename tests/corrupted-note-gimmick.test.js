@@ -86,6 +86,22 @@ if (onlyCollidingNote.corrupted || rhythm2b.hasCorruptedNote()) {
     throw new Error('no note should be corrupted when every candidate shares a beat with another note');
 }
 
+// 逆方向: 既に感染ノーツが存在する状態で新しくノーツを生成する側(startSwordBurst等)も、
+// その感染ノーツと同じ拍に重ならないよう自分の拍をずらす
+const audio5x = makeAudio();
+const rhythm5x = new RhythmSystem(audio5x);
+rhythm5x.defendNotes.push({ id: rhythm5x.noteId++, beat: 4, type: 'defend', hit: false, missed: false, corrupted: true });
+if (rhythm5x.getCorruptedNoteBeat() !== 4) throw new Error('getCorruptedNoteBeat should return the beat of the currently active corrupted note');
+const collidingNew = { id: rhythm5x.noteId++, beat: 4, type: 'sword', hit: false, missed: false };
+const freeNew = { id: rhythm5x.noteId++, beat: 5, type: 'sword', hit: false, missed: false };
+rhythm5x.avoidCorruptedBeatCollisions([collidingNew, freeNew]);
+if (collidingNew.beat === 4) throw new Error('a newly generated note landing on the corrupted note\'s beat should be nudged away');
+if (freeNew.beat !== 5) throw new Error('a newly generated note not colliding with the corrupted beat should be left unchanged');
+
+const audio5y = makeAudio();
+const rhythm5y = new RhythmSystem(audio5y);
+if (rhythm5y.getCorruptedNoteBeat() !== null) throw new Error('getCorruptedNoteBeat should return null when no note is corrupted');
+
 // ウイルスノーツを無視して素通りさせると、通常のミス扱い(コンボ0)ではなく
 // コンボが加算される(正しいプレイとして扱われる)
 const audio3 = makeAudio();

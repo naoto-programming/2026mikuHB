@@ -19,7 +19,11 @@
             /* CONSTANTS.CANVAS_WIDTH/HEIGHT(1280x500)に合わせてさらに縦を短くした比率 */
             aspect-ratio: 1280/500;
             background: #000;
-            border: 2px solid #333;
+            /* borderではなくoutlineを使う: box-sizing:border-boxのままborderを使うと、
+               その分だけコンテンツボックスの縦横比がaspect-ratio指定とわずかにズレてしまい、
+               右端などにうっすら隙間が見えることがある。outlineはボックスサイズに
+               影響しないため、この食い違いを避けられる */
+            outline: 2px solid #333;
             /* スマホでの両手タップ(2本指の同時タップ)後、ブラウザがピンチズーム等の
                ジェスチャーかどうか判定しようとして次のタップの反応が遅れることがある。
                タッチ操作の既定ジェスチャーを無効化し、タップを即座に発火させる */
@@ -334,11 +338,17 @@
         /* スマホ向けレイアウト: 縦画面の狭い横幅・横画面の低い縦幅どちらでも
            ゲーム画面(1280:500)を歪ませずに収め、HUDやメニューのUIが画面からはみ出さないよう
            折り返し・縮小させる */
+        /* スマホを横向きにした時、ブラウザの検索(アドレス)バーが画面上部に被って
+           見えてしまうことがあるため、その分だけ画面全体を下にずらして余白を作る */
+        @media (max-height: 500px) and (orientation: landscape) {
+            body { padding-top: 26px; }
+        }
+
         @media (max-width: 700px), (max-height: 500px) {
             #gameContainer {
                 width: min(100vw, calc(100vh * 1280 / 500), 1200px);
                 height: auto;
-                border-width: 1px;
+                outline-width: 1px;
             }
             #hud {
                 top: 4px; left: 4px; right: 4px;

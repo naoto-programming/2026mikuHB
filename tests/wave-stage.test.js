@@ -4,7 +4,7 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { StageManager, computeTotalWaves } = globalThis.GameLogic;
+const { StageManager, computeTotalWaves, ENDLESS_ENEMY_COUNT_MULT } = globalThis.GameLogic;
 
 if (computeTotalWaves(90, 15) !== 3) throw new Error('computeTotalWaves(90,15) should be capped at 3, got ' + computeTotalWaves(90, 15));
 if (computeTotalWaves(10, 15) !== 1) throw new Error('computeTotalWaves should floor to at least 1 wave, got ' + computeTotalWaves(10, 15));
@@ -48,6 +48,38 @@ if (stage2.currentWave !== 2) {
 }
 if (stage2.enemies.length <= keepCount) {
     throw new Error('new wave enemies should be added on top of the remaining survivors, got ' + stage2.enemies.length + ' vs kept ' + keepCount);
+}
+
+// 人数が多いほど1ウェーブの敵数が増える(協力プレイのバランス調整)
+const stage3 = new StageManager();
+stage3.start(90);
+stage3.update(0, [{}]); // 1人プレイ相当
+stage3.waveTimer = 0;
+stage3.spawnWave();
+const soloWaveSize = stage3.enemies.length;
+
+const stage4 = new StageManager();
+stage4.start(90);
+stage4.update(0, [{}, {}, {}, {}]); // 4人プレイ相当
+stage4.waveTimer = 0;
+stage4.spawnWave();
+const fourPlayerWaveSize = stage4.enemies.length;
+
+if (fourPlayerWaveSize <= soloWaveSize) {
+    throw new Error('a wave with more players should spawn more enemies than solo, got solo=' + soloWaveSize + ' four-player=' + fourPlayerWaveSize);
+}
+
+// エンドレスモード: endlessEnemyCountMultを設定すると、その倍率分だけ敵の数が増える
+// (通常モードではこのフィールドが未設定なので、既存の挙動に影響しない)
+const stage5 = new StageManager();
+stage5.start(90);
+stage5.update(0, [{}]);
+stage5.endlessEnemyCountMult = ENDLESS_ENEMY_COUNT_MULT.many; // 「多」設定(1.6倍)
+stage5.waveTimer = 0;
+stage5.spawnWave();
+const manyWaveSize = stage5.enemies.length;
+if (manyWaveSize <= soloWaveSize) {
+    throw new Error('endlessEnemyCountMult should scale up the wave size, got solo=' + soloWaveSize + ' many=' + manyWaveSize);
 }
 
 console.log('WAVE STAGE OK');

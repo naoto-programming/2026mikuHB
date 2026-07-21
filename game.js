@@ -125,10 +125,10 @@ const computeTotalWaves = function(trackDurationSeconds, waveIntervalSeconds) {
     return Math.min(3, Math.max(1, Math.floor(trackDurationSeconds / waveIntervalSeconds)));
 };
 
-// 特別ゲーム: ユーザーがアップロードした曲のBPMを、音量エンベロープの自己相関から推定する。
-// (YouTube等からの直接抽出はGitHub Pages(静的ホスティング)・ブラウザ双方の制約上不可能なため、
-// ユーザーが用意した音声ファイルを解析する方式にしている)
-const detectBPM = function(audioBuffer) {
+// 特別ゲーム: ユーザーがアップロードした曲のBPMと、拍の開始位置(ダウンビートの位相)を
+// 音量エンベロープから推定する。(YouTube等からの直接抽出はGitHub Pages(静的ホスティング)・
+// ブラウザ双方の制約上不可能なため、ユーザーが用意した音声ファイルを解析する方式にしている)
+const detectBeatGrid = function(audioBuffer) {
     const sampleRate = audioBuffer.sampleRate;
     const data = audioBuffer.getChannelData(0);
 
@@ -154,24 +154,77 @@ const detectBPM = function(audioBuffer) {
         flux[i] = Math.max(0, envelope[i] - envelope[i - 1]);
     }
 
-    // 60〜180BPMに相当するラグ幅で自己相関を取り、最もスコアの高いラグをテンポと推定する
+    // 60〜180BPMに相当するラグ幅で自己相関を取り、最もスコアの高いラグをテンポと推定する。
+    // 曲の長さに関わらず公平に比較できるよう、重なった項の数で正規化する
+    // (正規化しないと、項数が多い短いラグ側に systematically偏ってしまう)
     const frameRate = 1 / frameSeconds;
     const minLag = Math.max(1, Math.floor(frameRate * 60 / 180));
     const maxLag = Math.floor(frameRate * 60 / 60);
-    let bestLag = minLag, bestScore = -Infinity;
-    for (let lag = minLag; lag <= maxLag; lag++) {
+    const scoreForLag = (lag) => {
         let score = 0;
+        let count = 0;
         for (let i = 0; i + lag < frameCount; i++) {
             score += flux[i] * flux[i + lag];
+            count++;
         }
+        return count > 0 ? score / count : 0;
+    };
+
+    let bestLag = minLag, bestScore = -Infinity;
+    for (let lag = minLag; lag <= maxLag; lag++) {
+        const score = scoreForLag(lag);
         if (score > bestScore) { bestScore = score; bestLag = lag; }
     }
 
-    let bpm = 60 / (bestLag / frameRate);
-    // オクターブ違い(倍・半分)で検出されることがあるため、妥当な範囲に収める
+    // 放物線補間(前後1ラグのスコアから頂点位置を推定)でラグ単位の量子化誤差を減らす
+    const sPrev = scoreForLag(Math.max(minLag, bestLag - 1));
+    const sNext = scoreForLag(Math.min(maxLag, bestLag + 1));
+    const denom = sPrev - 2 * bestScore + sNext;
+    const refinement = denom !== 0 ? 0.5 * (sPrev - sNext) / denom : 0;
+    const refinedLag = bestLag + Math.max(-1, Math.min(1, refinement));
+
+    let bpm = 60 / (refinedLag / frameRate);
+    // オクターブ違い(倍・半分)で検出されることがあるため、まず妥当な範囲に収める
     while (bpm < 70) bpm *= 2;
     while (bpm > 190) bpm /= 2;
-    return Math.round(bpm);
+    // 範囲内でも倍・半分の候補の方が自己相関スコアが高ければそちらを採用する
+    // (単純な範囲折り畳みだけだとオクターブ誤りを直しきれないことがあるため)
+    const candidates = [bpm, bpm * 2, bpm / 2].filter(b => b >= 70 && b <= 190);
+    let bestBpm = bpm, bestBpmScore = -Infinity;
+    candidates.forEach(candidateBpm => {
+        const lag = Math.round(frameRate * 60 / candidateBpm);
+        const score = scoreForLag(Math.max(minLag, Math.min(maxLag, lag)));
+        if (score > bestBpmScore) { bestBpmScore = score; bestBpm = candidateBpm; }
+    });
+    bpm = Math.round(bestBpm);
+
+    // 拍の開始位置(ダウンビート・位相)を推定する: BPMのみでは拍がどこから始まるか
+    // わからずノーツがずれてしまうため、拍間隔に対する開始位相の候補を少しずつずらしながら、
+    // 各候補位相での拍位置に一致するオンセットの強さの合計を比較し、最もよく一致する位相を採用する
+    const beatInterval = 60 / bpm;
+    const framesPerBeat = beatInterval / frameSeconds;
+    const phaseSteps = 40;
+    let bestPhaseFrames = 0, bestPhaseScore = -Infinity;
+    for (let s = 0; s < phaseSteps; s++) {
+        const phaseFrames = (s / phaseSteps) * framesPerBeat;
+        let score = 0;
+        for (let beatIdx = 0; ; beatIdx++) {
+            const center = Math.round(phaseFrames + beatIdx * framesPerBeat);
+            if (center >= frameCount) break;
+            // 候補位相がちょうど1フレームだけずれて実際のオンセットを取りこぼす量子化誤差を
+            // 避けるため、厳密に1点だけを見るのではなく前後数フレームの最大値を見る
+            let localMax = 0;
+            for (let w = -2; w <= 2; w++) {
+                const idx = center + w;
+                if (idx >= 0 && idx < frameCount) localMax = Math.max(localMax, flux[idx]);
+            }
+            score += localMax;
+        }
+        if (score > bestPhaseScore) { bestPhaseScore = score; bestPhaseFrames = phaseFrames; }
+    }
+    const offsetSeconds = bestPhaseFrames * frameSeconds;
+
+    return { bpm, offsetSeconds };
 };
 
 const IMAGE_MANIFEST = {
@@ -319,10 +372,15 @@ class AudioSystem {
         this.source.buffer = buffer;
         this.source.loop = true;
         this.source.connect(this.masterGain);
-        this.startTime = this.ctx.currentTime;
+        const playStartTime = this.ctx.currentTime;
+        // beatOffset: 曲の先頭に無音や前奏があり、最初のダウンビートが0秒目でない場合の
+        // ズレ補正(特別ゲームでアップロードされた曲のみ、自動解析で設定される)。
+        // 拍0=実際のダウンビートになるよう、拍計算の基準時刻(startTime)だけをずらす
+        // (source.start自体は変えない。ループ時も同じ位相が保たれる)
+        this.startTime = playStartTime + (track.beatOffset || 0);
         this.beatCount = 0;
         this.isPlaying = true;
-        this.source.start(this.startTime);
+        this.source.start(playStartTime);
         this.scheduleBeats();
     }
 
@@ -425,6 +483,24 @@ class AudioSystem {
     // 剣士「ノーツの雨」・弓士「ノーツ弾き」の着弾爆発用の効果音(専用の爆発.mp3を使用)
     playExplosionSound() {
         this.playSfx('explosion');
+    }
+
+    // 盗賊B「連打」パーフェクト時の画面端から端への高速ダッシュに合わせた「シュバッ」という
+    // 素早い効果音(下降する音程のスイープで、駆け抜ける速さを表現する)
+    playDashSound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.frequency.setValueAtTime(1200, now);
+        osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+        osc.start(now);
+        osc.stop(now + 0.12);
     }
 
     playSwordSound() {
@@ -532,6 +608,12 @@ const pickBurstPattern = function(effectiveDiff) {
 
 const DIFFICULTY_BONUS = { easy: -2, normal: 0, hard: 2 };
 
+// エンドレスモード: 敵の量・強さ・プレイヤーの強さをそれぞれ選べる。
+// 「鬼」は敵側のみに存在する最上位ランク
+const ENDLESS_ENEMY_COUNT_MULT = { few: 0.6, mid: 1.0, many: 1.6, oni: 2.4 };
+const ENDLESS_ENEMY_STRENGTH_MULT = { weak: 0.7, mid: 1.0, strong: 1.4, oni: 2.0 };
+const ENDLESS_PLAYER_STRENGTH_MULT = { weak: 0.8, mid: 1.0, strong: 1.3 };
+
 class RhythmSystem {
     constructor(audio) {
         this.audio = audio;
@@ -574,6 +656,7 @@ class RhythmSystem {
             hit: false,
             missed: false,
         }));
+        this.avoidCorruptedBeatCollisions(this.swordNotes);
         this.maybeCorruptOnSpawn(this.swordNotes, gimmick.special === 'corruptedNote');
     }
 
@@ -596,6 +679,7 @@ class RhythmSystem {
             missed: false,
             index,
         }));
+        this.avoidCorruptedBeatCollisions(this.abilityNotes);
         this.maybeCorruptOnSpawn(this.abilityNotes, gimmick.special === 'corruptedNote');
     }
 
@@ -632,6 +716,26 @@ class RhythmSystem {
     hasCorruptedNote() {
         const pools = [this.swordNotes, this.abilityNotes, this.defendNotes];
         return pools.some(pool => pool.some(n => n.corrupted && !n.hit && !n.missed));
+    }
+
+    // 現在アクティブな感染ノーツの拍を返す(なければnull)
+    getCorruptedNoteBeat() {
+        const pools = [this.swordNotes, this.abilityNotes, this.defendNotes];
+        for (const pool of pools) {
+            const found = pool.find(n => n.corrupted && !n.hit && !n.missed);
+            if (found) return found.beat;
+        }
+        return null;
+    }
+
+    // 感染ノーツは他のノーツと同じ拍にならない設計のため、逆に新しく生成するノーツが
+    // 既存の感染ノーツの拍と重ならないよう、重なる場合だけ少しずらす
+    avoidCorruptedBeatCollisions(notes) {
+        const corruptedBeat = this.getCorruptedNoteBeat();
+        if (corruptedBeat === null) return;
+        notes.forEach(note => {
+            if (note.beat === corruptedBeat) note.beat += 0.25;
+        });
     }
 
     // noteを感染させる。感染ノーツはmaybeCorruptOnSpawn側で他のノーツと同じ拍に
@@ -1011,6 +1115,9 @@ class Player {
         this.y = CONSTANTS.GROUND_Y;
         this.vx = 0;
         this.vy = 0;
+        // 複数人プレイ時、全員がまったく同じ「画面中央」を好んでしまうと重なってしまうため、
+        // 各プレイヤーごとに個別の(ちょっとズレた)中央位置を割り当てる
+        this.centerOffset = (Math.random() - 0.5) * 160;
         this.hp = this.char.hp;
         this.maxHp = this.char.hp;
         this.atk = this.char.atk;
@@ -1138,7 +1245,7 @@ class Player {
                 }
             }
 
-            const centerX = scrollX + CONSTANTS.CANVAS_WIDTH / 2;
+            const centerX = scrollX + CONSTANTS.CANVAS_WIDTH / 2 + this.centerOffset;
             const attackRange = this.getAttackRange();
             let targetX = centerX;
             if (nearest && nearestDist < attackRange * 4) {
@@ -1307,6 +1414,9 @@ class Enemy {
         this.resistances = {};
         this.knockbackTimer = 0;
         this.knockbackDir = 1;
+        // 生きている間、ヒットするたびに軽く仰け反る演出用(死亡時のknockbackTimerとは別)
+        this.hitKnockbackTimer = 0;
+        this.hitKnockbackDir = 1;
         this.spawnDelay = 0;
         this.hueShift = 0;
         this.brightnessShift = 1;
@@ -1350,8 +1460,38 @@ class Enemy {
         this.animTimer += dt;
         if (this.animTimer > 0.15) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
 
-        if (this.blackHoleState === 'sucked') {
-            // 剣士「ブラックホール」: 吸い込まれている間は爆発で解放されるまで完全に静止する
+        if (this.hitKnockbackTimer > 0) {
+            // どの攻撃でヒットしても、生きている間は軽く仰け反ってから通常AIに戻る
+            this.hitKnockbackTimer -= dt;
+            this.x += this.hitKnockbackDir * 90 * dt;
+            return;
+        }
+
+        if (this.tween) {
+            // 瞬間移動(テレポート)に見えないよう、吸い込み・吹き飛ばし前の散らばりなどの
+            // 位置変更は必ずこの緩やかな移動アニメーションを経由させる
+            this.tween.timer += dt;
+            const t = Math.min(1, this.tween.timer / this.tween.duration);
+            const eased = 1 - (1 - t) * (1 - t);
+            this.x = this.tween.fromX + (this.tween.toX - this.tween.fromX) * eased;
+            this.y = this.tween.fromY + (this.tween.toY - this.tween.fromY) * eased;
+            if (t >= 1) {
+                const onComplete = this.tween.onComplete;
+                this.tween = null;
+                if (onComplete === 'blackHoleSucked') {
+                    this.blackHoleState = 'sucked';
+                    this.orbitAngle = Math.random() * Math.PI * 2;
+                    this.orbitRadius = 20 + Math.random() * 30;
+                    this.orbitSpeed = 3 + Math.random() * 2;
+                }
+            }
+            return;
+        } else if (this.blackHoleState === 'sucked') {
+            // 剣士「ブラックホール」: 吸い込まれている間、一点に留まると見栄えが悪いため
+            // 各自バラバラの半径・速度・位相でブラックホールの内部を周回させる
+            this.orbitAngle += this.orbitSpeed * dt;
+            this.x = this.blackHoleCenterX + Math.cos(this.orbitAngle) * this.orbitRadius;
+            this.y = this.blackHoleCenterY + Math.sin(this.orbitAngle) * this.orbitRadius;
             return;
         } else if (this.blackHoleState === 'flying') {
             // ブラックホール爆発で吹き飛ばされ宙を飛んでいる間は通常AIを止め、弾道だけを動かす
@@ -1485,6 +1625,13 @@ class Enemy {
             this.knockbackDir = Math.random() < 0.5 ? -1 : 1;
             return dmg + this.data.score;
         }
+        // どの攻撃でも、生きている間はヒットするたびに軽く仰け反る(ノックバック)。
+        // ブラックホールに吸い込まれている/吹き飛ばされている間やtween移動中は、
+        // 別の仕組みで位置が制御されているためノックバックにより弊害が起きる。除外する
+        if (!this.blackHoleState && !this.tween) {
+            this.hitKnockbackTimer = 0.15;
+            this.hitKnockbackDir = Math.random() < 0.5 ? -1 : 1;
+        }
         return dmg;
     }
 
@@ -1543,6 +1690,8 @@ class StageManager {
     update(dt, players) {
         if (this.completed || this.transitioning) return;
 
+        // 人数が多いほどウェーブあたりの敵数を増やす(spawnWaveが使う)
+        this.playerCount = players.length;
         this.waveTimer -= dt;
         // 前のウェーブを全滅させ切っていなくても、残数が一定割合まで減っていれば
         // 次のウェーブを重ねて投入する(0体になるのを待つと間延びするため)
@@ -1572,7 +1721,13 @@ class StageManager {
     }
 
     spawnWave() {
-        const waveSize = Math.min(50, 35 + Math.floor(this.getStageMod() * 8));
+        // 協力プレイの人数が多いほど、1ウェーブに出現する敵の数を増やす
+        // (1人=1.0倍、以降1人ごとに+0.4倍)
+        const playerScale = 0.6 + 0.4 * (this.playerCount || 1);
+        // エンドレスモードで選んだ「敵の量」設定による倍率(通常モードでは1のまま)
+        const endlessScale = this.endlessEnemyCountMult || 1;
+        const cap = this.endlessEnemyCountMult ? 120 : 50;
+        const waveSize = Math.min(cap, Math.floor((35 + Math.floor(this.getStageMod() * 8)) * playerScale * endlessScale));
         this.lastWaveSize = waveSize;
         this.spawnEnemies(waveSize);
     }
@@ -2898,6 +3053,11 @@ class GameController {
         this.players = [];
         this.localPlayer = null;
         this.selectedChar = 'swordsman';
+        // LANホストが実際に「決定」を押したかどうか(selectedCharはUIの初期選択のため
+        // 常に真値を持つので、これとは別に判定する)
+        this.hostConfirmedChar = false;
+        // LANホスト自身がステージクリア後のアップグレードを選び終えたかどうか
+        this.hostUpgraded = false;
         this.difficulty = 'normal';
 
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
@@ -2912,6 +3072,12 @@ class GameController {
         this.blackHoleDamageMult = 1;
         this.specialStageOnly = false;
         this.specialTrack = null;
+        this.specialTrackDuration = 0;
+        this.lastRunWasSpecial = false;
+        // エンドレスモード: 敵の量・強さ、プレイヤーの強さの設定と、現在エンドレス実行中かどうか
+        this.endlessOptions = { enemyCount: 'mid', enemyStrength: 'mid', playerStrength: 'mid' };
+        this.endlessMode = false;
+        this.endlessSetupContext = 'solo';
         this.tutorialBoxTimer = null;
         this.gimmickIndicatorTimer = null;
         this.gimmickIndicatorWasSpecial = false;
@@ -3017,6 +3183,12 @@ class GameController {
         document.getElementById('modeScreen').classList.remove('hidden');
         // ロビー画面等から「戻る」で来た場合、途中まで確立していた接続を後片付けする
         if (this.network.role !== 'solo') this.disconnectNetwork();
+        // モード選択に戻ってきたら、前回のエンドレスモード設定を持ち越さない
+        this.endlessMode = false;
+        const hostEndlessStatus = document.getElementById('hostEndlessStatus');
+        const hostEndlessBtn = document.getElementById('hostEndlessBtn');
+        if (hostEndlessStatus) hostEndlessStatus.classList.add('hidden');
+        if (hostEndlessBtn) hostEndlessBtn.textContent = 'エンドレスモードで開始する';
     }
 
     // context: 'solo'(1人プレイ) | 'host'(LANホスト自身の選択) | 'client'(LAN参加者)。
@@ -3035,6 +3207,12 @@ class GameController {
         document.getElementById('waitingScreen').classList.remove('hidden');
     }
 
+    // 参加者が接続した直後、ホストが「開始」を押すまでキャラクター選択に進ませないための待機画面
+    showWaitingForHostScreen() {
+        this.hideAllScreens();
+        document.getElementById('waitingForHostScreen').classList.remove('hidden');
+    }
+
     showLobbyHostPanel() {
         this.hideAllScreens();
         document.getElementById('lobbyScreen').classList.remove('hidden');
@@ -3047,6 +3225,9 @@ class GameController {
     // ホストがロビーの「開始」ボタンを押した時に呼ばれる。全員(ホスト含む)を
     // キャラクター選択画面へ進める(この時点ではまだゲームは始まらない)
     beginCharacterSelectPhase() {
+        // 新しいキャラクター選択フェーズの開始。ホストはまだ自分の選択を確定していない状態に戻す
+        // (selectedCharはデフォルト値を持つため、これで判定しないと前回の値が残ってしまう)
+        this.hostConfirmedChar = false;
         Object.values(this.network.conns).forEach(conn => {
             try { conn.send({ type: 'goToCharSelect' }); } catch (e) {}
         });
@@ -3057,7 +3238,9 @@ class GameController {
     // ホスト自身を含む全員がキャラクターを決定していれば、そのままゲームを開始する
     checkAllReadyAndMaybeStart() {
         if (this.network.role !== 'host') return;
-        if (!this.selectedChar) return;
+        // ホスト自身がまだ「決定」を押していない間は、参加者が何人揃っても開始しない
+        // (selectedCharはUIの初期選択のためデフォルト値を持つので、これでは判定できない)
+        if (!this.hostConfirmedChar) return;
         const allReady = Object.values(this.network.roster).every(p => p.charId);
         if (allReady) {
             this.startMultiplayer();
@@ -3246,16 +3429,59 @@ class GameController {
             if (this.audio.ctx.state === 'suspended') await this.audio.ctx.resume();
             const arrayBuffer = await file.arrayBuffer();
             const audioBuffer = await this.audio.ctx.decodeAudioData(arrayBuffer);
-            const bpm = detectBPM(audioBuffer);
+            const { bpm, offsetSeconds } = detectBeatGrid(audioBuffer);
             const specialFile = '__special_upload__';
             this.audio.setPreloadedBuffer(specialFile, audioBuffer);
-            this.specialTrack = { file: specialFile, bpm };
+            this.specialTrack = { file: specialFile, bpm, beatOffset: offsetSeconds };
             this.specialStageOnly = true;
             status.textContent = `BPM ${bpm} を検出しました`;
             this.showCharSelect('special');
         } catch (e) {
             status.textContent = '解析に失敗しました。別の音声ファイルをお試しください';
         }
+    }
+
+    // ==================== エンドレスモード ====================
+    // 敵の量・強さ、プレイヤーの強さを選び、ウェーブが続く限り戦い続けて
+    // 生存時間でスコアを競う。ソロ・LANマルチプレイどちらからも設定できる
+    // (context: 'solo' | 'host'。'host'はLANホストがロビーから設定する場合)
+
+    showEndlessSetup(context) {
+        this.endlessSetupContext = context || 'solo';
+        this.hideAllScreens();
+        document.getElementById('endlessScreen').classList.remove('hidden');
+    }
+
+    setEndlessOption(key, value) {
+        this.endlessOptions[key] = value;
+        const groupId = key === 'enemyCount' ? 'endlessEnemyCountGroup'
+            : key === 'enemyStrength' ? 'endlessEnemyStrengthGroup' : 'endlessPlayerStrengthGroup';
+        const group = document.getElementById(groupId);
+        Array.from(group.children).forEach(btn => {
+            btn.classList.toggle('selected', btn.dataset.value === value);
+        });
+    }
+
+    confirmEndlessSetup() {
+        this.endlessMode = true;
+        if (this.endlessSetupContext === 'host') {
+            // LANホスト: 設定を確定させ、ロビー画面へ戻って「開始」を待つ
+            this.showLobbyHostPanel();
+            document.getElementById('hostEndlessStatus').classList.remove('hidden');
+            document.getElementById('hostEndlessBtn').textContent = 'エンドレスモード設定を変更する';
+            return;
+        }
+        this.showCharSelect('endless');
+    }
+
+    // エンドレスモードの各設定に応じた倍率を、ステージ・プレイヤーへ適用する
+    applyEndlessSettings(stage, player) {
+        stage.difficultyMult = ENDLESS_ENEMY_STRENGTH_MULT[this.endlessOptions.enemyStrength] || 1;
+        stage.endlessEnemyCountMult = ENDLESS_ENEMY_COUNT_MULT[this.endlessOptions.enemyCount] || 1;
+        const playerMult = ENDLESS_PLAYER_STRENGTH_MULT[this.endlessOptions.playerStrength] || 1;
+        player.maxHp = Math.round(player.maxHp * playerMult);
+        player.hp = player.maxHp;
+        player.atk = Math.round(player.atk * playerMult);
     }
 
     setDifficulty(level) {
@@ -3295,9 +3521,18 @@ class GameController {
         this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
         this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
 
+        // エンドレスモード(ソロ): 通常の難易度選択の代わりに、選んだ敵の量・強さ・
+        // プレイヤーの強さの設定を適用する
+        // (LANホストの分はstartMultiplayer側で適用する。ここで適用すると、
+        // startMultiplayerが作り直すStageManager/Playerには反映されず、二重適用にもなる)
+        if (this.endlessMode && this.charSelectContext === 'endless') {
+            this.applyEndlessSettings(this.stage, this.localPlayer);
+        }
+
         if (this.charSelectContext === 'host') {
             // ホスト: 自分のキャラクターを決めただけでは、まだ全員が決定していない限り
             // 開始しない。全員(ホスト含む)が決定済みなら、そのままゲームを開始する
+            this.hostConfirmedChar = true;
             this.checkAllReadyAndMaybeStart();
             return;
         }
@@ -3369,7 +3604,7 @@ class GameController {
     onHostConnection(conn) {
         conn.on('open', () => {
             this.network.conns[conn.peer] = conn;
-            this.network.roster[conn.peer] = { name: '参加者', charId: null };
+            this.network.roster[conn.peer] = { name: '参加者', charId: null, upgraded: false };
             this.updatePlayerList();
         });
         conn.on('data', data => this.onHostMessage(conn, data));
@@ -3404,6 +3639,9 @@ class GameController {
             } else if (data.type === 'enemyDamage') {
                 const enemy = this.stage.enemies.find(e => e.netId === data.netId);
                 if (enemy) enemy.takeDamage(data.dmg, data.dmgType);
+            } else if (data.type === 'upgradeChosen') {
+                if (this.network.roster[conn.peer]) this.network.roster[conn.peer].upgraded = true;
+                this.checkAllUpgradedAndMaybeAdvance();
             }
         } catch (e) { /* 1件の不正なメッセージでゲームを止めない */ }
     }
@@ -3442,7 +3680,9 @@ class GameController {
                 document.getElementById('connStatus').classList.remove('hidden');
                 document.getElementById('connStatus').classList.add('online');
                 document.getElementById('connStatus').textContent = 'ONLINE';
-                this.showCharSelect('client');
+                // ホストが「開始」を押すまではキャラクター選択に進ませない
+                // (goToCharSelectを受け取った時にonClientMessage側でキャラクター選択へ進む)
+                this.showWaitingForHostScreen();
             });
             conn.on('data', data => this.onClientMessage(data));
             conn.on('close', () => {
@@ -3485,9 +3725,17 @@ class GameController {
                 this.stage = new StageManager();
                 this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
                 this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
+                // エンドレスモード: ホストが設定した内容を自分の端末にも適用する
+                this.endlessMode = !!data.endless;
+                if (this.endlessMode && data.endlessOptions) {
+                    this.endlessOptions = data.endlessOptions;
+                    this.applyEndlessSettings(this.stage, this.localPlayer);
+                }
                 this.startGame(data.track);
             } else if (data.type === 'worldState') {
                 this.applyWorldState(data);
+            } else if (data.type === 'nextStageStart') {
+                this.nextStage();
             }
         } catch (e) { /* 1件の不正なメッセージでゲームを止めない */ }
     }
@@ -3602,11 +3850,22 @@ class GameController {
         this.stage.difficultyMult = this.difficulty === 'easy' ? 0.8 : this.difficulty === 'hard' ? 1.2 : 1;
         this.rhythm.effectiveDiff = this.localPlayer.char.diff + DIFFICULTY_BONUS[this.difficulty];
 
+        // エンドレスモード: ホストが設定した内容を、ホスト自身にもgameStart経由で
+        // 参加者全員にも適用する
+        if (this.endlessMode) {
+            this.applyEndlessSettings(this.stage, this.localPlayer);
+        }
+
         const roster = [{ id: 'host', charId: this.selectedChar }].concat(
             Object.entries(this.network.roster).map(([id, info]) => ({ id, charId: info.charId }))
         );
         Object.values(this.network.conns).forEach(conn => {
-            try { conn.send({ type: 'gameStart', difficulty: this.difficulty, track, roster }); } catch (e) {}
+            try {
+                conn.send({
+                    type: 'gameStart', difficulty: this.difficulty, track, roster,
+                    endless: this.endlessMode, endlessOptions: this.endlessOptions,
+                });
+            } catch (e) {}
         });
 
         this.startGame(track);
@@ -3672,9 +3931,10 @@ class GameController {
             }, 5000);
         }
 
-        // Reset player positions
-        this.players.forEach(p => {
-            p.x = 200;
+        // Reset player positions。複数人プレイでは全員が同じx座標に重ならないよう、
+        // 少しずつずらして並べる
+        this.players.forEach((p, idx) => {
+            p.x = 200 + (idx - (this.players.length - 1) / 2) * 40;
             p.y = CONSTANTS.GROUND_Y;
             p.hp = p.maxHp;
             p.vx = 0;
@@ -3688,6 +3948,16 @@ class GameController {
         this.lastTrackPlayed = track;
         const buffer = await this.audio.loadTrack(track);
         this.stage.start(buffer.duration);
+        // 特別ゲーム: 終了条件は「ウェーブを全て倒しきる」ことではなく「曲が最後まで流れる」
+        // ことなので、ウェーブ数を実質無制限にして曲が終わるまでずっと敵が湧き続けるようにする
+        if (this.specialStageOnly) {
+            this.stage.totalWaves = Infinity;
+            this.specialTrackDuration = buffer.duration;
+        }
+        // エンドレスモード: 終了条件は体力が尽きることのみで、ウェーブは無制限に続く
+        if (this.endlessMode) {
+            this.stage.totalWaves = Infinity;
+        }
         this.stage.transitioning = false;
         this.audio.startBGM(track);
         this.audio.loadSfx();
@@ -3735,6 +4005,7 @@ class GameController {
                 this.rapidFireDashDir = -this.rapidFireDashDir;
                 this.localPlayer.edgeDash(this.rapidFireDashDir);
                 this.renderer.addEdgeDash(this.localPlayer.y - 40, this.rapidFireDashDir, '#ff6b35');
+                this.audio.playDashSound();
                 // ダッシュの道中ですれ違った敵に弱攻撃を入れる(このダッシュ中の重複ヒットは防ぐ)
                 this.rapidFireSweepHitIds = new Set();
             }
@@ -3890,11 +4161,17 @@ class GameController {
         this.swordsmanStoredNotes = 0;
         if (count <= 0) return;
 
-        // ノーツが降り注ぎ始める直前、敵全体をステージ上のランダムな位置へ吹き飛ばす
+        // ノーツが降り注ぎ始める直前、敵全体をステージ上のランダムな位置へ吹き飛ばす。
+        // 瞬間移動に見えないよう、tweenで滑らかに移動させる
         this.stage.enemies.forEach(e => {
-            if (e.dead || e.falling) return;
+            if (e.dead || e.falling || e.tween || e.blackHoleState) return;
             this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, e.data.color, 6);
-            e.x = this.stage.scrollX + 60 + Math.random() * (CONSTANTS.CANVAS_WIDTH - 120);
+            e.tween = {
+                fromX: e.x, fromY: e.y,
+                toX: this.stage.scrollX + 60 + Math.random() * (CONSTANTS.CANVAS_WIDTH - 120), toY: e.y,
+                timer: 0, duration: 0.4,
+                onComplete: null,
+            };
         });
 
         for (let i = 0; i < count; i++) {
@@ -3958,16 +4235,24 @@ class GameController {
     }
 
     // 剣士「ブラックホール」: パーフェクトのカウンターノーツで、まだ吸い込まれていない敵を
-    // 1体選んで画面中央のブラックホールへ吸い込む。吸い込まれた敵は爆発で解放されるまで
-    // (Enemy.update側の分岐により)完全に静止する
+    // 1体選んで画面中央のブラックホールへ吸い込む。瞬間移動に見えないよう、まず吸い込まれる
+    // までの短い移動アニメーション(tween)を経由してから、内部でバラバラに周回する状態になる
     suckEnemyIntoBlackHole() {
-        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState);
+        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState && !e.tween);
         if (candidates.length === 0) return;
         const target = candidates[Math.floor(Math.random() * candidates.length)];
-        target.blackHoleState = 'sucked';
-        target.x = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
-        target.y = CONSTANTS.CANVAS_HEIGHT / 2;
-        this.renderer.addParticle(CONSTANTS.CANVAS_WIDTH / 2, CONSTANTS.CANVAS_HEIGHT / 2, '#9b59b6', 10);
+        const cx = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
+        const cy = CONSTANTS.CANVAS_HEIGHT / 2;
+        target.blackHoleState = 'suckingIn';
+        target.blackHoleCenterX = cx;
+        target.blackHoleCenterY = cy;
+        target.tween = {
+            fromX: target.x, fromY: target.y,
+            toX: cx, toY: cy,
+            timer: 0, duration: 0.35,
+            onComplete: 'blackHoleSucked',
+        };
+        this.renderer.addParticle(cx - this.stage.scrollX, cy, '#9b59b6', 10);
     }
 
     // 剣士「ブラックホール」: ギミック終了時、吸い込んでいた敵を全てランダムな方向へ
@@ -3978,15 +4263,15 @@ class GameController {
         const sucked = this.stage.enemies.filter(e => e.blackHoleState === 'sucked');
         sucked.forEach(e => {
             const angle = Math.random() * Math.PI * 2;
-            const speed = 300 + Math.random() * 200;
+            const speed = 480 + Math.random() * 260;
             e.blackHoleState = 'flying';
             e.flyVX = Math.cos(angle) * speed;
             e.flyVY = Math.sin(angle) * speed;
             e.blackHoleHitIds = new Set();
         });
-        this.renderer.addExplosion(cx - this.stage.scrollX, cy, 2.5);
+        this.renderer.addExplosion(cx - this.stage.scrollX, cy, 3.5);
         this.audio.playExplosionSound();
-        this.renderer.shake(12, 0.35);
+        this.renderer.shake(18, 0.4);
         this.blackHoleDamageMult = 1;
     }
 
@@ -4003,7 +4288,7 @@ class GameController {
                 const dist = Math.hypot(e.x - other.x, e.y - other.y);
                 if (dist < (e.data.size + other.data.size) / 2) {
                     e.blackHoleHitIds.add(other);
-                    const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(6, 'good')));
+                    const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(10, 'good')));
                     const actualDmg = this.dealEnemyDamage(other, dmg, 'ability');
                     this.renderer.addFloatingText(other.x - this.stage.scrollX, other.y - other.data.size, `${actualDmg}`, '#9b59b6', 14);
                     if (other.dead) this.stage.totalScore += other.data.score;
@@ -4017,7 +4302,7 @@ class GameController {
             if (hitGround || hitCeiling || hitWall) {
                 e.y = Math.max(groundY - 300, Math.min(e.y, groundY));
                 e.x = Math.max(this.stage.scrollX + 10, Math.min(e.x, this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 10));
-                const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(10 * this.blackHoleDamageMult, 'perfect')));
+                const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(18 * this.blackHoleDamageMult, 'perfect')));
                 const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
                 this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#ff6b35', 18);
                 if (e.dead) this.stage.totalScore += e.data.score;
@@ -4045,6 +4330,15 @@ class GameController {
                 this.renderer.addMeteorNote(target.x - this.stage.scrollX, target.y - target.data.size / 2);
                 this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size, `${actualDmg}`, '#4a90d9', 16);
                 if (target.dead) this.stage.totalScore += target.data.score;
+
+                // 着弾点の周囲の敵も、ダメージはなくとも吹き飛ばす(爆風のような演出)
+                this.stage.enemies.forEach(e => {
+                    if (e === target || e.dead || e.falling || e.blackHoleState || e.tween) return;
+                    if (Math.abs(e.x - target.x) < 120) {
+                        e.hitKnockbackTimer = 0.15;
+                        e.hitKnockbackDir = Math.sign(e.x - target.x) || (Math.random() < 0.5 ? -1 : 1);
+                    }
+                });
             }
             this.audio.playAbilitySound();
         } else if (judge === 'great') {
@@ -4174,6 +4468,13 @@ class GameController {
         this.state = 'upgrade';
         this.audio.stop();
 
+        // LANマルチプレイ: 新しいアップグレード選択フェーズの開始。前回の状態が残らないよう
+        // ホスト自身・参加者全員の「選択済み」フラグをリセットする
+        if (this.network.role === 'host') {
+            this.hostUpgraded = false;
+            Object.values(this.network.roster).forEach(p => { p.upgraded = false; });
+        }
+
         const choices = document.getElementById('upgradeChoices');
         choices.innerHTML = '';
 
@@ -4191,12 +4492,39 @@ class GameController {
             `;
             div.onclick = () => {
                 this.localPlayer.applyUpgrade(upg);
-                this.nextStage();
+                // LANマルチプレイでは、誰か1人が選んだ瞬間に次のステージへ進んでしまうと
+                // 各端末のBGM再生タイミングがずれてしまうため、全員(ホスト含む)が選び終える
+                // まで待ってから、ホストの合図で全員同時に次のステージへ進む
+                if (this.network.role === 'solo') {
+                    this.nextStage();
+                } else if (this.network.role === 'client') {
+                    try { this.network.hostConn.send({ type: 'upgradeChosen' }); } catch (e) {}
+                    this.showWaitingScreen();
+                } else if (this.network.role === 'host') {
+                    this.hostUpgraded = true;
+                    this.checkAllUpgradedAndMaybeAdvance();
+                }
             };
             choices.appendChild(div);
         });
 
         document.getElementById('upgradeScreen').classList.remove('hidden');
+    }
+
+    // LANマルチプレイ: ホスト自身を含む全員がアップグレードを選び終えていれば、
+    // 全員へ次のステージ開始を通知してから自分も次のステージへ進む
+    checkAllUpgradedAndMaybeAdvance() {
+        if (this.network.role !== 'host') return;
+        if (!this.hostUpgraded) return;
+        const allReady = Object.values(this.network.roster).every(p => p.upgraded);
+        if (allReady) {
+            Object.values(this.network.conns).forEach(conn => {
+                try { conn.send({ type: 'nextStageStart' }); } catch (e) {}
+            });
+            this.nextStage();
+        } else {
+            this.showWaitingScreen();
+        }
     }
 
     nextStage() {
@@ -4267,12 +4595,15 @@ class GameController {
         this.flickUpWasActive = isFlickUpNote;
         this.updateFlickUpEruption(dt);
 
+        // 力尽きている間は新しいノーツを一切生成しない(生き返るまで叩けるノーツを出さない)
+        const localAlive = this.localPlayer.isAlive();
+
         // 敵の攻撃予兆に対して防御ノーツを生成する（1拍につき1つにまとめ、実際の攻撃解決タイミングもその拍に揃える）
         // defendNoteSpawnedは各端末ローカルの状態(ネットワーク同期しない)。LANマルチプレイの
         // 参加者側では、通常Enemy.startAttack()が行うリセットが自分の端末では実行されない
         // (敵AIはホストのみが動かすため)ため、attackWarningがfalseになった瞬間に
         // ここで代わりにリセットしておく(そうしないと次の攻撃予兆で防御ノーツが出せなくなる)
-        if (!isRapidFire) this.stage.enemies.forEach(e => {
+        if (localAlive && !isRapidFire) this.stage.enemies.forEach(e => {
             if (!e.attackWarning) {
                 if (e.defendNoteSpawned) e.defendNoteSpawned = false;
                 return;
@@ -4285,6 +4616,10 @@ class GameController {
 
                 let defendBeat = quantizedBeat;
                 if (this.rhythm.hasAbilityNoteAtBeat(defendBeat)) {
+                    defendBeat += 0.5;
+                }
+                // 感染ノーツ(弓士A「ウイルス化」)と同じ拍にならないよう調整する
+                if (this.rhythm.getCorruptedNoteBeat() === defendBeat) {
                     defendBeat += 0.5;
                 }
                 if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
@@ -4301,7 +4636,7 @@ class GameController {
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
-        if (activeGimmick.special === 'rapidFire') {
+        if (localAlive && activeGimmick.special === 'rapidFire') {
             if (this.rhythm.rapidFireNextBeat === null) {
                 // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降はカウンターノーツと
                 // 攻撃ノーツが半拍ずつずれて交互に休みなく続く
@@ -4328,7 +4663,7 @@ class GameController {
                 this.rhythm.rapidFireAlternator++;
                 this.rhythm.rapidFireNextBeat += 0.5;
             }
-        } else {
+        } else if (localAlive) {
             if (this.rhythm.rapidFireNextBeat !== null) this.rhythm.rapidFireNextBeat = null;
             if (!this.rhythm.swordBurstActive) {
                 const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
@@ -4340,7 +4675,7 @@ class GameController {
         }
 
         // 能力バーストをクールダウン明けに自動開始する（連打中は他のノーツを混ぜない）
-        if (!isRapidFire && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
+        if (localAlive && !isRapidFire && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
             this.localPlayer.useAbility();
             this.audio.playAbilitySound();
             this.rhythm.startAbility(4, this.localPlayer.getActiveGimmick());
@@ -4467,6 +4802,12 @@ class GameController {
             return;
         }
 
+        // 特別ゲーム: 終了条件は曲が最後まで流れきること(体力が尽きる場合は上のgameOver()で処理済み)
+        if (this.specialStageOnly && this.gameTime >= this.specialTrackDuration) {
+            this.showSpecialResult();
+            return;
+        }
+
         // Check stage clear
         if (this.stage.completed) {
             this.showStageClear();
@@ -4494,6 +4835,13 @@ class GameController {
         }
         this.gimmickIndicatorWasSpecial = inSpecial;
 
+        // LANマルチプレイ: 自分は力尽きたが仲間がまだ生きている間、専用の待機表示を出す
+        // (全員力尽きるまではgameOver()に到達しない)
+        const deadWaitingNotice = document.getElementById('deadWaitingNotice');
+        if (deadWaitingNotice) {
+            deadWaitingNotice.classList.toggle('hidden', this.localPlayer.isAlive());
+        }
+
         document.getElementById('scoreValue').textContent = this.rhythm.score + this.stage.totalScore;
         document.getElementById('stageValue').textContent = this.stage.getStageName();
         document.getElementById('waveValue').textContent = `${Math.max(1, this.stage.currentWave)}/${this.stage.totalWaves}`;
@@ -4520,24 +4868,32 @@ class GameController {
 
         setTimeout(() => {
             el.remove();
-            if (this.specialStageOnly) {
-                this.showSpecialResult();
-            } else {
-                this.showUpgrade();
-            }
+            this.showUpgrade();
         }, 1500);
     }
 
     // 特別ゲーム(アップロードした曲でのみ戦う1ステージ限りのモード)のクリア結果画面。
+    // 特別ゲーム: 曲の長さに対してどれだけ生き残ったかを加味したスコアを返す
+    // (曲を最後まで生き残るほど、また曲が長いほど生存ボーナスが大きくなる)
+    computeSpecialScore() {
+        const combatScore = this.rhythm.score + this.stage.totalScore;
+        const survivalRatio = this.specialTrackDuration > 0
+            ? Math.min(1, this.gameTime / this.specialTrackDuration) : 0;
+        const survivalBonus = Math.round(survivalRatio * this.specialTrackDuration * 20);
+        return { combatScore, survivalBonus, total: combatScore + survivalBonus };
+    }
+
     // 専用の画面を新設せず、ゲームオーバー画面のスタイルとレイアウトをそのまま再利用する
     showSpecialResult() {
         this.state = 'gameover';
         this.specialStageOnly = false;
-        const totalScore = this.rhythm.score + this.stage.totalScore;
+        this.lastRunWasSpecial = true;
+        this.audio.stop();
+        const { combatScore, survivalBonus, total } = this.computeSpecialScore();
         document.getElementById('gameOverTitle').textContent = '特別ゲーム クリア！';
         document.getElementById('gameOverTitle').style.color = '#2ecc71';
         document.getElementById('gameOverStats').innerHTML = `
-            スコア: ${totalScore}<br>
+            スコア: ${total}(戦闘 ${combatScore} + 生存ボーナス ${survivalBonus})<br>
             BPM: ${Math.round(this.audio.bpm)}<br>
             Maxコンボ: ${this.rhythm.maxCombo}<br>
             Perfect: ${this.rhythm.judges.perfect} | Great: ${this.rhythm.judges.great} | Good: ${this.rhythm.judges.good} | Miss: ${this.rhythm.judges.miss}
@@ -4547,24 +4903,54 @@ class GameController {
 
     gameOver() {
         this.state = 'gameover';
+        const wasSpecial = this.specialStageOnly;
+        const wasEndless = this.endlessMode;
         this.specialStageOnly = false;
+        this.endlessMode = false;
+        this.lastRunWasSpecial = wasSpecial;
         this.audio.stop();
         this.audio.startGameOverLoop();
 
-        const totalScore = this.rhythm.score + this.stage.totalScore;
         document.getElementById('gameOverTitle').textContent = 'ゲームオーバー';
         document.getElementById('gameOverTitle').style.color = '#e74c3c';
-        document.getElementById('gameOverStats').innerHTML = `
-            スコア: ${totalScore}<br>
-            ステージ: ${this.stage.getStageName()}<br>
-            Maxコンボ: ${this.rhythm.maxCombo}<br>
-            Perfect: ${this.rhythm.judges.perfect} | Great: ${this.rhythm.judges.great} | Good: ${this.rhythm.judges.good} | Miss: ${this.rhythm.judges.miss}
-        `;
+        if (wasSpecial) {
+            const { combatScore, survivalBonus, total } = this.computeSpecialScore();
+            document.getElementById('gameOverStats').innerHTML = `
+                スコア: ${total}(戦闘 ${combatScore} + 生存ボーナス ${survivalBonus})<br>
+                BPM: ${Math.round(this.audio.bpm)}<br>
+                Maxコンボ: ${this.rhythm.maxCombo}<br>
+                Perfect: ${this.rhythm.judges.perfect} | Great: ${this.rhythm.judges.great} | Good: ${this.rhythm.judges.good} | Miss: ${this.rhythm.judges.miss}
+            `;
+        } else if (wasEndless) {
+            const totalScore = this.rhythm.score + this.stage.totalScore;
+            const minutes = Math.floor(this.gameTime / 60);
+            const seconds = Math.floor(this.gameTime % 60);
+            document.getElementById('gameOverStats').innerHTML = `
+                スコア: ${totalScore}<br>
+                生存ウェーブ: ${this.stage.currentWave} | 生存時間: ${minutes}分${seconds}秒<br>
+                Maxコンボ: ${this.rhythm.maxCombo}<br>
+                Perfect: ${this.rhythm.judges.perfect} | Great: ${this.rhythm.judges.great} | Good: ${this.rhythm.judges.good} | Miss: ${this.rhythm.judges.miss}
+            `;
+        } else {
+            const totalScore = this.rhythm.score + this.stage.totalScore;
+            document.getElementById('gameOverStats').innerHTML = `
+                スコア: ${totalScore}<br>
+                ステージ: ${this.stage.getStageName()}<br>
+                Maxコンボ: ${this.rhythm.maxCombo}<br>
+                Perfect: ${this.rhythm.judges.perfect} | Great: ${this.rhythm.judges.great} | Good: ${this.rhythm.judges.good} | Miss: ${this.rhythm.judges.miss}
+            `;
+        }
 
         document.getElementById('gameOverScreen').classList.remove('hidden');
     }
 
     restart() {
+        // 特別ゲームの終了後は、元の音声ファイル読み込み画面へ戻す
+        // (通常のキャラクター選択へ行くとランダム選曲の通常モードになってしまうため)
+        if (this.lastRunWasSpecial) {
+            this.showSpecialGame();
+            return;
+        }
         this.showCharSelect();
     }
 }
@@ -4590,6 +4976,9 @@ if (typeof window !== 'undefined') {
         startSinglePlayer: () => game.startSinglePlayer(),
         showSpecialGame: () => game.showSpecialGame(),
         handleSpecialFileSelected: (file) => game.handleSpecialFileSelected(file),
+        showEndlessSetup: (context) => game.showEndlessSetup(context),
+        setEndlessOption: (key, value) => game.setEndlessOption(key, value),
+        confirmEndlessSetup: () => game.confirmEndlessSetup(),
         confirmChar: () => game.confirmChar(),
         setDifficulty: (level) => game.setDifficulty(level),
         createHost: () => game.createHost(),
@@ -4606,8 +4995,9 @@ if (typeof window !== 'undefined') {
 // ============================================================
 const GameLogic = {
     CONSTANTS, CHARACTERS, UPGRADES, ENEMY_TYPES,
-    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES, detectBPM,
+    BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES, detectBeatGrid,
     pickBurstPattern, DIFFICULTY_BONUS,
+    ENDLESS_ENEMY_COUNT_MULT, ENDLESS_ENEMY_STRENGTH_MULT, ENDLESS_PLAYER_STRENGTH_MULT,
     IMAGE_MANIFEST, applyAbility, resolvePerfectHeal,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,

@@ -54,6 +54,11 @@
 
         <div class="connection-status hidden" id="connStatus">OFFLINE</div>
 
+        <!-- LANマルチプレイ: 自分は力尽きたが仲間がまだ生きている間に表示する待機通知 -->
+        <div id="deadWaitingNotice" class="hidden" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:17;pointer-events:none;background:rgba(0,0,0,0.6);color:#e74c3c;font-weight:bold;padding:16px 28px;border-radius:8px;font-size:1.3em;text-align:center;">
+            力尽きました<br><span style="font-size:0.7em;color:#ccc;">仲間の生存を待っています...</span>
+        </div>
+
         <!-- Menu Screen -->
         <div id="menuScreen" class="screen">
             <h1>ビートソード</h1>
@@ -72,8 +77,40 @@
                 <button class="btn" onclick="Game.startSinglePlayer()">1人プレイ</button>
                 <button class="btn" onclick="Game.showLobby()">LANマルチプレイ</button>
                 <button class="btn" onclick="Game.showSpecialGame()">特別ゲーム(自分の曲で遊ぶ)</button>
+                <button class="btn" onclick="Game.showEndlessSetup()">エンドレスモード</button>
             </div>
             <button class="btn" onclick="Game.showMenu()" style="margin-top:30px;">戻る</button>
+        </div>
+
+        <!-- エンドレスモード設定: 敵の量・強さ、プレイヤーの強さを選び、
+             ウェーブが続く限り戦い続けて生存時間でスコアを競う -->
+        <div id="endlessScreen" class="screen hidden">
+            <h2>エンドレスモード</h2>
+            <div class="subtitle" id="endlessSubtitle">ウェーブが続く限り戦い、生存時間でスコアを競います</div>
+            <p style="margin-top:15px;color:#ccc;">敵の量</p>
+            <div class="btn-group" id="endlessEnemyCountGroup">
+                <button class="btn difficulty-btn" data-value="few" onclick="Game.setEndlessOption('enemyCount','few')">少</button>
+                <button class="btn difficulty-btn selected" data-value="mid" onclick="Game.setEndlessOption('enemyCount','mid')">中</button>
+                <button class="btn difficulty-btn" data-value="many" onclick="Game.setEndlessOption('enemyCount','many')">多</button>
+                <button class="btn difficulty-btn" data-value="oni" onclick="Game.setEndlessOption('enemyCount','oni')">鬼</button>
+            </div>
+            <p style="margin-top:15px;color:#ccc;">敵の強さ</p>
+            <div class="btn-group" id="endlessEnemyStrengthGroup">
+                <button class="btn difficulty-btn" data-value="weak" onclick="Game.setEndlessOption('enemyStrength','weak')">弱</button>
+                <button class="btn difficulty-btn selected" data-value="mid" onclick="Game.setEndlessOption('enemyStrength','mid')">中</button>
+                <button class="btn difficulty-btn" data-value="strong" onclick="Game.setEndlessOption('enemyStrength','strong')">強</button>
+                <button class="btn difficulty-btn" data-value="oni" onclick="Game.setEndlessOption('enemyStrength','oni')">鬼</button>
+            </div>
+            <p style="margin-top:15px;color:#ccc;">プレイヤーの強さ</p>
+            <div class="btn-group" id="endlessPlayerStrengthGroup">
+                <button class="btn difficulty-btn" data-value="weak" onclick="Game.setEndlessOption('playerStrength','weak')">弱</button>
+                <button class="btn difficulty-btn selected" data-value="mid" onclick="Game.setEndlessOption('playerStrength','mid')">中</button>
+                <button class="btn difficulty-btn" data-value="strong" onclick="Game.setEndlessOption('playerStrength','strong')">強</button>
+            </div>
+            <div class="btn-group" style="margin-top:20px;">
+                <button class="btn" onclick="Game.confirmEndlessSetup()">決定</button>
+                <button class="btn" onclick="Game.showModeSelect()">戻る</button>
+            </div>
         </div>
 
         <!-- 特別ゲーム: 自分の音声ファイルをアップロードし、BPMを自動解析してその曲だけの
@@ -114,6 +151,14 @@
             <button class="btn" onclick="Game.showMenu()" style="margin-top:20px;">やめる</button>
         </div>
 
+        <!-- 参加者が接続した直後、ホストが「開始」を押すまで待つ画面
+             (ホストが開始を押す前にキャラクター選択画面へ進めてしまわないようにする) -->
+        <div id="waitingForHostScreen" class="screen hidden">
+            <h2>待機中</h2>
+            <div class="subtitle">ホストが開始するのを待っています...</div>
+            <button class="btn" onclick="Game.showMenu()" style="margin-top:20px;">やめる</button>
+        </div>
+
         <!-- Lobby Screen -->
         <div id="lobbyScreen" class="screen hidden">
             <h2>LANロビー</h2>
@@ -127,6 +172,8 @@
                 <p style="margin:10px 0;">部屋コード: <span id="hostIP" style="color:#ff6b35;font-weight:bold;font-size:1.6em;letter-spacing:2px;">----</span></p>
                 <p style="color:#888;font-size:0.9em;margin-bottom:15px;">同じWi-Fi内のプレイヤーにこの部屋コードを伝えてください</p>
                 <div id="playerList" style="margin:15px 0;"></div>
+                <button class="btn" onclick="Game.showEndlessSetup('host')" id="hostEndlessBtn" style="margin-bottom:10px;">エンドレスモードで開始する</button>
+                <p id="hostEndlessStatus" class="hidden" style="color:#f1c40f;font-size:0.85em;margin-bottom:10px;">エンドレスモード設定済み</p>
                 <button class="btn" onclick="Game.beginCharacterSelectPhase()" id="startMultiBtn">開始(全員でキャラクター選択へ)</button>
             </div>
             <div id="joinPanel" class="hidden" style="text-align:center;margin-top:20px;">

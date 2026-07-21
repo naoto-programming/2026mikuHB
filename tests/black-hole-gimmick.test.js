@@ -11,19 +11,37 @@ if (CHARACTER_GIMMICKS.swordsman[1].special !== 'blackHole') {
     throw new Error('swordsman gimmick[1] should be blackHole, got ' + CHARACTER_GIMMICKS.swordsman[1].special);
 }
 
-// ブラックホールに吸い込まれた敵(blackHoleState==='sucked')は、爆発で解放されるまで
-// 完全に静止する(通常の接近・攻撃AIは一切行わない)
+// 吸い込みはテレポートではなく、tweenで中心へ滑らかに移動してから
+// blackHoleState==='sucked'に切り替わる(通常AIは一切行わない)
+const suckingIn = new Enemy('normal', 100, CONSTANTS.GROUND_Y, 1);
+suckingIn.blackHoleState = 'suckingIn';
+suckingIn.blackHoleCenterX = 640;
+suckingIn.blackHoleCenterY = 250;
+suckingIn.tween = { fromX: 100, fromY: CONSTANTS.GROUND_Y, toX: 640, toY: 250, timer: 0, duration: 0.35, onComplete: 'blackHoleSucked' };
+for (let i = 0; i < 30; i++) { // 0.5秒分、tweenの duration(0.35s)より長く回す
+    suckingIn.update(1 / 60, [], 0, [suckingIn]);
+}
+if (suckingIn.blackHoleState !== 'sucked') throw new Error('after the tween completes, the enemy should become sucked, got ' + suckingIn.blackHoleState);
+if (Math.abs(suckingIn.x - 640) > suckingIn.orbitRadius + 1 || Math.abs(suckingIn.y - 250) > suckingIn.orbitRadius + 1) {
+    throw new Error('a sucked-in enemy should end up orbiting near the black hole center');
+}
+if (suckingIn.isAttacking || suckingIn.attackWarning) {
+    throw new Error('a sucking-in/sucked enemy must never start an attack');
+}
+
+// 吸い込まれた状態(sucked)の敵は、一点に留まらずブラックホール内部を個別に周回する
 const sucked = new Enemy('normal', 500, CONSTANTS.GROUND_Y, 1);
 sucked.blackHoleState = 'sucked';
-const startX = sucked.x, startY = sucked.y;
-for (let i = 0; i < 60; i++) {
-    sucked.update(1 / 60, [], 0, [sucked]);
-}
-if (sucked.x !== startX || sucked.y !== startY) {
-    throw new Error('a sucked-in enemy must not move at all while held in the black hole');
-}
-if (sucked.isAttacking || sucked.attackWarning) {
-    throw new Error('a sucked-in enemy must never start an attack');
+sucked.blackHoleCenterX = 500;
+sucked.blackHoleCenterY = 250;
+sucked.orbitAngle = 0;
+sucked.orbitRadius = 30;
+sucked.orbitSpeed = 5;
+const startAngle = sucked.orbitAngle;
+sucked.update(1 / 60, [], 0, [sucked]);
+if (sucked.orbitAngle === startAngle) throw new Error('a sucked-in enemy should keep orbiting (its angle should advance each frame)');
+if (Math.hypot(sucked.x - 500, sucked.y - 250) > sucked.orbitRadius + 1) {
+    throw new Error('a sucked-in enemy should stay within its orbit radius around the black hole center');
 }
 
 // 爆発で吹き飛ばされた敵(blackHoleState==='flying')は、通常AIを止めて弾道だけを動かす。
