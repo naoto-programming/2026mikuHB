@@ -652,6 +652,8 @@ class RhythmSystem {
         this.effectiveDiff = 1;
         this.rapidFireNextBeat = null;
         this.rapidFireAlternator = 0;
+        this.resonanceNextBeat = null;
+        this.resonanceAlternator = 0;
     }
 
     startSwordBurst(beats, gimmick) {
@@ -818,9 +820,9 @@ class RhythmSystem {
         });
 
         // Check ability completion
-        // 盗賊B「連打」はability notesを継続的に注ぎ足すため、この完了判定は行わない
+        // 盗賊A「地震」・B「連打」はability notesを継続的に注ぎ足すため、この完了判定は行わない
         // (abilityStartBeat/abilityLengthが古いままなので、判定するとすぐ誤発火してしまう)
-        if (this.abilityActive && this.rapidFireNextBeat === null) {
+        if (this.abilityActive && this.rapidFireNextBeat === null && this.resonanceNextBeat === null) {
             const allDone = this.abilityNotes.every(n => n.hit || n.missed);
             if (allDone || currentBeat > this.abilityStartBeat + this.abilityLength + 1) {
                 this.abilityActive = false;
@@ -1002,6 +1004,8 @@ class RhythmSystem {
         this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.rapidFireNextBeat = null;
         this.rapidFireAlternator = 0;
+        this.resonanceNextBeat = null;
+        this.resonanceAlternator = 0;
     }
 }
 
@@ -1450,7 +1454,7 @@ class Enemy {
     }
 
     update(dt, players, scrollX, allEnemies) {
-        // 盗賊B「連打」: ギミック発動中、打ち上げられた敵は動きが超スローになる
+        // 盗賊A「地震」: ギミック発動中、打ち上げられた敵は動きが超スローになる
         if (this.thiefSlowMotion) dt *= 0.2;
         if (this.spawnDelay > 0) {
             this.spawnDelay -= dt;
@@ -1484,6 +1488,19 @@ class Enemy {
             // どの攻撃でヒットしても、生きている間は軽く仰け反ってから通常AIに戻る
             this.hitKnockbackTimer -= dt;
             this.x += this.hitKnockbackDir * 90 * dt;
+            return;
+        }
+
+        if (this.thiefLaunched) {
+            // 盗賊A「地震」: 高く打ち上げられ、超スロー(dtは既に上でスケールされている)の
+            // 放物線で落下していく。着地したら通常のAI(引き続きスローモーションのまま)に戻る
+            this.vy += 1400 * dt;
+            this.y += this.vy * dt;
+            if (this.y >= this.groundY) {
+                this.y = this.groundY;
+                this.vy = 0;
+                this.thiefLaunched = false;
+            }
             return;
         }
 
@@ -3086,11 +3103,16 @@ class GameController {
         this.state = 'menu'; // menu, playing, paused, gameover, upgrade
         this.heldKeys = new Set();
         this.thiefCombo = null;
-        // 盗賊B「連打」: ノーツ種別ごとに蓄積するボーナス(速度・飛距離・ダメージ)
+        // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
+        this.rapidFireDashDir = 1;
+        this.rapidFireSweepHitIds = null;
+        // 盗賊A「地震」: ノーツ種別ごとに蓄積するボーナス(速度・飛距離・ダメージ)、
+        // 自動フライバイの状態とスケジュール
         this.thiefSpeedBonus = 0;
         this.thiefDistanceBonus = 0;
         this.thiefDamageBonus = 0;
-        this.thiefSlowMotionTimer = 0;
+        this.thiefFlyby = null;
+        this.thiefNextFlybyBeat = null;
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -3950,11 +3972,16 @@ class GameController {
         this.gameTime = 0;
         this.abilityCooldown = 0;
         this.thiefCombo = null;
-        // 盗賊B「連打」: ノーツ種別ごとに蓄積するボーナス(速度・飛距離・ダメージ)
+        // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
+        this.rapidFireDashDir = 1;
+        this.rapidFireSweepHitIds = null;
+        // 盗賊A「地震」: ノーツ種別ごとに蓄積するボーナス(速度・飛距離・ダメージ)、
+        // 自動フライバイの状態とスケジュール
         this.thiefSpeedBonus = 0;
         this.thiefDistanceBonus = 0;
         this.thiefDamageBonus = 0;
-        this.thiefSlowMotionTimer = 0;
+        this.thiefFlyby = null;
+        this.thiefNextFlybyBeat = null;
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4038,16 +4065,32 @@ class GameController {
         const result = this.rhythm.checkInputAny(gimmick);
         if (!result || !result.note) return;
 
-        // 盗賊B「連打」: ギミック中は攻撃・カウンター・能力のいずれのノーツも共通で扱い、
-        // Perfectを取った瞬間に敵へ向かって飛んですれ違いざまに攻撃する。
-        // ノーツの種類ごとに異なるボーナスが(ギミックが続く間)蓄積していく:
-        // カウンター→自分の速度、攻撃→1回ごとの飛距離、能力→ダメージ
+        // 盗賊B「連打」: ギミック中はカウンター(防御)ノーツも攻撃ノーツと同じように扱い、
+        // Perfectを取った瞬間に(ギミック終了後にまとめて払い出すのではなく)
+        // 画面上の全ての敵へ弱攻撃を即時発動する。ノーツの種類による区別はしない。
         if (result.note.rapidFireNote) {
+            if (result.judge === 'perfect') {
+                this.resolveRapidFireGroupHit();
+                // 実際に画面端から端まで高速ダッシュさせる。攻撃・カウンターどちらのノーツでも
+                // 1回目は片方の端へ、2回目は逆の端へ…と左右交互に片道ダッシュする(往復しない)
+                this.rapidFireDashDir = -this.rapidFireDashDir;
+                this.localPlayer.edgeDash(this.rapidFireDashDir);
+                this.renderer.addEdgeDash(this.localPlayer.y - 40, this.rapidFireDashDir, '#ff6b35');
+                this.audio.playDashSound();
+                // ダッシュの道中ですれ違った敵に弱攻撃を入れる(このダッシュ中の重複ヒットは防ぐ)
+                this.rapidFireSweepHitIds = new Set();
+            }
+            return;
+        }
+
+        // 盗賊A「地震」: ギミック中はノーツを打つたびボーナスが蓄積するだけで、
+        // 実際の攻撃(空中の敵へのフライバイ攻撃)はノーツとは無関係に拍のタイミングで
+        // 自動的に発動する(updateThiefFlyby/update()側のスケジューリングを参照)
+        if (result.note.resonanceNote) {
             if (result.judge === 'perfect') {
                 if (result.note.type === 'defend') this.thiefSpeedBonus += 0.15;
                 else if (result.note.type === 'sword') this.thiefDistanceBonus += 20;
                 else if (result.note.type === 'ability') this.thiefDamageBonus += 0.15;
-                this.resolveThiefFlybyAttack();
             }
             return;
         }
@@ -4168,32 +4211,72 @@ class GameController {
     // 盗賊B「連打」: ギミック終了後にまとめて払い出すのではなく、Perfectを取った
     // その瞬間に画面上の全ての敵へ弱攻撃を即時に与える。
     // (大幅に弱体化: 基礎威力を下げ、Perfect補正(upgrades.perfect倍率)も乗らないようにする)
-    // 盗賊B「連打」: 敵を1体選んでそこへ向かって飛び、すれ違いざまに周囲の敵ごと攻撃する。
-    // 飛距離(thiefDistanceBonus)・速度(thiefSpeedBonus)・ダメージ(thiefDamageBonus)は
-    // ギミック中に打ったノーツ種別に応じて蓄積したボーナスを反映する
-    resolveThiefFlybyAttack() {
+    resolveRapidFireGroupHit() {
+        const dmg = Math.floor(this.localPlayer.getDamage(1, 'good'));
+        this.stage.enemies.forEach(e => {
+            if (e.dead || e.falling) return;
+            const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+            this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#9b59b6', 6);
+            this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#9b59b6', 14);
+            if (e.dead) {
+                this.stage.totalScore += e.data.score;
+            }
+        });
+        // 通常のPerfect判定音(checkInput内で既に鳴っている)に重ねてここでも
+        // 能力音を鳴らすと、連打中は0.5拍おきに音が二重に重なって聞こえ、
+        // 音がズレているように感じる原因になっていたため、ここでは鳴らさない
+    }
+
+    // 盗賊A「地震」: 拍のタイミングで自動的に(ノーツとは無関係に)発動する、空中の敵へ
+    // 向かって飛んですれ違いざまに攻撃するフライバイを1回開始する。
+    // 飛距離(thiefDistanceBonus)は着地点を通り過ぎる分の伸びとして反映される
+    startThiefFlyby() {
         const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState);
         if (candidates.length === 0) return;
         const target = candidates[Math.floor(Math.random() * candidates.length)];
-        const dir = Math.sign(target.x - this.localPlayer.x) || this.localPlayer.facing;
-        this.localPlayer.facing = dir;
-        this.localPlayer.edgeDash(dir);
-        this.localPlayer.dashSpeedMult = 18 * (1 + this.thiefSpeedBonus);
-        this.renderer.addEdgeDash(this.localPlayer.y - 40, dir, '#2ecc71');
+        const overshoot = 60 + this.thiefDistanceBonus;
+        const dx = target.x - this.localPlayer.x;
+        const dy = target.y - this.localPlayer.y;
+        const dist = Math.max(1, Math.hypot(dx, dy));
+        const dirX = dx / dist, dirY = dy / dist;
+        this.localPlayer.facing = Math.sign(dx) || this.localPlayer.facing;
+        this.thiefFlyby = {
+            fromX: this.localPlayer.x, fromY: this.localPlayer.y,
+            toX: target.x + dirX * overshoot, toY: target.y + dirY * overshoot,
+            timer: 0, duration: 0.35, hitIds: new Set(),
+        };
         this.audio.playDashSound();
+    }
 
-        // すれ違った敵全体(狙った敵の周囲)にダメージ。飛距離ボーナスの分だけ範囲が広がる
-        const splashRadius = 100 + this.thiefDistanceBonus;
+    // 盗賊A「地震」: 発動中のフライバイを毎フレーム進行させ、実際に触れた(すれ違った)
+    // 敵全体にダメージを与える(その周囲への追加ダメージはない)。ダメージ量は
+    // 能力ノーツで蓄積したthiefDamageBonusを反映する
+    updateThiefFlyby(dt) {
+        if (!this.thiefFlyby) return;
+        const fb = this.thiefFlyby;
+        fb.timer += dt;
+        const t = Math.min(1, fb.timer / fb.duration);
+        this.localPlayer.x = fb.fromX + (fb.toX - fb.fromX) * t;
+        this.localPlayer.y = fb.fromY + (fb.toY - fb.fromY) * t;
+        this.localPlayer.state = 'attack';
+
         const dmg = Math.floor(this.localPlayer.getDamage(6, 'good') * (1 + this.thiefDamageBonus));
         this.stage.enemies.forEach(e => {
-            if (e.dead || e.falling || e.blackHoleState) return;
-            if (Math.abs(e.x - target.x) < splashRadius) {
+            if (e.dead || e.falling || e.blackHoleState || fb.hitIds.has(e)) return;
+            const dist = Math.hypot(e.x - this.localPlayer.x, e.y - this.localPlayer.y);
+            if (dist < e.data.size * 0.6 + 20) {
+                fb.hitIds.add(e);
                 const actualDmg = this.dealEnemyDamage(e, dmg, 'sword');
                 this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#2ecc71', 6);
                 this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#2ecc71', 14);
                 if (e.dead) this.stage.totalScore += e.data.score;
             }
         });
+
+        if (t >= 1) {
+            this.thiefFlyby = null;
+            this.localPlayer.state = 'idle';
+        }
     }
 
     // 剣士「上に弾くノーツ」: ノーツを打った分だけ画面下部への蓄積数を1増やす
@@ -4621,12 +4704,15 @@ class GameController {
         // ここでは二重にupdateせず、ネットワーク経由で届く見た目の状態を反映するだけにする
         this.players.forEach(p => {
             if (p.isRemotePuppet) return;
+            // 盗賊A「地震」: フライバイ攻撃の最中は位置をこちら側で直接動かすため、
+            // 通常の間合いAIは呼ばない
+            if (p === this.localPlayer && this.thiefFlyby) return;
             const holdGimmickTimer = (p === this.localPlayer) && this.shouldHoldGimmickTimer();
-            // 盗賊B「連打」: ギミック発動直後のほんの一瞬だけ、自分も超スローになる
+            // 発動中は自分も超スローになるが、カウンターノーツのボーナス(thiefSpeedBonus)で
+            // だんだん解除されていく
             let playerDt = dt;
-            if (p === this.localPlayer && activeGimmick.special === 'rapidFire' && this.thiefSlowMotionTimer > 0) {
-                this.thiefSlowMotionTimer -= dt;
-                playerDt = dt * 0.2;
+            if (p === this.localPlayer && activeGimmick.special === 'resonanceShake') {
+                playerDt = dt * Math.min(1.5, 0.15 + this.thiefSpeedBonus);
             }
             p.update(playerDt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer);
         });
@@ -4693,58 +4779,97 @@ class GameController {
         // generateDefendNote)の中で、生成された瞬間にだけ判定される
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
-        // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
-        if (localAlive && activeGimmick.special === 'rapidFire') {
-            if (this.rhythm.rapidFireNextBeat === null) {
-                // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降はカウンター・攻撃・
-                // 能力ノーツが半拍ずつずれて休みなく続く。敵を打ち上げて超スローにし、
-                // 自分もほんの一瞬だけ超スローになる。蓄積ボーナスもリセットする
+        const isResonanceShake = activeGimmick.special === 'resonanceShake';
+
+        // 盗賊A「地震」: カウンター・攻撃・能力ノーツが半拍ずつずれて休みなく続く。
+        // 敵を高く打ち上げて超スローの放物線で落下させ、自分もほんの一瞬だけ超スローになる。
+        // 実際の攻撃(フライバイ)はノーツとは無関係に、拍のタイミングで自動的に発動する
+        if (localAlive && isResonanceShake) {
+            if (this.rhythm.resonanceNextBeat === null) {
                 this.rhythm.swordNotes = [];
                 this.rhythm.abilityNotes = [];
-                this.rhythm.rapidFireNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
-                this.rhythm.rapidFireAlternator = 0;
+                this.rhythm.resonanceNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+                this.rhythm.resonanceAlternator = 0;
                 this.rhythm.abilityActive = true;
                 this.thiefSpeedBonus = 0;
                 this.thiefDistanceBonus = 0;
                 this.thiefDamageBonus = 0;
-                this.thiefSlowMotionTimer = 1.0;
+                this.thiefNextFlybyBeat = this.audio.getCurrentBeat();
                 this.stage.enemies.forEach(e => {
                     if (e.dead || e.falling || e.blackHoleState) return;
                     e.thiefSlowMotion = true;
-                    e.tween = { fromX: e.x, fromY: e.y, toX: e.x, toY: e.y - 50, timer: 0, duration: 0.3, onComplete: null };
+                    e.thiefLaunched = true;
+                    e.vy = -900; // 高く打ち上げる(スロー化されたdtの下で落下していく)
                 });
             }
-            const rapidFireHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
-            while (this.rhythm.rapidFireNextBeat < rapidFireHorizon) {
-                const cycle = this.rhythm.rapidFireAlternator % 3;
+            const resonanceHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
+            while (this.rhythm.resonanceNextBeat < resonanceHorizon) {
+                const cycle = this.rhythm.resonanceAlternator % 3;
                 const type = cycle === 0 ? 'sword' : cycle === 1 ? 'defend' : 'ability';
                 const note = {
                     id: this.rhythm.noteId++,
-                    beat: this.rhythm.rapidFireNextBeat,
+                    beat: this.rhythm.resonanceNextBeat,
                     type,
                     hit: false,
                     missed: false,
-                    rapidFireNote: true,
+                    resonanceNote: true,
                 };
                 if (type === 'sword') this.rhythm.swordNotes.push(note);
                 else if (type === 'defend') this.rhythm.defendNotes.push(note);
                 else this.rhythm.abilityNotes.push(note);
+                this.rhythm.resonanceAlternator++;
+                this.rhythm.resonanceNextBeat += 0.5;
+            }
+            // ちょうど次の拍のタイミングで、ノーツの判定とは無関係に次のフライバイを自動発動する
+            // (地面に触れている必要はない)
+            if (!this.thiefFlyby && this.thiefNextFlybyBeat !== null && this.audio.getCurrentBeat() >= this.thiefNextFlybyBeat) {
+                this.startThiefFlyby();
+                this.thiefNextFlybyBeat = Math.ceil(this.audio.getCurrentBeat() + 0.001);
+            }
+        } else if (localAlive && this.rhythm.resonanceNextBeat !== null) {
+            // ギミック終了: 敵の超スローを解除し(落下は通常重力のまま続ける)、
+            // フライバイの予約を止め、プレイヤーを地面へ戻す
+            this.rhythm.resonanceNextBeat = null;
+            this.rhythm.abilityActive = false;
+            this.thiefFlyby = null;
+            this.thiefNextFlybyBeat = null;
+            this.localPlayer.y = CONSTANTS.GROUND_Y;
+            this.stage.enemies.forEach(e => {
+                e.thiefSlowMotion = false;
+                e.thiefLaunched = false;
+            });
+        }
+
+        // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
+        if (localAlive && isRapidFire) {
+            if (this.rhythm.rapidFireNextBeat === null) {
+                // ギミック発動の瞬間: 既存ノーツを全て吹き飛ばし、以降はカウンターノーツと
+                // 攻撃ノーツが半拍ずつずれて交互に休みなく続く
+                this.rhythm.swordNotes = [];
+                this.rhythm.rapidFireNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+                this.rhythm.rapidFireAlternator = 0;
+            }
+            const rapidFireHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
+            while (this.rhythm.rapidFireNextBeat < rapidFireHorizon) {
+                const isSword = this.rhythm.rapidFireAlternator % 2 === 0;
+                const note = {
+                    id: this.rhythm.noteId++,
+                    beat: this.rhythm.rapidFireNextBeat,
+                    type: isSword ? 'sword' : 'defend',
+                    hit: false,
+                    missed: false,
+                    rapidFireNote: true,
+                };
+                if (isSword) {
+                    this.rhythm.swordNotes.push(note);
+                } else {
+                    this.rhythm.defendNotes.push(note);
+                }
                 this.rhythm.rapidFireAlternator++;
                 this.rhythm.rapidFireNextBeat += 0.5;
             }
-        } else if (localAlive) {
-            if (this.rhythm.rapidFireNextBeat !== null) {
-                this.rhythm.rapidFireNextBeat = null;
-                this.rhythm.abilityActive = false;
-                // ギミック終了: 敵の超スローを解除し、打ち上げていた分を地面へ戻す
-                this.stage.enemies.forEach(e => {
-                    if (!e.thiefSlowMotion) return;
-                    e.thiefSlowMotion = false;
-                    if (!e.dead && !e.blackHoleState) {
-                        e.tween = { fromX: e.x, fromY: e.y, toX: e.x, toY: e.groundY, timer: 0, duration: 0.3, onComplete: null };
-                    }
-                });
-            }
+        } else if (localAlive && !isResonanceShake) {
+            if (this.rhythm.rapidFireNextBeat !== null) this.rhythm.rapidFireNextBeat = null;
             if (!this.rhythm.swordBurstActive) {
                 const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
                     Math.abs(e.x - this.localPlayer.x) < this.localPlayer.getAttackRange());
@@ -4754,8 +4879,8 @@ class GameController {
             }
         }
 
-        // 能力バーストをクールダウン明けに自動開始する（連打中は他のノーツを混ぜない）
-        if (localAlive && !isRapidFire && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
+        // 能力バーストをクールダウン明けに自動開始する（連打・地震中は他のノーツを混ぜない）
+        if (localAlive && !isRapidFire && !isResonanceShake && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
             this.localPlayer.useAbility();
             this.audio.playAbilitySound();
             this.rhythm.startAbility(4, this.localPlayer.getActiveGimmick());
@@ -4846,6 +4971,27 @@ class GameController {
             }
         }
 
+        // 盗賊B「連打」Perfect時のダッシュの道中、通り過ぎた敵に弱攻撃を入れる
+        // (ダッシュ1回につき同じ敵への多重ヒットは防ぐ)
+        if (this.rapidFireSweepHitIds) {
+            if (this.localPlayer.dashTimer > 0) {
+                const sweepDmg = Math.floor(this.localPlayer.getDamage(4, 'good'));
+                this.stage.enemies.forEach(e => {
+                    if (e.dead || e.falling) return;
+                    if (this.rapidFireSweepHitIds.has(e)) return;
+                    if (Math.abs(e.x - this.localPlayer.x) < 60) {
+                        this.dealEnemyDamage(e, sweepDmg, 'sword');
+                        this.rapidFireSweepHitIds.add(e);
+                        this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#ff6b35', 6);
+                    }
+                });
+            } else {
+                this.rapidFireSweepHitIds = null;
+            }
+        }
+
+        // 盗賊A「地震」: 発動中のフライバイ攻撃を進行させる
+        this.updateThiefFlyby(dt);
 
         // 防御ノーツを取りこぼした瞬間、周囲の敵からまとめてダメージを受ける
         if (this.rhythm.defendMissThisFrame && this.localPlayer.invincible <= 0) {
