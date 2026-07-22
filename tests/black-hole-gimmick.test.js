@@ -62,4 +62,30 @@ if (flying.isAttacking || flying.attackWarning) {
     throw new Error('a flying enemy must never start an attack mid-flight');
 }
 
+// ブラックホールに吸い込まれている間(吸い込まれる途中も含む)は無敵になり、
+// 外部からのダメージを一切受けない
+const invuln1 = new Enemy('normal', 500, CONSTANTS.GROUND_Y, 1);
+invuln1.blackHoleState = 'sucked';
+const hpBefore1 = invuln1.hp;
+invuln1.takeDamage(9999, 'sword');
+if (invuln1.hp !== hpBefore1 || invuln1.dead) {
+    throw new Error('an enemy sucked into the black hole must be invulnerable to damage');
+}
+
+const invuln2 = new Enemy('normal', 500, CONSTANTS.GROUND_Y, 1);
+invuln2.blackHoleState = 'suckingIn';
+const hpBefore2 = invuln2.hp;
+invuln2.takeDamage(9999, 'sword');
+if (invuln2.hp !== hpBefore2 || invuln2.dead) {
+    throw new Error('an enemy still being sucked in must also be invulnerable to damage');
+}
+
+// 一方、爆発で解放され宙を飛んでいる間(flying)は、着地・衝突ダメージを受ける通常仕様のまま
+const stillVulnerable = new Enemy('normal', 500, CONSTANTS.GROUND_Y, 1);
+stillVulnerable.blackHoleState = 'flying';
+stillVulnerable.takeDamage(9999, 'sword');
+if (!stillVulnerable.dead) {
+    throw new Error('a flying (already-launched) enemy should still be able to take damage normally');
+}
+
 console.log('BLACK HOLE GIMMICK OK');

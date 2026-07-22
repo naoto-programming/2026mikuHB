@@ -74,7 +74,7 @@ if (fourPlayerWaveSize <= soloWaveSize) {
 const stage5 = new StageManager();
 stage5.start(90);
 stage5.update(0, [{}]);
-stage5.endlessEnemyCountMult = ENDLESS_ENEMY_COUNT_MULT.many; // 「多」設定(1.6倍)
+stage5.endlessEnemyCountMult = ENDLESS_ENEMY_COUNT_MULT.many; // 「多」設定
 stage5.waveTimer = 0;
 stage5.spawnWave();
 const manyWaveSize = stage5.enemies.length;

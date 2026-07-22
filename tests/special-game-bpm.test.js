@@ -10,11 +10,11 @@ const { detectBeatGrid, AudioSystem } = globalThis.GameLogic;
 
 // 既知のBPM・開始位相のクリック列(一定間隔で音量が急上昇するインパルス)を含む疑似音声
 // データを作り、detectBeatGridがそのテンポと拍の開始位置の両方を正しく推定できるか検証する
-function makeClickTrack(bpm, sampleRate, seconds, leadInSeconds = 0) {
+function makeClickTrack(bpm, sampleRate, seconds, leadInSeconds = 0, endSeconds = seconds) {
     const beatInterval = 60 / bpm;
     const length = Math.floor(sampleRate * seconds);
     const data = new Float32Array(length);
-    for (let t = leadInSeconds; t < seconds; t += beatInterval) {
+    for (let t = leadInSeconds; t < endSeconds; t += beatInterval) {
         const start = Math.floor(t * sampleRate);
         // 短いクリック(数msの矩形パルス)を打つ
         for (let i = 0; i < sampleRate * 0.02 && start + i < length; i++) {
@@ -50,6 +50,22 @@ const beatInterval = 60 / detectedWithLeadIn;
 const phaseDiff = Math.abs(((offsetSeconds - leadIn + beatInterval / 2) % beatInterval + beatInterval) % beatInterval - beatInterval / 2);
 if (phaseDiff > 0.05) {
     throw new Error(`detectBeatGrid's offsetSeconds should align with the lead-in (${leadIn}s), got offset ${offsetSeconds}s (phase diff ${phaseDiff}s)`);
+}
+
+// 曲データの末尾に無音区間が続いている場合、そこにもノーツを流し続けると不自然なため、
+// contentEndSecondsは実際に音が鳴っている終端(+0.5秒の猶予)を返す。ファイル全体の
+// 長さ(duration)まで無音が続いていても、そこで終わったことにする
+const musicEnd = 7; // 7秒で曲は終わり、10秒までは無音
+const bufferWithTrailingSilence = makeClickTrack(knownBpm, sampleRate, 10, 0, musicEnd);
+const { contentEndSeconds } = detectBeatGrid(bufferWithTrailingSilence);
+if (contentEndSeconds >= 10 - 0.01) {
+    throw new Error('contentEndSeconds should not extend into trailing silence up to the full 10s duration, got ' + contentEndSeconds);
+}
+// 最後のクリックはmusicEnd未満(拍間隔単位)の時点で鳴るため、+0.5秒の猶予を足しても
+// musicEndちょうどにはならない。ここでは「無音区間まで巻き込まれていない」ことを
+// beatInterval1つ分+猶予の範囲で確認する
+if (contentEndSeconds < musicEnd - 1 || contentEndSeconds > musicEnd + 0.6) {
+    throw new Error('contentEndSeconds should land shortly after the last real onset (~' + musicEnd + 's), got ' + contentEndSeconds);
 }
 
 // AudioSystem.setPreloadedBufferは、通常loadTrackが行うfetch/decodeを介さずに
