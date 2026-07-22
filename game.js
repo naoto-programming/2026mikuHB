@@ -3251,6 +3251,9 @@ class GameController {
     // ホストがロビーの「開始」ボタンを押した時に呼ばれる。全員(ホスト含む)を
     // キャラクター選択画面へ進める(この時点ではまだゲームは始まらない)
     beginCharacterSelectPhase() {
+        // ホスト以外に1人も参加していない状態では開始させない(ボタンは通常disabledだが、
+        // 念のためここでも防御する)
+        if (Object.keys(this.network.roster).length < 1) return;
         // 新しいキャラクター選択フェーズの開始。ホストはまだ自分の選択を確定していない状態に戻す
         // (selectedCharはデフォルト値を持つため、これで判定しないと前回の値が残ってしまう)
         this.hostConfirmedChar = false;
@@ -3898,9 +3901,10 @@ class GameController {
     }
 
     // 部屋コードのロビー画面(まだキャラクター選択前)の参加者一覧を更新する。
-    // 「開始」ボタンはここでは常に押せる(ホストが好きなタイミングで全員をキャラクター
-    // 選択へ進められる)。参加者の名前はネットワーク経由で届く(信頼できない)値のため、
-    // innerHTMLへの文字列埋め込みは避け、textContentで安全にDOMへ反映する
+    // 「開始」ボタンはホスト以外に1人以上参加するまでは押せない(ホスト1人だけで
+    // マルチプレイを始めても意味がないため)。参加者の名前はネットワーク経由で届く
+    // (信頼できない)値のため、innerHTMLへの文字列埋め込みは避け、textContentで
+    // 安全にDOMへ反映する
     updatePlayerList() {
         const list = document.getElementById('playerList');
         list.innerHTML = '';
@@ -3915,7 +3919,14 @@ class GameController {
             addTag(String(p.name || '参加者'));
         });
         const total = 1 + Object.keys(this.network.roster).length;
-        document.getElementById('startMultiBtn').textContent = `開始(全員でキャラクター選択へ・現在${total}人)`;
+        const startBtn = document.getElementById('startMultiBtn');
+        if (total >= 2) {
+            startBtn.disabled = false;
+            startBtn.textContent = `開始(全員でキャラクター選択へ・現在${total}人)`;
+        } else {
+            startBtn.disabled = true;
+            startBtn.textContent = `あと1人以上集まると開始できます(現在${total}人)`;
+        }
     }
 
     // forcedTrack: LANマルチプレイでホストが選んだ曲を参加者側でも同じものにするため、
