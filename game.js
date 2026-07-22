@@ -895,8 +895,11 @@ class RhythmSystem {
         if (judge !== 'miss') {
             nearest.hit = true;
             if (inputType !== 'ability') {
-                this.combo++;
-                if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                // パーフェクト/グレイトはコンボ+1、グッドはコンボを変化させない(現状維持)
+                if (judge === 'perfect' || judge === 'great') {
+                    this.combo++;
+                    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                }
 
                 const baseScore = 100;
                 const comboBonus = Math.min(this.combo * 10, 500);
@@ -910,7 +913,10 @@ class RhythmSystem {
 
                 return { judge, multiplier, note: nearest, points, combo: this.combo };
             } else {
-                this.audio.playHitSound('good');
+                // 能力ノーツも1つずつ実際の判定(パーフェクト/グレイト/グッド)に応じた
+                // 効果音・演出を出す(コンボ・スコアには影響させない、既存仕様のまま)
+                this.audio.playHitSound(judge);
+                if (this.onJudge) this.onJudge(judge, 0, this.combo);
                 return { judge, multiplier: 1, note: nearest, points: 0, combo: 0, ability: true };
             }
         } else {
@@ -1140,6 +1146,10 @@ class Player {
         // 複数人プレイ時、全員がまったく同じ「画面中央」を好んでしまうと重なってしまうため、
         // 各プレイヤーごとに個別の(ちょっとズレた)中央位置を割り当てる
         this.centerOffset = (Math.random() - 0.5) * 160;
+        // ダメージを受けた時のノックバック(向き・上向き速度)
+        this.hitKnockbackTimer = 0;
+        this.hitKnockbackDir = 1;
+        this.hitKnockbackVY = 0;
         this.hp = this.char.hp;
         this.maxHp = this.char.hp;
         this.atk = this.char.atk;
@@ -1231,6 +1241,23 @@ class Player {
                 this.gimmickTimer = GIMMICK_NORMAL_SECONDS;
                 this.gimmickIndex = 1 - this.gimmickIndex; // 次のspecialフェーズに備えて反転させておく
             }
+        }
+
+        if (this.hitKnockbackTimer > 0) {
+            // ダメージを受けた時、しっかりノックバックしてから通常AIに戻る。
+            // 上向きに飛んだ後は重力で戻ってくるが、地面より下にはめり込ませない。
+            // タイマーが切れた時点でまだ空中でも、宙に浮いたままにならないよう地面へ戻す
+            this.hitKnockbackTimer -= dt;
+            this.x += this.hitKnockbackDir * 260 * dt;
+            this.hitKnockbackVY += 1400 * dt;
+            this.y += this.hitKnockbackVY * dt;
+            if (this.y > CONSTANTS.GROUND_Y || this.hitKnockbackTimer <= 0) {
+                this.y = CONSTANTS.GROUND_Y;
+                this.hitKnockbackVY = 0;
+            }
+            this.x = Math.max(scrollX + 50, Math.min(this.x, scrollX + CONSTANTS.CANVAS_WIDTH - 50));
+            if (this.animTimer > 0.1) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
+            return;
         }
 
         if (this.dashTimer > 0) {
@@ -1374,13 +1401,19 @@ class Player {
         this.pulseTimer = 0.2;
     }
 
-    takeDamage(dmg) {
+    takeDamage(dmg, attackerY) {
         if (this.invincible > 0) return 0;
         this.hp -= dmg;
         this.invincible = 0.5 + this.upgrades.invincible;
         this.flashTimer = 0.2;
         this.state = 'hurt';
         if (this.hp <= 0) this.hp = 0;
+        // どの攻撃を受けても、しっかりノックバックする。高さ関係で上向き成分を決める
+        // (相手の方が高い/同じなら自分はさらに上へ、相手の方が低くても地面にはめり込ませない)
+        this.hitKnockbackTimer = 0.25;
+        this.hitKnockbackDir = -this.facing || (Math.random() < 0.5 ? -1 : 1);
+        const ay = (typeof attackerY === 'number') ? attackerY : this.y;
+        this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) : -180;
         return dmg;
     }
 
@@ -1485,9 +1518,17 @@ class Enemy {
         if (this.animTimer > 0.15) { this.animFrame = (this.animFrame + 1) % 4; this.animTimer = 0; }
 
         if (this.hitKnockbackTimer > 0) {
-            // どの攻撃でヒットしても、生きている間は軽く仰け反ってから通常AIに戻る
+            // どの攻撃でヒットしても、生きている間はしっかり仰け反ってから通常AIに戻る。
+            // 上向きに飛んだ後は重力で戻ってくるが、地面より下にはめり込ませない。
+            // タイマーが切れた時点でまだ空中でも、宙に浮いたままにならないよう地面へ戻す
             this.hitKnockbackTimer -= dt;
-            this.x += this.hitKnockbackDir * 90 * dt;
+            this.x += this.hitKnockbackDir * 260 * dt;
+            this.hitKnockbackVY = (this.hitKnockbackVY || 0) + 1400 * dt;
+            this.y += this.hitKnockbackVY * dt;
+            if (this.y > this.groundY || this.hitKnockbackTimer <= 0) {
+                this.y = this.groundY;
+                this.hitKnockbackVY = 0;
+            }
             return;
         }
 
@@ -1647,7 +1688,7 @@ class Enemy {
         }
     }
 
-    takeDamage(dmg, type = 'normal') {
+    takeDamage(dmg, type = 'normal', attackerY) {
         // 上空から落下中は、まだ「敵」として着地していないため攻撃を受け付けない
         // (着地した瞬間から通常のダメージ処理が有効になる)
         if (this.dead || this.falling) return 0;
@@ -1665,12 +1706,17 @@ class Enemy {
             this.knockbackDir = Math.random() < 0.5 ? -1 : 1;
             return dmg + this.data.score;
         }
-        // どの攻撃でも、生きている間はヒットするたびに軽く仰け反る(ノックバック)。
+        // どの攻撃でも、生きている間はヒットするたびにしっかり仰け反る(ノックバック)。
         // ブラックホールに吸い込まれている/吹き飛ばされている間やtween移動中は、
         // 別の仕組みで位置が制御されているためノックバックにより弊害が起きる。除外する
         if (!this.blackHoleState && !this.tween) {
-            this.hitKnockbackTimer = 0.15;
+            this.hitKnockbackTimer = 0.25;
             this.hitKnockbackDir = Math.random() < 0.5 ? -1 : 1;
+            // 攻撃者と自分の高さの関係で上向き成分を決める: 自分の方が高い(もしくは同じ)
+            // 場合はそのまま(さらに)上へ、自分の方が低い場合も地面にめり込まないよう
+            // 必ず上向きの成分を持たせる
+            const ay = (typeof attackerY === 'number') ? attackerY : this.y;
+            this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) : -180;
         }
         return dmg;
     }
@@ -1777,12 +1823,16 @@ class StageManager {
     // 敵大量投下からも共通で使う
     spawnEnemies(count) {
         const mod = this.getStageMod();
+        // 特別ゲーム・エンドレスモードはウェーブを重ねてもstageが1のまま進み続けるため、
+        // ウェーブ数からも疑似的な段階を計算し、実際のstageより高ければそちらを使う
+        // (通常モードはstageが確実に上回るため、この変更による挙動の違いはない)
+        const effectiveStage = Math.max(this.stage, 1 + Math.floor(this.currentWave / 3));
         const types = ['normal'];
-        if (this.stage >= 2) types.push('ranged');
-        if (this.stage >= 2) types.push('suicide');
-        if (this.stage >= 3) types.push('defense');
-        if (this.stage >= 3) types.push('healer');
-        if (this.stage >= 4) types.push('large');
+        if (effectiveStage >= 2) types.push('ranged');
+        if (effectiveStage >= 2) types.push('suicide');
+        if (effectiveStage >= 3) types.push('defense');
+        if (effectiveStage >= 3) types.push('healer');
+        if (effectiveStage >= 4) types.push('large');
 
         for (let i = 0; i < count; i++) {
             const type = types[Math.floor(Math.random() * types.length)];
@@ -4194,8 +4244,9 @@ class GameController {
     // LANマルチプレイ用: 敵にダメージを与える共通の入口。ソロ/ホスト時はそのまま
     // 適用するだけだが、クライアント時はホスト(権威側)にも通知し、ホストの状態と
     // 一致させる(ホストからの次回のworldState同期で最終的に上書き・確定する)
-    dealEnemyDamage(enemy, dmg, type) {
-        const actualDmg = enemy.takeDamage(dmg, type);
+    dealEnemyDamage(enemy, dmg, type, attackerY) {
+        // 攻撃者の高さ(省略時はプレイヤー基準)によって、ノックバックの上向き成分が変わる
+        const actualDmg = enemy.takeDamage(dmg, type, attackerY !== undefined ? attackerY : this.localPlayer.y);
         this.notifyEnemyDamage(enemy, dmg, type);
         return actualDmg;
     }
@@ -4373,7 +4424,10 @@ class GameController {
     // 1体選んで画面中央のブラックホールへ吸い込む。瞬間移動に見えないよう、まず吸い込まれる
     // までの短い移動アニメーション(tween)を経由してから、内部でバラバラに周回する状態になる
     suckEnemyIntoBlackHole() {
-        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState && !e.tween);
+        // 自分の近く(小さい範囲内)にいる敵だけを吸い込みの対象にする
+        const suckRange = 250;
+        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState && !e.tween &&
+            Math.abs(e.x - this.localPlayer.x) < suckRange);
         if (candidates.length === 0) return;
         const target = candidates[Math.floor(Math.random() * candidates.length)];
         const cx = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
@@ -4398,7 +4452,8 @@ class GameController {
         const sucked = this.stage.enemies.filter(e => e.blackHoleState === 'sucked');
         sucked.forEach(e => {
             const angle = Math.random() * Math.PI * 2;
-            const speed = 480 + Math.random() * 260;
+            // ダメージはそのまま、吹き飛ばす勢い(速度)だけをさらに強める
+            const speed = 800 + Math.random() * 400;
             e.blackHoleState = 'flying';
             e.flyVX = Math.cos(angle) * speed;
             e.flyVY = Math.sin(angle) * speed;

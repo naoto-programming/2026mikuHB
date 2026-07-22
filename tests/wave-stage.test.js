@@ -82,4 +82,16 @@ if (manyWaveSize <= soloWaveSize) {
     throw new Error('endlessEnemyCountMult should scale up the wave size, got solo=' + soloWaveSize + ' many=' + manyWaveSize);
 }
 
+// 特別ゲーム・エンドレスモードはstageが1のまま進み続けるが、ウェーブ数が十分進めば
+// (ウェーブが特殊敵の出現段階を疑似的に肩代わりして)特殊な敵種別も出現するようになる
+const stage6 = new StageManager();
+stage6.start(90);
+stage6.currentWave = 12; // stageは1のままだが、ウェーブは十分進んでいる想定
+stage6.waveTimer = 0;
+stage6.spawnEnemies(60);
+const spawnedTypes = new Set(stage6.enemies.map(e => e.type));
+if (spawnedTypes.size <= 1) {
+    throw new Error('after enough waves, special enemy types should start appearing even while stage stays at 1, got only: ' + Array.from(spawnedTypes).join(','));
+}
+
 console.log('WAVE STAGE OK');
