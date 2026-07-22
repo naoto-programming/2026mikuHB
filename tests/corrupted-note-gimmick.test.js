@@ -4,7 +4,7 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { RhythmSystem, AudioSystem, CONSTANTS, MAX_CORRUPTED_NOTES } = globalThis.GameLogic;
+const { RhythmSystem, AudioSystem, CONSTANTS, MAX_CORRUPTED_NOTES, MIN_CORRUPT_STAGGER_BEATS } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -38,10 +38,23 @@ if (!rhythmB.swordNotes.some(n => n.corrupted)) throw new Error('one of the newl
 if (!rhythmB.hasCorruptedNote()) throw new Error('hasCorruptedNote should report true once a note is corrupted');
 
 // 発生量を増やすため、同時にMAX_CORRUPTED_NOTES件までは感染ノーツが存在できる。
-// 1件目が残っている間に2件目を生成する余地(防御ノーツ等)があれば、上限までは追加で感染する
+// 1件目が残っている間に2件目を生成する余地(防御ノーツ等)があれば、上限までは追加で感染する。
+// ただし4件が一気に(ほぼ同時に)出現すると分かりづらいため、前回の感染からある程度
+// 拍が経つまでは新たに感染させない(少しずつタイミングをずらして出現させる)
 if (MAX_CORRUPTED_NOTES < 2) throw new Error('this test assumes MAX_CORRUPTED_NOTES is at least 2, got ' + MAX_CORRUPTED_NOTES);
+
+// タイミングをずらさず(拍を進めず)連続で生成しても、間隔が足りない限り2件目以降は感染しない
+rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 10, { special: 'corruptedNote' });
+rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 11, { special: 'corruptedNote' });
+const immediateCorruptedCount = rhythmB.swordNotes.filter(n => n.corrupted).length + rhythmB.defendNotes.filter(n => n.corrupted).length;
+if (immediateCorruptedCount !== 1) {
+    throw new Error('a second note must not be corrupted immediately after the first, without enough beats passing in between, got ' + immediateCorruptedCount);
+}
+
+// 拍を十分進めながら生成を繰り返せば、少しずつタイミングをずらしてMAX_CORRUPTED_NOTES件まで増える
 for (let i = 0; i < MAX_CORRUPTED_NOTES + 3; i++) {
-    rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 10 + i, { special: 'corruptedNote' });
+    audioB.ctx.currentTime += (MIN_CORRUPT_STAGGER_BEATS + 1) * (60 / audioB.bpm);
+    rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 20 + i, { special: 'corruptedNote' });
 }
 const totalCorrupted = rhythmB.swordNotes.filter(n => n.corrupted).length + rhythmB.defendNotes.filter(n => n.corrupted).length;
 if (totalCorrupted !== MAX_CORRUPTED_NOTES) {
