@@ -88,4 +88,22 @@ if (!stillVulnerable.dead) {
     throw new Error('a flying (already-launched) enemy should still be able to take damage normally');
 }
 
+// 高速で吹き飛んでいる最中(x座標が画面外判定の範囲を大きく超えることがある)でも、
+// 通常敵向けの画面外dead化処理に巻き込まれてはいけない(GameController側の
+// updateBlackHoleFlyingEnemiesが着地を検出するまで、flying状態のまま飛び続けるべき)。
+// 以前はflying分岐にreturnがなく、末尾の共通処理(画面外なら問答無用でdead化)まで
+// 流れてしまっていたため、水平方向に高速で飛ぶと戻ってこなくなる不具合があった
+const fastFlying = new Enemy('normal', 500, 300, 1);
+fastFlying.groundY = 600;
+fastFlying.blackHoleState = 'flying';
+fastFlying.flyVX = 5000;
+fastFlying.flyVY = -50;
+for (let i = 0; i < 10; i++) fastFlying.update(1 / 60, [], 0, [fastFlying]);
+if (fastFlying.dead) {
+    throw new Error('a fast-flying black-hole enemy must not be marked dead by the generic off-screen check; only updateBlackHoleFlyingEnemies should resolve its flying state');
+}
+if (fastFlying.blackHoleState !== 'flying') {
+    throw new Error('the enemy should remain in the flying state until GameController resolves it, got ' + fastFlying.blackHoleState);
+}
+
 console.log('BLACK HOLE GIMMICK OK');

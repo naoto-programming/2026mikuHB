@@ -71,20 +71,27 @@ function makePlayer(charId) {
 }
 
 // 魔法使い「ノーツメテオ」: 距離を問わず生存中の敵から、全員ではなくランダムな数体(1体以上、
-// 生存数以下)にだけヒットする
+// 生存数以下)を対象に選ぶ。「ノーツ直撃→爆発→ダメージ」の順に見えるよう、ここでは
+// ダメージを即座に適用せず、対象と予定ダメージをpendingMeteorとして返すだけにする
+// (実際のダメージ適用は呼び出し側でメテオ演出が着地した時に行う)
 {
     const player = makePlayer('mage');
     for (let trial = 0; trial < 20; trial++) {
         // 弱ダメージとはいえ繰り返し当てると倒れてしまうため、毎回新しい敵で試行する
         const enemies = [new Enemy('normal', 100, 0, 1), new Enemy('normal', 5000, 0, 1), new Enemy('normal', -300, 0, 1)];
         const outcome = applyAbility('mage', 1, player, enemies, 0);
-        if (outcome.hits.length < 1 || outcome.hits.length > enemies.length) {
-            throw new Error('mage ability should hit between 1 and all alive enemies, got ' + outcome.hits.length);
+        if (outcome.hits.length !== 0) {
+            throw new Error('mage ability must not apply damage immediately (it should be deferred via pendingMeteor), got ' + outcome.hits.length + ' immediate hits');
         }
-        const hitEnemies = new Set(outcome.hits.map(h => h.enemy));
-        if (hitEnemies.size !== outcome.hits.length) throw new Error('mage ability should not hit the same enemy twice');
-        outcome.hits.forEach(h => {
-            if (!enemies.includes(h.enemy)) throw new Error('mage ability hit an enemy that was not in the provided list');
+        if (!outcome.pendingMeteor || outcome.pendingMeteor.length < 1 || outcome.pendingMeteor.length > enemies.length) {
+            throw new Error('mage ability should target between 1 and all alive enemies via pendingMeteor, got ' + (outcome.pendingMeteor && outcome.pendingMeteor.length));
+        }
+        const targeted = new Set(outcome.pendingMeteor.map(h => h.enemy));
+        if (targeted.size !== outcome.pendingMeteor.length) throw new Error('mage ability should not target the same enemy twice');
+        outcome.pendingMeteor.forEach(h => {
+            if (!enemies.includes(h.enemy)) throw new Error('mage ability targeted an enemy that was not in the provided list');
+            if (!(h.dmg > 0)) throw new Error('mage ability should plan non-zero damage for each target');
+            if (h.enemy.hp !== h.enemy.maxHp) throw new Error('mage ability must not reduce enemy HP yet at this point');
         });
     }
 }

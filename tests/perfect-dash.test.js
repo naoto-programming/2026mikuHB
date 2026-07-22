@@ -23,4 +23,19 @@ p.update(1, 0, []);
 if (p.dashTimer !== 0) throw new Error('dashTimer should be fully consumed and reset to 0, got ' + p.dashTimer);
 if (p.vx !== 0) throw new Error('velocity should snap to 0 the instant the dash ends, got ' + p.vx);
 
+// distanceを指定すると、ダッシュ時間内にちょうどその距離だけ移動する速度に調整される
+// (獣人「突進引っ掻き」の突進が、実際の攻撃判定の範囲(250px)まで届くようにするための仕組み)
+const beast = new Player('p2', 'beast', true);
+const beastXBefore = beast.x;
+beast.perfectDash(1, 250);
+let travelled = 0;
+for (let i = 0; i < 9; i++) { // dashTimer=0.15s、60fps換算で約9フレーム分
+    const before = beast.x;
+    beast.update(1 / 60, 0, []);
+    travelled += beast.x - before;
+}
+if (Math.abs(travelled - 250) > 20) {
+    throw new Error('perfectDash(dir, 250) should travel approximately 250px, got ' + travelled);
+}
+
 console.log('PERFECT DASH OK');

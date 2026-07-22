@@ -24,6 +24,12 @@ const CONSTANTS = {
     HOST_PORT: 8080,
 };
 
+// 特別ゲーム・エンドレスモード用の「実質無制限」のウェーブ数。真のInfinityを使うと、
+// LANマルチプレイのworldState同期(JSON等でシリアライズされる)でnullになったりして
+// 参加者側への送信自体が失敗し、敵もノーツも一切届かなくなることがあるため、
+// 現実的にプレイ中に到達し得ない大きな有限値を使う
+const EFFECTIVELY_INFINITE_WAVES = 999999;
+
 const CHARACTERS = [
     { id: 'swordsman', name: '剣士', diff: 1, desc: '初心者向け・安定型', color: '#e74c3c',
       ability: '斬鉄剣', abilityDesc: '前方広範囲攻撃', hp: 120, atk: 10, speed: 1.0 },
@@ -104,6 +110,7 @@ const SFX_FILES = {
     ability: '能力.mp3',
     attack: '通常攻撃.mp3',
     explosion: '爆発.mp3',
+    whoosh: '風切り音.mp3',
 };
 
 const bpmFromTrackFilename = function(filename) {
@@ -499,22 +506,10 @@ class AudioSystem {
         this.playSfx('explosion');
     }
 
-    // 盗賊B「連打」パーフェクト時の画面端から端への高速ダッシュに合わせた「シュバッ」という
-    // 素早い効果音(下降する音程のスイープで、駆け抜ける速さを表現する)
+    // 盗賊(連打・地震どちらのギミックも)や獣人「突進引っ掻き」など、高速で移動する
+    // 演出に合わせた「シュバッ」という風切り音(専用の風切り音.mp3を使用)
     playDashSound() {
-        if (!this.ctx) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.frequency.setValueAtTime(1200, now);
-        osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
-        osc.start(now);
-        osc.stop(now + 0.12);
+        this.playSfx('whoosh');
     }
 
     playSwordSound() {
@@ -653,7 +648,9 @@ class RhythmSystem {
         this.rapidFireNextBeat = null;
         this.rapidFireAlternator = 0;
         this.resonanceNextBeat = null;
-        this.resonanceAlternator = 0;
+        // 魔法使いB「イベントノーツ」: 完全ランダムな色のイベントノーツを流し続けるための
+        // 次のノーツ生成予定拍(盗賊の各ギミックのresonanceNextBeat等と同じ仕組み)
+        this.eventNoteNextBeat = null;
     }
 
     startSwordBurst(beats, gimmick) {
@@ -810,19 +807,25 @@ class RhythmSystem {
                 } else if (note.rapidFireNote) {
                     // 連打ギミック中は発動時間内で完結する専用の仕組みのため、
                     // 通常のコンボ切れ・被弾処理はしない
+                } else if (note.eventNote) {
+                    // 魔法使いB「イベントノーツ」: レーン種別(攻撃/防御/能力)に関わらず、
+                    // 色ごとのミス効果を必ず発動する。通常のコンボ・スコアには影響させない
+                    // (このギミック専用の独立した仕組みのため)
+                    if (this.onJudge) this.onJudge('miss', 0, this.combo, note.eventColor);
                 } else if (note.type !== 'ability') {
                     this.combo = 0;
                     this.judges.miss++;
                     if (this.onJudge) this.onJudge('miss', 0, this.combo);
                 }
-                if (note.type === 'defend' && !note.corrupted && !note.rapidFireNote) this.defendMissThisFrame = true;
+                if (note.type === 'defend' && !note.corrupted && !note.rapidFireNote && !note.eventNote) this.defendMissThisFrame = true;
             }
         });
 
         // Check ability completion
-        // 盗賊A「地震」・B「連打」はability notesを継続的に注ぎ足すため、この完了判定は行わない
-        // (abilityStartBeat/abilityLengthが古いままなので、判定するとすぐ誤発火してしまう)
-        if (this.abilityActive && this.rapidFireNextBeat === null && this.resonanceNextBeat === null) {
+        // 盗賊A「地震」・B「連打」・魔法使いB「イベントノーツ」はability notesを継続的に
+        // 注ぎ足すため、この完了判定は行わない(abilityStartBeat/abilityLengthが古いままなので、
+        // 判定するとすぐ誤発火してしまう)
+        if (this.abilityActive && this.rapidFireNextBeat === null && this.resonanceNextBeat === null && this.eventNoteNextBeat === null) {
             const allDone = this.abilityNotes.every(n => n.hit || n.missed);
             if (allDone || currentBeat > this.abilityStartBeat + this.abilityLength + 1) {
                 this.abilityActive = false;
@@ -850,10 +853,11 @@ class RhythmSystem {
         const windowMult = inputType === 'defend' ? 1 : (gimmick.judgeWindowMult || 1);
         const currentBeat = this.audio.getInputBeat();
         const beatInterval = 60 / this.audio.bpm;
-        // 盗賊B「連打」中はノーツが0.5拍間隔で連続する。通常のGOOD_WINDOW(0.3秒)を
-        // そのまま使うとBPMが速い曲では半拍の間隔より判定窓の方が広くなってしまい、
+        // 盗賊B「連打」・盗賊A「地震」中はノーツが0.5拍間隔で連続する。通常のGOOD_WINDOW
+        // (0.3秒)をそのまま使うとBPMが速い曲では半拍の間隔より判定窓の方が広くなってしまい、
         // 少し遅れたタップが本来叩くべきノーツではなく「次」のノーツに誤って取られてしまう
-        // (音がズレて聞こえる原因になっていた)。連打ノーツは判定窓を半拍未満に制限する
+        // (音がズレて聞こえたり、意図したノーツがいつまでも取りこぼし扱いにならず居座って
+        // 見える原因になっていた)。0.5拍間隔で連続するノーツは判定窓を半拍未満に制限する
         const rapidFireWindowCap = beatInterval * 0.5 * 0.9;
 
         let searchPool = inputType === 'ability' ? this.abilityNotes
@@ -866,7 +870,7 @@ class RhythmSystem {
         searchPool.forEach(note => {
             if (!note.hit && !note.missed && note.type === inputType) {
                 const dist = Math.abs(note.beat - currentBeat) * beatInterval;
-                const window = note.rapidFireNote
+                const window = (note.rapidFireNote || note.resonanceNote)
                     ? Math.min(CONSTANTS.GOOD_WINDOW * windowMult, rapidFireWindowCap)
                     : CONSTANTS.GOOD_WINDOW * windowMult;
                 if (dist < nearestDist && dist < window) {
@@ -950,7 +954,7 @@ class RhythmSystem {
             notes.forEach(note => {
                 if (!note.hit && !note.missed) {
                     const dist = Math.abs(note.beat - currentBeat) * beatInterval;
-                    const window = note.rapidFireNote
+                    const window = (note.rapidFireNote || note.resonanceNote)
                         ? Math.min(CONSTANTS.GOOD_WINDOW * windowMult, rapidFireWindowCap)
                         : CONSTANTS.GOOD_WINDOW * windowMult;
                     if (dist < bestDist && dist < window) {
@@ -982,9 +986,15 @@ class RhythmSystem {
             allNotes.push(...this.abilityNotes);
         }
 
+        // 判定可能な猶予(GOOD_WINDOW)をBPMに応じたビート数に換算したものを描画の
+        // 消失タイミングにも使う。以前は固定で-0.5拍としていたため、BPMが速い曲では
+        // 実際にはまだパーフェクト等を取れる猶予が残っているのに見た目だけ先に消えてしまい、
+        // 逆にBPMが遅い曲では判定が確定した後もしばらく居座って見えるズレがあった
+        const missWindowBeats = CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60);
+
         return allNotes.filter(n => {
             const dist = n.beat - currentBeat;
-            return dist > -0.5 && dist < visibleBeats && !n.hit;
+            return dist > -missWindowBeats && dist < visibleBeats && !n.hit;
         }).map(n => {
             const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
             const base = 300 + lineOffset;
@@ -1011,7 +1021,7 @@ class RhythmSystem {
         this.rapidFireNextBeat = null;
         this.rapidFireAlternator = 0;
         this.resonanceNextBeat = null;
-        this.resonanceAlternator = 0;
+        this.eventNoteNextBeat = null;
     }
 }
 
@@ -1110,10 +1120,15 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
             break;
         }
         case 'mage': {
-            // ノーツメテオ: 生存中の敵全員ではなく、距離を問わずランダムに選んだ数体(1〜4体)にだけ攻撃(弱)
+            // ノーツメテオ: 生存中の敵全員ではなく、距離を問わずランダムに選んだ数体(1〜4体)にだけ攻撃(弱)。
+            // 「ノーツ直撃→爆発→ダメージ」の順に見えるよう、ここでは対象と予定ダメージを
+            // 決めるだけに留め、実際のダメージ適用は呼び出し側でメテオの落下演出が
+            // 着地した瞬間まで遅延させる(即座にhit()するとダメージが演出より先に発生してしまう)
             const meteorCount = Math.min(alive.length, 1 + Math.floor(Math.random() * 4));
             const shuffled = [...alive].sort(() => Math.random() - 0.5);
-            shuffled.slice(0, meteorCount).forEach(e => hit(e, Math.floor(POWER_TIERS.weak * player.upgrades.ability * power)));
+            result.pendingMeteor = shuffled.slice(0, meteorCount).map(e => ({
+                enemy: e, dmg: Math.floor(POWER_TIERS.weak * player.upgrades.ability * power),
+            }));
             break;
         }
         default:
@@ -1171,6 +1186,9 @@ class Player {
         this.dashSpeedMult = 3;
         this.moveTargetEnemy = null;
         this.pulseTimer = 0;
+        // 魔法使いB「イベントノーツ」の一部の色(水・土)をミスした時の弱体化用。
+        // 通常は1のまま(移動速度に影響しない)
+        this.speedDebuffMult = 1;
         this.gimmickPhase = 'normal';
         this.gimmickTimer = GIMMICK_NORMAL_SECONDS;
         this.gimmickIndex = 0;
@@ -1314,7 +1332,7 @@ class Player {
 
             const toTarget = targetX - this.x;
             if (Math.abs(toTarget) > 10) {
-                this.vx = Math.sign(toTarget) * CONSTANTS.PLAYER_SPEED * this.char.speed * 0.6;
+                this.vx = Math.sign(toTarget) * CONSTANTS.PLAYER_SPEED * this.char.speed * 0.6 * this.speedDebuffMult;
                 this.state = 'run';
             } else {
                 this.vx *= 0.8;
@@ -1382,10 +1400,18 @@ class Player {
         this.state = 'defend';
     }
 
-    perfectDash(dir) {
+    // distanceを渡すと、通常の短い演出用ダッシュではなく、その距離(px)をちょうど
+    // 移動しきる速度に調整する(獣人「突進引っ掻き」の見た目上の突進が、実際の攻撃判定の
+    // 範囲まで届いていなかったため、届く距離を指定できるようにした)
+    perfectDash(dir, distance) {
         this.dashTimer = 0.15;
         this.dashDir = dir || this.facing;
-        this.dashSpeedMult = 3;
+        if (distance) {
+            const frames = this.dashTimer * 60;
+            this.dashSpeedMult = distance / (frames * CONSTANTS.PLAYER_SPEED * this.char.speed);
+        } else {
+            this.dashSpeedMult = 3;
+        }
     }
 
     // 盗賊B「連打」中、攻撃ノーツをPerfectで叩いた時専用の本当の(見た目だけでなく実際の)
@@ -1479,6 +1505,12 @@ class Enemy {
         // 通常のコンストラクタ経由(テスト等)ではyはそのまま(即着地扱い)にする
         this.falling = false;
         this.groundY = y;
+        // 魔法使い「ノーツウィンド」で巻き上げられている間の状態。盗賊のthiefLaunchedとは
+        // 別の専用フラグにしている(LANマルチプレイで別々のキャラクターが同時にそれぞれの
+        // ギミックを使った時、同じ敵集団に対してフラグを奪い合ってしまうのを避けるため)
+        this.windLifted = false;
+        this.windFallDamage = 0;
+        this.windJustLanded = false;
 
         if (Math.random() < 0.25 * stageMod) {
             const types = ['sword', 'ability'];
@@ -1545,6 +1577,21 @@ class Enemy {
             return;
         }
 
+        if (this.windLifted) {
+            // 魔法使い「ノーツウィンド」: 巻き上げられて宙に浮き、通常の重力で落下していく。
+            // 着地の瞬間にwindJustLandedを立て、実際の落下ダメージ適用はGameController側
+            // (updateWindFallDamage)が毎フレーム確認して処理する
+            this.vy += 1400 * dt;
+            this.y += this.vy * dt;
+            if (this.y >= this.groundY) {
+                this.y = this.groundY;
+                this.vy = 0;
+                this.windLifted = false;
+                this.windJustLanded = true;
+            }
+            return;
+        }
+
         if (this.tween) {
             // 瞬間移動(テレポート)に見えないよう、吸い込み・吹き飛ばし前の散らばりなどの
             // 位置変更は必ずこの緩やかな移動アニメーションを経由させる
@@ -1573,10 +1620,15 @@ class Enemy {
             return;
         } else if (this.blackHoleState === 'flying') {
             // ブラックホール爆発で吹き飛ばされ宙を飛んでいる間は通常AIを止め、弾道だけを動かす
-            // (他の敵への衝突ダメージ・着地ダメージ・状態解除はGameController側が担当する)
+            // (他の敵への衝突ダメージ・着地ダメージ・状態解除はGameController側が担当する)。
+            // ここでreturnせずに下の共通処理まで流れてしまうと、末尾の画面外判定
+            // (scrollX±300を超えたら問答無用でdead扱いにする処理)に引っかかってしまい、
+            // updateBlackHoleFlyingEnemies側の着地判定より先にdead化して「戻ってこなくなる」
+            // 原因になるため、他の状態(sucked/tween等)と同じく必ずreturnする
             this.flyVY = (this.flyVY || 0) + 1400 * dt;
             this.x += this.flyVX * dt;
             this.y += this.flyVY * dt;
+            return;
         } else if (this.data.healer) {
             this.x += Math.sign(this.vx) * Math.abs(this.vx) * 0.4;
             if (!this.isAttacking && this.attackCooldown <= 0) this.startAttack();
@@ -1916,8 +1968,8 @@ class Renderer {
         }
     }
 
-    addMeteorNote(x, targetY) {
-        this.meteorNotes.push({ x, y: targetY - 260, targetY, t: 0 });
+    addMeteorNote(x, targetY, onComplete) {
+        this.meteorNotes.push({ x, y: targetY - 260, targetY, t: 0, onComplete });
     }
 
     renderMeteorNotes(ctx) {
@@ -1941,7 +1993,10 @@ class Renderer {
             ctx.lineTo(m.x, y);
             ctx.stroke();
             ctx.restore();
-            if (progress >= 1) this.meteorNotes.splice(i, 1);
+            if (progress >= 1) {
+                if (m.onComplete) m.onComplete();
+                this.meteorNotes.splice(i, 1);
+            }
         }
     }
 
@@ -2046,8 +2101,8 @@ class Renderer {
 
     // 弓士B「ノーツ発射」: 打ったノーツが上に弾かれてから最も近い敵へ弧を描いて飛んでいく演出
     // (ダメージ自体は着弾を待たず、命中判定と同時に即座に適用済み。これは見た目だけの演出)
-    addLaunchedNote(fromX, fromY, toX, toY, color) {
-        this.launchedNotes.push({ fromX, fromY, toX, toY, color, t: 0 });
+    addLaunchedNote(fromX, fromY, toX, toY, color, onComplete) {
+        this.launchedNotes.push({ fromX, fromY, toX, toY, color, t: 0, onComplete });
     }
 
     renderLaunchedNotes(ctx) {
@@ -2102,7 +2157,10 @@ class Renderer {
             ctx.fill();
             ctx.restore();
 
-            if (progress >= 1) this.launchedNotes.splice(i, 1);
+            if (progress >= 1) {
+                if (n.onComplete) n.onComplete();
+                this.launchedNotes.splice(i, 1);
+            }
         }
     }
 
@@ -2934,21 +2992,45 @@ class Renderer {
         const pixelsPerBeat = CONSTANTS.NOTE_SPEED * beatInterval;
         const gimmick = game.localPlayer ? game.localPlayer.getActiveGimmick() : {};
 
-        // 獣人B「判定円」が出ている間は、通常の判定線・トラック(下部バー)を全て隠し、
-        // 判定円のみを表示する(動かない固定の円)
+        // 獣人B「判定円」が出ている間は、通常の判定線・トラック(下部バー)の代わりに
+        // 判定円を表示する。急に切り替わると不自然なため、発動・終了の瞬間はクロスフェード
+        // でなめらかに移行する(judgeCircleTransition: 0=通常バー, 1=判定円)
         const centerJudgeCircle = gimmick.special === 'centerJudgeCircle';
         const cjcCenterX = CONSTANTS.CANVAS_WIDTH / 2;
         const cjcCenterY = CONSTANTS.CANVAS_HEIGHT / 2;
 
-        const hideNormalTrack = centerJudgeCircle;
+        if (this.judgeCircleTransition === undefined) this.judgeCircleTransition = centerJudgeCircle ? 1 : 0;
+        const targetTransition = centerJudgeCircle ? 1 : 0;
+        this.judgeCircleTransition += (targetTransition - this.judgeCircleTransition) * 0.15;
+        if (Math.abs(this.judgeCircleTransition - targetTransition) < 0.005) this.judgeCircleTransition = targetTransition;
+        const circleAmount = this.judgeCircleTransition;
+        const barAmount = 1 - circleAmount;
 
         const driftingJudgeLine = gimmick.special === 'driftingJudgeLine';
-        const judgeLineOffsetX = driftingJudgeLine ? Math.sin(currentBeat * 1.5) * 60 : 0;
-        const judgeLineOffsetY = driftingJudgeLine ? Math.cos(currentBeat * 1.1) * 25 : 0;
+        // 判定線の動きにランダム性を持たせるため、一定間隔で新しいランダムな目標オフセットを
+        // 選び、そこへ滑らかに近づけていく処理を、基本のサイン波の動きに重ねる。
+        // こうすることで、動き自体は(瞬間移動せず)滑らかなままプレイのたびに軌道が変わり、
+        // 可動域も基本のサイン波だけの時よりずっと広くなる
+        if (driftingJudgeLine) {
+            if (!this.judgeLineDrift) this.judgeLineDrift = { x: 0, y: 0, targetX: 0, targetY: 0, timer: 0 };
+            const drift = this.judgeLineDrift;
+            drift.timer -= 1 / 60;
+            if (drift.timer <= 0) {
+                drift.timer = 1.2 + Math.random() * 1.6;
+                drift.targetX = (Math.random() * 2 - 1) * 75;
+                drift.targetY = (Math.random() * 2 - 1) * 40;
+            }
+            drift.x += (drift.targetX - drift.x) * 0.05;
+            drift.y += (drift.targetY - drift.y) * 0.05;
+        }
+        const judgeLineOffsetX = driftingJudgeLine ? Math.sin(currentBeat * 1.5) * 70 + this.judgeLineDrift.x : 0;
+        const judgeLineOffsetY = driftingJudgeLine ? Math.cos(currentBeat * 1.1) * 35 + this.judgeLineDrift.y : 0;
 
         const targetX = barW / 2;
 
-        if (!hideNormalTrack) {
+        if (barAmount > 0.01) {
+            ctx.save();
+            ctx.globalAlpha = barAmount;
             // Beat bar background
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(barX, barY, barW, barH);
@@ -2985,12 +3067,15 @@ class Renderer {
                     ctx.stroke();
                 }
             }
+            ctx.restore();
 
             if (driftingJudgeLine) {
                 gimmick.judgeLineOffset = judgeLineOffsetX;
             }
-        } else if (centerJudgeCircle) {
+        }
+        if (circleAmount > 0.01) {
             ctx.save();
+            ctx.globalAlpha = circleAmount;
             ctx.strokeStyle = '#e74c3c';
             ctx.lineWidth = 4;
             ctx.shadowColor = '#e74c3c';
@@ -3002,7 +3087,9 @@ class Renderer {
         }
         const notes = game.rhythm.getNotesForRender(gimmick);
         notes.forEach(note => {
-            if (centerJudgeCircle) {
+            if (circleAmount > 0.01) {
+                ctx.save();
+                ctx.globalAlpha = circleAmount;
                 const angle = (note.id % 8) * (Math.PI / 4);
                 const spawnRadius = 420;
                 const spawnX = cjcCenterX + Math.cos(angle) * spawnRadius;
@@ -3023,13 +3110,16 @@ class Renderer {
                 ctx.closePath();
                 ctx.fill();
                 ctx.shadowBlur = 0;
-                return;
+                ctx.restore();
             }
+            if (barAmount <= 0.01) return;
+            ctx.save();
+            ctx.globalAlpha = barAmount;
             let nx = targetX + (note.x - 300);
-            if (nx < -50 || nx > barW + 50) return;
+            if (nx < -50 || nx > barW + 50) { ctx.restore(); return; }
             if (gimmick.special === 'invisibleApproach') {
                 const beatsUntilHit = note.beat - game.audio.getInputBeat();
-                if (beatsUntilHit > 1 && beatsUntilHit < 3) return;
+                if (beatsUntilHit > 1 && beatsUntilHit < 3) { ctx.restore(); return; }
             }
             const laneOffset = gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
                 : 0;
@@ -3043,6 +3133,30 @@ class Renderer {
             // 1拍ごとに左右だけ反転する
             if (gimmick.special === 'flipMirror' && Math.floor(currentBeat) % 2 === 1) {
                 shuffledNx = barW - shuffledNx;
+            }
+
+            if (note.eventNote) {
+                // 魔法使いB「イベントノーツ」: レーンの種類(攻撃/防御/能力)ではなく、
+                // ノーツが持つ色(炎/水/雷/風/土)で見た目を決める
+                const eventColorMap = {
+                    fire: '#e74c3c', water: '#3498db', thunder: '#f1c40f',
+                    wind: '#2ecc71', earth: '#8b5a2b',
+                };
+                const eColor = eventColorMap[note.eventColor] || '#ffffff';
+                ctx.fillStyle = eColor;
+                ctx.shadowColor = eColor;
+                ctx.shadowBlur = 14;
+                ctx.beginPath();
+                ctx.arc(shuffledNx, ny, size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(shuffledNx, ny, size / 2 - 3, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+                return;
             }
 
             if (note.corrupted) {
@@ -3065,6 +3179,7 @@ class Renderer {
                     ctx.stroke();
                 }
                 ctx.shadowBlur = 0;
+                ctx.restore();
                 return;
             }
 
@@ -3104,6 +3219,7 @@ class Renderer {
                 ctx.fill();
                 ctx.shadowBlur = 0;
             }
+            ctx.restore();
         });
 
         ctx.textBaseline = 'alphabetic';
@@ -3168,6 +3284,11 @@ class GameController {
         this.flickUpWasActive = false;
         this.blackHoleWasActive = false;
         this.blackHoleDamageMult = 1;
+        // 魔法使いB「イベントノーツ」: 色ごとの継続ダメージ範囲(炎/水/土)、感電(雷ミス)の
+        // 残り時間、水/土ミスで蓄積する弱体化スタック数
+        this.eventHazards = [];
+        this.mageParalyzedTimer = 0;
+        this.mageEventWeakenStacks = 0;
         this.specialStageOnly = false;
         this.specialTrack = null;
         this.specialTrackDuration = 0;
@@ -3736,6 +3857,12 @@ class GameController {
                     puppet.x = data.state.x; puppet.y = data.state.y;
                     puppet.hp = data.state.hp; puppet.maxHp = data.state.maxHp;
                     puppet.facing = data.state.facing; puppet.state = data.state.state;
+                    puppet.isAttacking = !!data.state.isAttacking;
+                    puppet.isUsingAbility = !!data.state.isUsingAbility;
+                    puppet.dashTimer = data.state.dashTimer || 0;
+                    puppet.pulseTimer = data.state.pulseTimer || 0;
+                    puppet.flashTimer = data.state.flashTimer || 0;
+                    puppet.invincible = data.state.invincible || 0;
                 }
             } else if (data.type === 'enemyDamage') {
                 const enemy = this.stage.enemies.find(e => e.netId === data.netId);
@@ -3921,6 +4048,12 @@ class GameController {
         return {
             id, charId: p.charId, x: p.x, y: p.y, hp: p.hp, maxHp: p.maxHp,
             facing: p.facing, state: p.state,
+            // isAttacking/isUsingAbility等の一時的な演出フラグも送る。分身(puppet)は
+            // 自分の端末側ではupdate()が呼ばれないため、これらを送らないと攻撃・能力の
+            // 演出(武器エフェクト等)が他の参加者の画面には一切表示されなくなってしまう
+            isAttacking: p.isAttacking, isUsingAbility: p.isUsingAbility,
+            dashTimer: p.dashTimer, pulseTimer: p.pulseTimer,
+            flashTimer: p.flashTimer, invincible: p.invincible,
             combo: this.rhythm ? this.rhythm.combo : 0,
             score: this.rhythm ? this.rhythm.score : 0,
         };
@@ -4037,6 +4170,11 @@ class GameController {
         this.flickUpWasActive = false;
         this.blackHoleWasActive = false;
         this.blackHoleDamageMult = 1;
+        // 魔法使いB「イベントノーツ」: 色ごとの継続ダメージ範囲(炎/水/土)、感電(雷ミス)の
+        // 残り時間、水/土ミスで蓄積する弱体化スタック数
+        this.eventHazards = [];
+        this.mageParalyzedTimer = 0;
+        this.mageEventWeakenStacks = 0;
 
         // 操作説明のポップアップは最初の1回だけ表示し、時間経過で消す
         // (ステージ切り替えのたびにstartGame()が呼ばれるが、2回目以降は既にタイマー済みなので再表示しない)
@@ -4068,7 +4206,7 @@ class GameController {
         // 特別ゲーム: 終了条件は「ウェーブを全て倒しきる」ことではなく「曲が最後まで流れる」
         // ことなので、ウェーブ数を実質無制限にして曲が終わるまでずっと敵が湧き続けるようにする
         if (this.specialStageOnly) {
-            this.stage.totalWaves = Infinity;
+            this.stage.totalWaves = EFFECTIVELY_INFINITE_WAVES;
             // 曲の末尾に無音区間が続いている場合、そこにもノーツを流し続けると不自然なため、
             // 実際に音が鳴っている終端(contentEndSeconds)を使う。検出できていない場合は
             // ファイル全体の長さにフォールバックする
@@ -4077,7 +4215,7 @@ class GameController {
         }
         // エンドレスモード: 終了条件は体力が尽きることのみで、ウェーブは無制限に続く
         if (this.endlessMode) {
-            this.stage.totalWaves = Infinity;
+            this.stage.totalWaves = EFFECTIVELY_INFINITE_WAVES;
         }
         this.stage.transitioning = false;
         this.audio.startBGM(track);
@@ -4088,18 +4226,16 @@ class GameController {
         this.audio.onBeat = (beat, time) => {
             if (this.state !== 'playing') return;
             this.audio.playMetronomeTick();
-            if (this.localPlayer.getActiveGimmick().special === 'resonanceShake') {
-                this.renderer.shake(30, 0.4);
-            }
         };
 
         // Rhythm judge callback
-        this.rhythm.onJudge = (judge, points, combo) => {
+        this.rhythm.onJudge = (judge, points, combo, eventColor) => {
             this.showJudgeEffect(judge, points, combo);
-            // 魔法使いB「イベントノーツ」のミス時効果(敵大量投下)は、タップでは発生しない
-            // (ノーツを取りこぼした時のミス判定=onJudge経由でのみ発生する)ためここで処理する
-            if (judge === 'miss' && this.localPlayer.getActiveGimmick().special === 'eventNote') {
-                this.resolveEventNote('miss');
+            // 魔法使いB「イベントノーツ」: ノーツを取りこぼした(タップせず素通りさせた)時の
+            // ミス効果は、レーン種別に関わらずRhythmSystem.update()側から必ずeventColorが
+            // 渡されてくるので、それを使って発動する
+            if (judge === 'miss' && eventColor) {
+                this.resolveEventColor(eventColor, 'miss');
             }
         };
 
@@ -4173,11 +4309,12 @@ class GameController {
             return;
         }
 
-        // 魔法使いB「イベントノーツ」: 全てのノーツの種類を問わず、通常の攻撃・防御・能力の
-        // 効果は一切発生せず、代わりに判定の良し悪しによって発動する効果が変わる
+        // 魔法使いB「イベントノーツ」: 全てのノーツの種類(攻撃/防御/能力のレーン)を問わず、
+        // 通常の攻撃・防御・能力の効果は一切発生せず、代わりに各ノーツが持つ色(eventColor)と
+        // 判定の良し悪しによって発動する効果が変わる
         // (ミス時の効果はonJudgeコールバック側で処理する。タップでの判定はmissにならないため)
-        if (gimmick.special === 'eventNote') {
-            if (result.judge !== 'miss') this.resolveEventNote(result.judge);
+        if (result.note.eventNote) {
+            if (result.judge !== 'miss') this.resolveEventColor(result.note.eventColor, result.judge);
             return;
         }
 
@@ -4458,6 +4595,10 @@ class GameController {
             e.flyVX = Math.cos(angle) * speed;
             e.flyVY = Math.sin(angle) * speed;
             e.blackHoleHitIds = new Set();
+            // 安全網: 何らかの理由(角度・速度の組み合わせが悪い等)で地面・壁・天井の
+            // どれにも一向に当たらないまま飛び続けてしまうケースに備え、経過時間を計測し、
+            // 一定時間を超えたら強制的にその場へ着地させる(「戻ってこなくなる」ことを防ぐ)
+            e.flyTimer = 0;
         });
         this.renderer.addExplosion(cx - this.stage.scrollX, cy, 3.5);
         this.audio.playExplosionSound();
@@ -4489,7 +4630,9 @@ class GameController {
             const hitGround = e.y >= groundY;
             const hitCeiling = e.y <= groundY - 300;
             const hitWall = e.x <= this.stage.scrollX + 10 || e.x >= this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 10;
-            if (hitGround || hitCeiling || hitWall) {
+            e.flyTimer = (e.flyTimer || 0) + dt;
+            const timedOut = e.flyTimer > 3;
+            if (hitGround || hitCeiling || hitWall || timedOut) {
                 e.y = Math.max(groundY - 300, Math.min(e.y, groundY));
                 e.x = Math.max(this.stage.scrollX + 10, Math.min(e.x, this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 10));
                 const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(18 * this.blackHoleDamageMult, 'perfect')));
@@ -4498,67 +4641,163 @@ class GameController {
                 if (e.dead) this.stage.totalScore += e.data.score;
                 e.blackHoleState = null;
                 e.blackHoleHitIds = null;
+                e.flyTimer = 0;
             }
         });
     }
 
-    // 魔法使いB「イベントノーツ」: 全てのノーツが種類を問わず「イベントノーツ」になり、
-    // 通常の攻撃・防御・能力の効果の代わりに、判定の良し悪しによって効果が変わる。
-    // ノーツメテオ以外(回復・弱体化・ミス)は見た目の変化が乏しく何が起きたか分かりづらかった
-    // ため、それぞれに専用のラベル・演出を必ず出すようにする
-    resolveEventNote(judge) {
+    // 魔法使い「ノーツウィンド」: 巻き上げられた敵が着地した瞬間(windJustLanded)を
+    // 毎フレーム確認し、判定の良し悪しに応じた落下ダメージ(windFallDamage)を1回だけ与える
+    updateWindFallDamage() {
+        this.stage.enemies.forEach(e => {
+            if (!e.windJustLanded) return;
+            e.windJustLanded = false;
+            const dmg = Math.max(1, Math.floor(this.localPlayer.getDamage(e.windFallDamage || 14, 'perfect')));
+            const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+            this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#2ecc71', 16);
+            this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#2ecc71', 8);
+            if (e.dead) this.stage.totalScore += e.data.score;
+        });
+    }
+
+    // 魔法使いB「イベントノーツ」: 攻撃・防御・能力という区別は消え、代わりに完全ランダムな
+    // 色(炎/水/雷/風/土)を持つイベントノーツだけが流れる。色ごとに全く異なる効果を持ち、
+    // 判定の良し悪し(パーフェクト/グレイト/グッド/ミス)で効果の強さや成否が変わる。
+    // ダメージは即座に適用せず、専用の継続ダメージ範囲(eventHazards)や既存の落下ダメージの
+    // 仕組みを使い、見た目の演出はノーツ関連のプリミティブ(addParticle/addFloatingText等)
+    // だけで組み立てる(専用のキャラクターアニメーションは追加しない)
+    resolveEventColor(color, judge) {
+        // 雷ミスの感電中は、能力そのものを一切発動できない(ノーツを打つことはできる)
+        if (this.mageParalyzedTimer > 0) return;
+
         const px = this.localPlayer.x - this.stage.scrollX;
         const py = this.localPlayer.y - 70;
-        if (judge === 'perfect') {
-            // 弱いノーツメテオ: ランダムな1体に、通常の能力メテオより小さいダメージ
-            this.renderer.addFloatingText(px, py, 'ミニメテオ!', '#4a90d9', 18);
-            const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling);
-            if (candidates.length > 0) {
-                const target = candidates[Math.floor(Math.random() * candidates.length)];
-                const dmg = Math.floor(this.localPlayer.getDamage(8, 'perfect'));
-                const actualDmg = this.dealEnemyDamage(target, dmg, 'ability');
-                this.renderer.addMeteorNote(target.x - this.stage.scrollX, target.y - target.data.size / 2);
-                this.renderer.addFloatingText(target.x - this.stage.scrollX, target.y - target.data.size, `${actualDmg}`, '#4a90d9', 16);
-                if (target.dead) this.stage.totalScore += target.data.score;
+        // 水/土のミスで蓄積する弱体化。ギミック中ずっと効き、範囲・移動速度を少しずつ縮める
+        const weaken = Math.max(0.4, 1 - this.mageEventWeakenStacks * 0.15);
 
-                // 着弾点の周囲の敵も、ダメージはなくとも吹き飛ばす(爆風のような演出)
-                this.stage.enemies.forEach(e => {
-                    if (e === target || e.dead || e.falling || e.blackHoleState || e.tween) return;
-                    if (Math.abs(e.x - target.x) < 120) {
-                        e.hitKnockbackTimer = 0.15;
-                        e.hitKnockbackDir = Math.sign(e.x - target.x) || (Math.random() < 0.5 ? -1 : 1);
-                    }
-                });
+        if (color === 'fire') {
+            // ノーツファイヤ: 自分より少し離れた目の前にノーツを打ち、着弾点にノーツの
+            // 火柱を立てる(継続ダメージ)
+            if (judge === 'perfect' || judge === 'great') {
+                const duration = judge === 'perfect' ? 5 : 2;
+                const hx = this.localPlayer.x + this.localPlayer.facing * 90;
+                this.eventHazards.push({ x: hx, radius: 55 * weaken, dpsPerTick: 3.2, timer: duration, tickTimer: 0, color: '#e74c3c' });
+                this.renderer.addFloatingText(px, py, 'ノーツファイヤ!', '#e74c3c', 18);
+                this.renderer.addParticle(hx - this.stage.scrollX, CONSTANTS.GROUND_Y - 10, '#e74c3c', 10);
+                this.audio.playAbilitySound();
+            } else if (judge === 'miss') {
+                // 自分に着火(5ダメージ)
+                this.localPlayer.takeDamage(5);
+                this.renderer.addFloatingText(px, py, '自分に着火!-5', '#e74c3c', 16);
             }
-            this.audio.playAbilitySound();
-        } else if (judge === 'great') {
-            // 自分のHPを1回復。地味で気付きにくいため、専用ラベルとパーティクルを必ず出す
-            this.localPlayer.heal(1);
-            this.renderer.addFloatingText(px, py, 'HP回復 +1', '#2ecc71', 18);
-            this.renderer.addParticle(px, this.localPlayer.y - 30, '#2ecc71', 10);
-            this.audio.playSuccessSound();
-        } else if (judge === 'good') {
-            // 敵全体の攻撃力がほんの少し下がる。見た目の変化が一切なかったため、
-            // 専用ラベルと各敵への弱体化マークを追加する
-            this.renderer.addFloatingText(px, py, '敵の攻撃力低下', '#9b59b6', 18);
-            this.stage.enemies.forEach(e => {
-                if (e.dead || e.falling) return;
-                e.atk *= 0.97;
-                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, 'ATK↓', '#9b59b6', 14);
-            });
-            this.audio.playCounterSound();
-        } else if (judge === 'miss') {
-            // 敵大量投下。何が起きたか伝わるよう専用ラベルを出す
-            this.renderer.addFloatingText(px, py, '敵増援!', '#e74c3c', 20);
-            this.stage.spawnEnemies(6);
-            this.renderer.shake(5, 0.25);
+        } else if (color === 'water') {
+            // ノーツウォーター: 自分の左右直近にノーツの滝壺を落とす
+            if (judge === 'perfect' || judge === 'great') {
+                const duration = judge === 'perfect' ? 5 : 2;
+                [-1, 1].forEach(side => {
+                    this.eventHazards.push({
+                        x: this.localPlayer.x + side * 70, radius: 45 * weaken,
+                        dpsPerTick: 3.2, timer: duration, tickTimer: 0, color: '#3498db',
+                    });
+                });
+                this.renderer.addFloatingText(px, py, 'ノーツウォーター!', '#3498db', 18);
+                this.audio.playAbilitySound();
+            } else if (judge === 'miss') {
+                // 自身の弱体化(ギミック発動中ずっと効く)
+                this.mageEventWeakenStacks++;
+                this.localPlayer.speedDebuffMult = Math.max(0.4, 1 - this.mageEventWeakenStacks * 0.15);
+                this.renderer.addFloatingText(px, py, '弱体化...', '#3498db', 16);
+            }
+        } else if (color === 'thunder') {
+            // ノーツサンダー: ランダムな的に雷を落とす
+            if (judge === 'perfect' || judge === 'great') {
+                const count = judge === 'perfect' ? 10 : 5;
+                const alive = this.stage.enemies.filter(e => !e.dead && !e.falling);
+                const shuffled = [...alive].sort(() => Math.random() - 0.5).slice(0, count);
+                shuffled.forEach(e => {
+                    const dmg = Math.floor(this.localPlayer.getDamage(10, judge));
+                    const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+                    this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size, '#f1c40f', 10);
+                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#f1c40f', 16);
+                    if (e.dead) this.stage.totalScore += e.data.score;
+                });
+                this.renderer.addFloatingText(px, py, 'ノーツサンダー!', '#f1c40f', 18);
+                this.audio.playAbilitySound();
+            } else if (judge === 'miss') {
+                // 感電で動けなくなる(攻撃不可、ノーツは打てる)
+                this.mageParalyzedTimer = 3;
+                this.renderer.addFloatingText(px, py, '感電...', '#f1c40f', 16);
+            }
+        } else if (color === 'wind') {
+            // ノーツウィンド: 自分の周囲にノーツウィンドを発生させ敵を巻き上げて落下させる
+            if (judge === 'perfect' || judge === 'great') {
+                const liftVY = judge === 'perfect' ? -700 : -450;
+                const fallDamage = judge === 'perfect' ? 24 : 14;
+                const nearby = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState && !e.tween &&
+                    Math.abs(e.x - this.localPlayer.x) < 220 * weaken);
+                nearby.forEach(e => {
+                    e.windLifted = true;
+                    e.vy = liftVY;
+                    e.windFallDamage = fallDamage;
+                });
+                this.renderer.addFloatingText(px, py, 'ノーツウィンド!', '#2ecc71', 18);
+                this.audio.playAbilitySound();
+            } else if (judge === 'miss') {
+                // 風で敵が大量に運ばれてくる(敵大量放出)
+                this.renderer.addFloatingText(px, py, '敵増援!', '#2ecc71', 20);
+                this.stage.spawnEnemies(6);
+                this.renderer.shake(5, 0.25);
+            }
+        } else if (color === 'earth') {
+            // ノーツアース: ノーツ地震を発生させる(全体継続ダメージ、画面もほんの少し揺らす)
+            if (judge === 'perfect' || judge === 'great') {
+                const duration = judge === 'perfect' ? 5 : 3;
+                this.eventHazards.push({ x: 0, radius: 0, dpsPerTick: 2.4, timer: duration, tickTimer: 0, color: '#8b5a2b', global: true });
+                this.renderer.addFloatingText(px, py, 'ノーツアース!', '#8b5a2b', 18);
+                this.audio.playAbilitySound();
+            } else if (judge === 'miss') {
+                // ギミック発動中、移動速度・攻撃範囲(イベント効果の範囲)が低下する
+                this.mageEventWeakenStacks++;
+                this.localPlayer.speedDebuffMult = Math.max(0.4, 1 - this.mageEventWeakenStacks * 0.15);
+                this.renderer.addFloatingText(px, py, '弱体化...', '#8b5a2b', 16);
+            }
+        }
+    }
+
+    // 魔法使いB「イベントノーツ」のノーツファイヤ・ノーツウォーター・ノーツアースが立てる
+    // 継続ダメージ範囲を毎フレーム処理する。0.4秒ごとに範囲内(globalの場合は全体)の
+    // 敵へダメージを与え、地震はついでに画面もほんの少し揺らす
+    updateEventHazards(dt) {
+        if (!this.eventHazards || this.eventHazards.length === 0) return;
+        for (let i = this.eventHazards.length - 1; i >= 0; i--) {
+            const hz = this.eventHazards[i];
+            hz.timer -= dt;
+            hz.tickTimer -= dt;
+            if (hz.tickTimer <= 0) {
+                hz.tickTimer += 0.4;
+                const dmg = Math.max(1, Math.floor(hz.dpsPerTick * 0.4));
+                const targets = hz.global
+                    ? this.stage.enemies.filter(e => !e.dead && !e.falling)
+                    : this.stage.enemies.filter(e => !e.dead && !e.falling && Math.abs(e.x - hz.x) < hz.radius);
+                targets.forEach(e => {
+                    const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, hz.color, 13);
+                    if (e.dead) this.stage.totalScore += e.data.score;
+                });
+                this.renderer.addParticle(hz.global ? this.localPlayer.x - this.stage.scrollX : hz.x - this.stage.scrollX,
+                    CONSTANTS.GROUND_Y - 10, hz.color, 4);
+            }
+            if (hz.global) this.renderer.shake(1.5, 0.05);
+            if (hz.timer <= 0) this.eventHazards.splice(i, 1);
         }
     }
 
     // 弓士B「ノーツ発射」: 打ったノーツが判定線から弾かれ、ランダムに選んだ敵へ飛んでいく。
     // 着弾すると爆発アニメーション+効果音とともに炸裂し、着弾点ちょうど真ん中にいた敵は
     // 確定死亡、周囲の敵も距離に応じたダメージを受ける範囲攻撃になる。
-    // 近接範囲攻撃・防御による被ダメ軽減といった通常の効果は一切発生しない
+    // 近接範囲攻撃・防御による被ダメ軽減といった通常の効果は一切発生しない。
+    // 「ノーツ直撃→爆発→ダメージ」の順に見えるよう、爆発・ダメージ自体は即座に発生させず、
+    // ノーツが実際に着弾する瞬間(飛翔演出の完了時)まで遅延させる
     resolveLaunchedNote(result) {
         const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling);
         this.audio.playSwordSound();
@@ -4576,13 +4815,16 @@ class GameController {
         this.renderer.addLaunchedNote(
             originX, originY,
             target.x - this.stage.scrollX, target.y - target.data.size / 2,
-            color
-        );
-
-        // 着弾点ちょうど真ん中にいたtargetは確定死亡、周囲の敵は距離減衰ダメージを受ける
-        this.resolveExplosionSplash(
-            target.x, target.x - this.stage.scrollX, target.y - target.data.size / 2,
-            140, isSword ? 20 : 16, isSword ? 'sword' : 'ability', target
+            color,
+            () => {
+                // 着弾点ちょうど真ん中にいたtargetは確定死亡、周囲の敵は距離減衰ダメージを受ける。
+                // targetが飛翔中に既に力尽きていた場合は確定死亡扱いにせず、その場に残る周囲の
+                // 敵への範囲ダメージだけを適用する
+                this.resolveExplosionSplash(
+                    target.x, target.x - this.stage.scrollX, target.y - target.data.size / 2,
+                    140, isSword ? 20 : 16, isSword ? 'sword' : 'ability', target.dead ? undefined : target
+                );
+            }
         );
     }
 
@@ -4763,11 +5005,12 @@ class GameController {
             // 通常の間合いAIは呼ばない
             if (p === this.localPlayer && this.thiefFlyby) return;
             const holdGimmickTimer = (p === this.localPlayer) && this.shouldHoldGimmickTimer();
-            // 発動中は自分も超スローになるが、カウンターノーツのボーナス(thiefSpeedBonus)で
-            // だんだん解除されていく
+            // 発動中は自分も敵と全く同じ超スロー(0.2倍、Enemy.update()のthiefSlowMotionと揃える)
+            // になり、時間経過では回復せず、カウンターノーツのボーナス(thiefSpeedBonus)を
+            // 打つごとに少しずつ蓄積することでだんだん解除されていく
             let playerDt = dt;
             if (p === this.localPlayer && activeGimmick.special === 'resonanceShake') {
-                playerDt = dt * Math.min(1.5, 0.15 + this.thiefSpeedBonus);
+                playerDt = dt * Math.min(1.5, 0.2 + this.thiefSpeedBonus);
             }
             p.update(playerDt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer);
         });
@@ -4778,6 +5021,7 @@ class GameController {
             this.stage.update(dt, this.players);
         }
         this.updateBlackHoleFlyingEnemies(dt);
+        this.updateWindFallDamage();
 
         // LANマルチプレイの状態同期。高頻度に送ると重くなるため約10Hzに間引く
         this.networkSyncTimer = (this.networkSyncTimer || 0) - dt;
@@ -4835,6 +5079,7 @@ class GameController {
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
         const isResonanceShake = activeGimmick.special === 'resonanceShake';
+        const isEventNote = activeGimmick.special === 'eventNote';
 
         // 盗賊A「地震」: カウンター・攻撃・能力ノーツが半拍ずつずれて休みなく続く。
         // 敵を高く打ち上げて超スローの放物線で落下させ、自分もほんの一瞬だけ超スローになる。
@@ -4844,23 +5089,31 @@ class GameController {
                 this.rhythm.swordNotes = [];
                 this.rhythm.abilityNotes = [];
                 this.rhythm.resonanceNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
-                this.rhythm.resonanceAlternator = 0;
                 this.rhythm.abilityActive = true;
                 this.thiefSpeedBonus = 0;
                 this.thiefDistanceBonus = 0;
                 this.thiefDamageBonus = 0;
                 this.thiefNextFlybyBeat = this.audio.getCurrentBeat();
+                // 敵はEnemy.update()内でdtが0.2倍にスケールされた「スロー時間」の下で
+                // 落下していくため、実際の(体感上の)滞空時間はvy0とスロー係数の両方で決まる。
+                // 打ち上げ→落下の往復にかかる実時間がちょうどGIMMICK_SPECIAL_SECONDSになるよう、
+                // 標準的な放物運動の公式(飛行時間=2*vy0/g)をスロー係数で逆算して初速を求める。
+                // これにより「ギミック中はずっと空中にいて、終了時にやっと着地する」演出になる
+                const THIEF_SLOW_FACTOR = 0.2;
+                const launchVY = (1400 * GIMMICK_SPECIAL_SECONDS * THIEF_SLOW_FACTOR) / 2;
                 this.stage.enemies.forEach(e => {
                     if (e.dead || e.falling || e.blackHoleState) return;
                     e.thiefSlowMotion = true;
                     e.thiefLaunched = true;
-                    e.vy = -900; // 高く打ち上げる(スロー化されたdtの下で落下していく)
+                    e.vy = -launchVY;
                 });
             }
             const resonanceHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
+            const resonanceTypes = ['sword', 'defend', 'ability'];
             while (this.rhythm.resonanceNextBeat < resonanceHorizon) {
-                const cycle = this.rhythm.resonanceAlternator % 3;
-                const type = cycle === 0 ? 'sword' : cycle === 1 ? 'defend' : 'ability';
+                // 攻撃→能力→カウンターの規則的な繰り返しにはせず、通常時と同じように
+                // ランダムな種類のノーツが流れてくるようにする
+                const type = resonanceTypes[Math.floor(Math.random() * resonanceTypes.length)];
                 const note = {
                     id: this.rhythm.noteId++,
                     beat: this.rhythm.resonanceNextBeat,
@@ -4872,7 +5125,6 @@ class GameController {
                 if (type === 'sword') this.rhythm.swordNotes.push(note);
                 else if (type === 'defend') this.rhythm.defendNotes.push(note);
                 else this.rhythm.abilityNotes.push(note);
-                this.rhythm.resonanceAlternator++;
                 this.rhythm.resonanceNextBeat += 0.5;
             }
             // ちょうど次の拍のタイミングで、ノーツの判定とは無関係に次のフライバイを自動発動する
@@ -4894,6 +5146,54 @@ class GameController {
                 e.thiefLaunched = false;
             });
         }
+
+        // 魔法使いB「イベントノーツ」: 攻撃・防御・能力という区別は無くなり、代わりに
+        // 完全ランダムな色(炎/水/雷/風/土)を持つ「イベントノーツ」だけが流れ続ける。
+        // レーン(攻撃/防御/能力キー)自体はそのまま流用するが、実際に発動する効果は
+        // レーンの種類ではなく各ノーツのeventColorと判定の良し悪しで決まる
+        if (localAlive && isEventNote) {
+            if (this.rhythm.eventNoteNextBeat === null) {
+                this.rhythm.swordNotes = [];
+                this.rhythm.defendNotes = [];
+                this.rhythm.abilityNotes = [];
+                this.rhythm.eventNoteNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+                this.rhythm.abilityActive = true;
+                this.eventHazards = [];
+                this.mageParalyzedTimer = 0;
+                this.mageEventWeakenStacks = 0;
+                this.localPlayer.speedDebuffMult = 1;
+            }
+            const eventHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
+            const eventLanes = ['sword', 'defend', 'ability'];
+            const eventColors = ['fire', 'water', 'thunder', 'wind', 'earth'];
+            while (this.rhythm.eventNoteNextBeat < eventHorizon) {
+                const lane = eventLanes[Math.floor(Math.random() * eventLanes.length)];
+                const eventColor = eventColors[Math.floor(Math.random() * eventColors.length)];
+                const note = {
+                    id: this.rhythm.noteId++,
+                    beat: this.rhythm.eventNoteNextBeat,
+                    type: lane,
+                    hit: false,
+                    missed: false,
+                    eventNote: true,
+                    eventColor,
+                };
+                if (lane === 'sword') this.rhythm.swordNotes.push(note);
+                else if (lane === 'defend') this.rhythm.defendNotes.push(note);
+                else this.rhythm.abilityNotes.push(note);
+                this.rhythm.eventNoteNextBeat += 1;
+            }
+            if (this.mageParalyzedTimer > 0) this.mageParalyzedTimer -= dt;
+        } else if (localAlive && this.rhythm.eventNoteNextBeat !== null) {
+            // ギミック終了: ノーツ生成を止め、継続ダメージ範囲・弱体化・感電を全て解除する
+            this.rhythm.eventNoteNextBeat = null;
+            this.rhythm.abilityActive = false;
+            this.eventHazards = [];
+            this.mageParalyzedTimer = 0;
+            this.mageEventWeakenStacks = 0;
+            this.localPlayer.speedDebuffMult = 1;
+        }
+        this.updateEventHazards(dt);
 
         // 攻撃バーストを自動開始する（間合いに入ったタイミング、スケジュールではない）
         if (localAlive && isRapidFire) {
@@ -4923,7 +5223,7 @@ class GameController {
                 this.rhythm.rapidFireAlternator++;
                 this.rhythm.rapidFireNextBeat += 0.5;
             }
-        } else if (localAlive && !isResonanceShake) {
+        } else if (localAlive && !isResonanceShake && !isEventNote) {
             if (this.rhythm.rapidFireNextBeat !== null) this.rhythm.rapidFireNextBeat = null;
             if (!this.rhythm.swordBurstActive) {
                 const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
@@ -4968,17 +5268,33 @@ class GameController {
                     this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
                     this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
                         `${dmg}`, '#4a90d9', 18);
-                    if (this.localPlayer.charId === 'mage') {
-                        this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2);
-                    }
                 });
+                // 魔法使い「ノーツメテオ」: ダメージはapplyAbility内では未適用(pendingMeteor)。
+                // 「ノーツ直撃→爆発→ダメージ」の順になるよう、メテオの落下演出が着地した
+                // 瞬間に初めて実際のダメージを適用する
+                if (this.localPlayer.charId === 'mage' && outcome.pendingMeteor) {
+                    outcome.pendingMeteor.forEach(({ enemy, dmg }) => {
+                        this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, () => {
+                            if (enemy.dead || enemy.falling) return;
+                            const actualDmg = this.dealEnemyDamage(enemy, dmg, 'ability');
+                            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
+                            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
+                                `${actualDmg}`, '#4a90d9', 18);
+                            if (enemy.dead) this.stage.totalScore += enemy.data.score;
+                        });
+                    });
+                }
                 if (this.localPlayer.charId === 'archer') {
                     const arrowImg = this.images && this.images[IMAGE_MANIFEST.weapons.arrow];
                     this.renderer.addFlyingArrow(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, outcome.dir || this.localPlayer.facing, arrowImg);
                 }
                 if (this.localPlayer.charId === 'beast') {
-                    // 突進引っ掻き: 名前の通り、実際に敵の方へ突進する動きを見せる
-                    this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing);
+                    // 突進引っ掻き: 名前の通り、実際に敵の方へ突進する動きを見せる。
+                    // 以前は通常の短い演出ダッシュ(perfectDash)のままだったため、実際に
+                    // ダメージが届く攻撃範囲(250px)まで突進が届いていなかった。distance
+                    // を指定し、攻撃範囲と同じ距離だけ実際に突進するようにする
+                    this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing, 250);
+                    this.audio.playDashSound();
                 }
 
                 // 能力の効果範囲を可視化する(どこまで届いたか分かりやすくする)
@@ -5261,6 +5577,7 @@ const GameLogic = {
     BGM_TRACKS, bpmFromTrackFilename, pickRandomTrack, computeTotalWaves, SFX_FILES, detectBeatGrid,
     pickBurstPattern, DIFFICULTY_BONUS,
     ENDLESS_ENEMY_COUNT_MULT, ENDLESS_ENEMY_STRENGTH_MULT, ENDLESS_PLAYER_STRENGTH_MULT,
+    EFFECTIVELY_INFINITE_WAVES,
     IMAGE_MANIFEST, applyAbility, resolvePerfectHeal,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
