@@ -4,7 +4,7 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { RhythmSystem, AudioSystem, CONSTANTS } = globalThis.GameLogic;
+const { RhythmSystem, AudioSystem, CONSTANTS, MAX_CORRUPTED_NOTES } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -37,12 +37,15 @@ if (rhythmB.swordNotes.length !== baseCount) throw new Error('spawning with the 
 if (!rhythmB.swordNotes.some(n => n.corrupted)) throw new Error('one of the newly spawned sword notes should now be flagged corrupted');
 if (!rhythmB.hasCorruptedNote()) throw new Error('hasCorruptedNote should report true once a note is corrupted');
 
-// 既に感染ノーツが残っている間は、別のノーツ生成(防御ノーツ等、既存ノーツを上書きしない生成)が
-// 起きても追加でもう1つ感染させたりはしない
-rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 10, { special: 'corruptedNote' });
+// 発生量を増やすため、同時にMAX_CORRUPTED_NOTES件までは感染ノーツが存在できる。
+// 1件目が残っている間に2件目を生成する余地(防御ノーツ等)があれば、上限までは追加で感染する
+if (MAX_CORRUPTED_NOTES < 2) throw new Error('this test assumes MAX_CORRUPTED_NOTES is at least 2, got ' + MAX_CORRUPTED_NOTES);
+for (let i = 0; i < MAX_CORRUPTED_NOTES + 3; i++) {
+    rhythmB.generateDefendNote(rhythmB.swordNotes[0].beat + 10 + i, { special: 'corruptedNote' });
+}
 const totalCorrupted = rhythmB.swordNotes.filter(n => n.corrupted).length + rhythmB.defendNotes.filter(n => n.corrupted).length;
-if (totalCorrupted !== 1) {
-    throw new Error('only one note should ever be corrupted at a time while an existing corrupted note remains unresolved, got ' + totalCorrupted);
+if (totalCorrupted !== MAX_CORRUPTED_NOTES) {
+    throw new Error('at most MAX_CORRUPTED_NOTES notes should ever be corrupted at once, expected ' + MAX_CORRUPTED_NOTES + ' got ' + totalCorrupted);
 }
 
 // checkInputAnyは感染ノーツを元の種別のまま通常通り判定する

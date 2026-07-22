@@ -57,6 +57,9 @@ const CHARACTER_GIMMICKS = {
 // ギミックに触れている時間の割合を増やす
 const GIMMICK_NORMAL_SECONDS = 12;
 const GIMMICK_SPECIAL_SECONDS = 15;
+// 弓士A「ウイルス化」: 同時に存在できる感染(ウイルス化)ノーツの上限数。
+// 発生量を増やすため1件から引き上げた
+const MAX_CORRUPTED_NOTES = 2;
 
 const UPGRADES = [
     { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
@@ -733,23 +736,29 @@ class RhythmSystem {
         return pools.some(pool => pool.some(n => n.corrupted && !n.hit && !n.missed));
     }
 
-    // 現在アクティブな感染ノーツの拍を返す(なければnull)
-    getCorruptedNoteBeat() {
+    // 現在アクティブな感染ノーツ全ての拍を配列で返す(同時に複数存在しうる)
+    getCorruptedNoteBeats() {
         const pools = [this.swordNotes, this.abilityNotes, this.defendNotes];
-        for (const pool of pools) {
-            const found = pool.find(n => n.corrupted && !n.hit && !n.missed);
-            if (found) return found.beat;
-        }
-        return null;
+        const beats = [];
+        pools.forEach(pool => pool.forEach(n => {
+            if (n.corrupted && !n.hit && !n.missed) beats.push(n.beat);
+        }));
+        return beats;
+    }
+
+    // 後方互換用: 最初に見つかった1件の拍を返す(なければnull)
+    getCorruptedNoteBeat() {
+        const beats = this.getCorruptedNoteBeats();
+        return beats.length > 0 ? beats[0] : null;
     }
 
     // 感染ノーツは他のノーツと同じ拍にならない設計のため、逆に新しく生成するノーツが
     // 既存の感染ノーツの拍と重ならないよう、重なる場合だけ少しずらす
     avoidCorruptedBeatCollisions(notes) {
-        const corruptedBeat = this.getCorruptedNoteBeat();
-        if (corruptedBeat === null) return;
+        const corruptedBeats = this.getCorruptedNoteBeats();
+        if (corruptedBeats.length === 0) return;
         notes.forEach(note => {
-            if (note.beat === corruptedBeat) note.beat += 0.25;
+            if (corruptedBeats.includes(note.beat)) note.beat += 0.25;
         });
     }
 
@@ -765,9 +774,11 @@ class RhythmSystem {
     // 感染ノーツは他の基本ノーツ(攻撃・能力・カウンター/回避)と同じタイミングには配置しない。
     // 他のノーツと同じ拍を道連れで感染させる旧仕様は、狙って外すべきノーツと通常ノーツが
     // 重なって紛らわしいためやめ、そもそも他のノーツと重ならない候補だけから選ぶようにする
-    // (重ならない候補が1つもなければ、今回は感染させずに次の生成タイミングまで待つ)
+    // (重ならない候補が1つもなければ、今回は感染させずに次の生成タイミングまで待つ)。
+    // 発生量を増やすため、同時に存在できる感染ノーツの上限をMAX_CORRUPTED_NOTES件に緩和する
+    // (以前は常に1件のみで、既存の1件が消化されるまで次が一切現れなかった)
     maybeCorruptOnSpawn(newNotes, gimmickActive) {
-        if (!gimmickActive || this.hasCorruptedNote() || !newNotes || newNotes.length === 0) return false;
+        if (!gimmickActive || this.getCorruptedNoteBeats().length >= MAX_CORRUPTED_NOTES || !newNotes || newNotes.length === 0) return false;
         const allActive = [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes];
         const candidates = newNotes.filter(note =>
             !allActive.some(n => n !== note && !n.hit && !n.missed && n.beat === note.beat)
@@ -1144,6 +1155,12 @@ const resolvePerfectHeal = function(player) {
     }
 };
 
+// ノックバックの強さをダメージ量に応じて決める。15ダメージ前後を基準(1倍)とし、
+// 弱い攻撃は控えめに、強い攻撃ははっきり吹き飛ぶよう0.6〜2.5倍の範囲でスケールさせる
+const computeKnockbackPower = function(dmg) {
+    return Math.min(2.5, Math.max(0.6, dmg / 15));
+};
+
 // ============================================================
 // Player
 // ============================================================
@@ -1161,10 +1178,11 @@ class Player {
         // 複数人プレイ時、全員がまったく同じ「画面中央」を好んでしまうと重なってしまうため、
         // 各プレイヤーごとに個別の(ちょっとズレた)中央位置を割り当てる
         this.centerOffset = (Math.random() - 0.5) * 160;
-        // ダメージを受けた時のノックバック(向き・上向き速度)
+        // ダメージを受けた時のノックバック(向き・上向き速度・威力倍率)
         this.hitKnockbackTimer = 0;
         this.hitKnockbackDir = 1;
         this.hitKnockbackVY = 0;
+        this.hitKnockbackPower = 1;
         this.hp = this.char.hp;
         this.maxHp = this.char.hp;
         this.atk = this.char.atk;
@@ -1266,7 +1284,7 @@ class Player {
             // 上向きに飛んだ後は重力で戻ってくるが、地面より下にはめり込ませない。
             // タイマーが切れた時点でまだ空中でも、宙に浮いたままにならないよう地面へ戻す
             this.hitKnockbackTimer -= dt;
-            this.x += this.hitKnockbackDir * 260 * dt;
+            this.x += this.hitKnockbackDir * 260 * (this.hitKnockbackPower || 1) * dt;
             this.hitKnockbackVY += 1400 * dt;
             this.y += this.hitKnockbackVY * dt;
             if (this.y > CONSTANTS.GROUND_Y || this.hitKnockbackTimer <= 0) {
@@ -1435,11 +1453,13 @@ class Player {
         this.state = 'hurt';
         if (this.hp <= 0) this.hp = 0;
         // どの攻撃を受けても、しっかりノックバックする。高さ関係で上向き成分を決める
-        // (相手の方が高い/同じなら自分はさらに上へ、相手の方が低くても地面にはめり込ませない)
+        // (相手の方が高い/同じなら自分はさらに上へ、相手の方が低くても地面にはめり込ませない)。
+        // 強さそのものはダメージ量に比例させる(弱い攻撃は軽く、強い攻撃ははっきり吹き飛ぶ)
         this.hitKnockbackTimer = 0.25;
         this.hitKnockbackDir = -this.facing || (Math.random() < 0.5 ? -1 : 1);
+        this.hitKnockbackPower = computeKnockbackPower(dmg);
         const ay = (typeof attackerY === 'number') ? attackerY : this.y;
-        this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) : -180;
+        this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) * this.hitKnockbackPower : -180 * this.hitKnockbackPower;
         return dmg;
     }
 
@@ -1498,6 +1518,7 @@ class Enemy {
         // 生きている間、ヒットするたびに軽く仰け反る演出用(死亡時のknockbackTimerとは別)
         this.hitKnockbackTimer = 0;
         this.hitKnockbackDir = 1;
+        this.hitKnockbackPower = 1;
         this.spawnDelay = 0;
         this.hueShift = 0;
         this.brightnessShift = 1;
@@ -1554,7 +1575,7 @@ class Enemy {
             // 上向きに飛んだ後は重力で戻ってくるが、地面より下にはめり込ませない。
             // タイマーが切れた時点でまだ空中でも、宙に浮いたままにならないよう地面へ戻す
             this.hitKnockbackTimer -= dt;
-            this.x += this.hitKnockbackDir * 260 * dt;
+            this.x += this.hitKnockbackDir * 260 * (this.hitKnockbackPower || 1) * dt;
             this.hitKnockbackVY = (this.hitKnockbackVY || 0) + 1400 * dt;
             this.y += this.hitKnockbackVY * dt;
             if (this.y > this.groundY || this.hitKnockbackTimer <= 0) {
@@ -1741,9 +1762,11 @@ class Enemy {
     }
 
     takeDamage(dmg, type = 'normal', attackerY) {
-        // 上空から落下中は、まだ「敵」として着地していないため攻撃を受け付けない
-        // (着地した瞬間から通常のダメージ処理が有効になる)
-        if (this.dead || this.falling) return 0;
+        if (this.dead) return 0;
+        // 通常は上空から落下中、まだ「敵」として着地していないため攻撃を受け付けない
+        // (着地した瞬間から通常のダメージ処理が有効になる)。ただし盗賊A「地震」の
+        // ギミック中はスロー化された落下中の敵も既に戦闘対象として扱うため例外とする
+        if (this.falling && !this.thiefSlowMotion) return 0;
         // 剣士「ブラックホール」に吸い込まれている間(吸い込まれる途中も含む)は無敵にする。
         // 爆発で解放され吹き飛ばされている間(flying)は、着地・衝突ダメージを受ける通常仕様のまま
         if (this.blackHoleState === 'sucked' || this.blackHoleState === 'suckingIn') return 0;
@@ -1760,15 +1783,17 @@ class Enemy {
         }
         // どの攻撃でも、生きている間はヒットするたびにしっかり仰け反る(ノックバック)。
         // ブラックホールに吸い込まれている/吹き飛ばされている間やtween移動中は、
-        // 別の仕組みで位置が制御されているためノックバックにより弊害が起きる。除外する
+        // 別の仕組みで位置が制御されているためノックバックにより弊害が起きる。除外する。
+        // 強さそのものはダメージ量に比例させる(弱い攻撃は軽く、強い攻撃ははっきり吹き飛ぶ)
         if (!this.blackHoleState && !this.tween) {
             this.hitKnockbackTimer = 0.25;
             this.hitKnockbackDir = Math.random() < 0.5 ? -1 : 1;
+            this.hitKnockbackPower = computeKnockbackPower(dmg);
             // 攻撃者と自分の高さの関係で上向き成分を決める: 自分の方が高い(もしくは同じ)
             // 場合はそのまま(さらに)上へ、自分の方が低い場合も地面にめり込まないよう
             // 必ず上向きの成分を持たせる
             const ay = (typeof attackerY === 'number') ? attackerY : this.y;
-            this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) : -180;
+            this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) * this.hitKnockbackPower : -180 * this.hitKnockbackPower;
         }
         return dmg;
     }
@@ -4419,7 +4444,9 @@ class GameController {
     // 向かって飛んですれ違いざまに攻撃するフライバイを1回開始する。
     // 飛距離(thiefDistanceBonus)は着地点を通り過ぎる分の伸びとして反映される
     startThiefFlyby() {
-        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState);
+        // 地震ギミック中はスロー化された落下中の敵も既に「敵」として扱うため、
+        // fallingかどうかは問わずに対象にする
+        const candidates = this.stage.enemies.filter(e => !e.dead && !e.blackHoleState);
         if (candidates.length === 0) return;
         const target = candidates[Math.floor(Math.random() * candidates.length)];
         const overshoot = 60 + this.thiefDistanceBonus;
@@ -4450,7 +4477,9 @@ class GameController {
 
         const dmg = Math.floor(this.localPlayer.getDamage(6, 'good') * (1 + this.thiefDamageBonus));
         this.stage.enemies.forEach(e => {
-            if (e.dead || e.falling || e.blackHoleState || fb.hitIds.has(e)) return;
+            // 落下中(falling)でもスロー化されて既に「敵」として扱われているため、
+            // すれ違いヒットの対象から除外しない
+            if (e.dead || e.blackHoleState || fb.hitIds.has(e)) return;
             const dist = Math.hypot(e.x - this.localPlayer.x, e.y - this.localPlayer.y);
             if (dist < e.data.size * 0.6 + 20) {
                 fb.hitIds.add(e);
@@ -4586,8 +4615,15 @@ class GameController {
     explodeBlackHole() {
         const cx = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
         const cy = CONSTANTS.CANVAS_HEIGHT / 2;
-        const sucked = this.stage.enemies.filter(e => e.blackHoleState === 'sucked');
-        sucked.forEach(e => {
+        // 'sucked'(完全に吸い込まれ周回中)だけでなく、'suckingIn'(まだ中心へ向かって
+        // 移動している途中)の敵も対象にする。カウンターノーツをPerfectで叩いた直後、
+        // 吸い込みアニメーション(tween、0.35秒)が終わりきる前にギミックの特殊フェーズが
+        // 終了して爆発してしまうと、以前はその敵がsucked状態になった時点で既にブラック
+        // ホールが消滅済みなのに、消えたブラックホールの位置でそのまま周回し続けてしまう
+        // 不具合があったため、爆発の瞬間に吸い込み中のtweenごと打ち切って一緒に吹き飛ばす
+        const affected = this.stage.enemies.filter(e => e.blackHoleState === 'sucked' || e.blackHoleState === 'suckingIn');
+        affected.forEach(e => {
+            e.tween = null;
             const angle = Math.random() * Math.PI * 2;
             // ダメージはそのまま、吹き飛ばす勢い(速度)だけをさらに強める
             const speed = 800 + Math.random() * 400;
@@ -5061,8 +5097,9 @@ class GameController {
                 if (this.rhythm.hasAbilityNoteAtBeat(defendBeat)) {
                     defendBeat += 0.5;
                 }
-                // 感染ノーツ(弓士A「ウイルス化」)と同じ拍にならないよう調整する
-                if (this.rhythm.getCorruptedNoteBeat() === defendBeat) {
+                // 感染ノーツ(弓士A「ウイルス化」、同時に複数存在しうる)と同じ拍に
+                // ならないよう調整する
+                if (this.rhythm.getCorruptedNoteBeats().includes(defendBeat)) {
                     defendBeat += 0.5;
                 }
                 if (!this.rhythm.findDefendNoteAtBeat(defendBeat)) {
@@ -5094,20 +5131,27 @@ class GameController {
                 this.thiefDistanceBonus = 0;
                 this.thiefDamageBonus = 0;
                 this.thiefNextFlybyBeat = this.audio.getCurrentBeat();
-                // 敵はEnemy.update()内でdtが0.2倍にスケールされた「スロー時間」の下で
-                // 落下していくため、実際の(体感上の)滞空時間はvy0とスロー係数の両方で決まる。
-                // 打ち上げ→落下の往復にかかる実時間がちょうどGIMMICK_SPECIAL_SECONDSになるよう、
-                // 標準的な放物運動の公式(飛行時間=2*vy0/g)をスロー係数で逆算して初速を求める。
-                // これにより「ギミック中はずっと空中にいて、終了時にやっと着地する」演出になる
-                const THIEF_SLOW_FACTOR = 0.2;
-                const launchVY = (1400 * GIMMICK_SPECIAL_SECONDS * THIEF_SLOW_FACTOR) / 2;
-                this.stage.enemies.forEach(e => {
-                    if (e.dead || e.falling || e.blackHoleState) return;
-                    e.thiefSlowMotion = true;
+            }
+            // 敵はEnemy.update()内でdtが0.2倍にスケールされた「スロー時間」の下で
+            // 落下していくため、実際の(体感上の)滞空時間はvy0とスロー係数の両方で決まる。
+            // 打ち上げ→落下の往復にかかる実時間がちょうどGIMMICK_SPECIAL_SECONDSになるよう、
+            // 標準的な放物運動の公式(飛行時間=2*vy0/g)をスロー係数で逆算して初速を求める。
+            // これにより「ギミック中はずっと空中にいて、終了時にやっと着地する」演出になる。
+            // 毎フレーム確認することで、ギミック発動中に新しく上空から降ってきた敵(ウェーブ)も
+            // 即座にスローモーション化され、着地を待たず戦闘対象(フライバイの標的・
+            // すれ違いヒットの対象)として扱われるようにする
+            const THIEF_SLOW_FACTOR = 0.2;
+            const launchVY = (1400 * GIMMICK_SPECIAL_SECONDS * THIEF_SLOW_FACTOR) / 2;
+            this.stage.enemies.forEach(e => {
+                if (e.dead || e.blackHoleState) return;
+                e.thiefSlowMotion = true;
+                // 上空から落下中(falling)の敵は、まだ着地していなくても既にスローの
+                // 対象になる。着地して初めて(打ち上げ→放物線落下の)通常の演出に合流する
+                if (!e.falling && !e.thiefLaunched) {
                     e.thiefLaunched = true;
                     e.vy = -launchVY;
-                });
-            }
+                }
+            });
             const resonanceHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
             const resonanceTypes = ['sword', 'defend', 'ability'];
             while (this.rhythm.resonanceNextBeat < resonanceHorizon) {
@@ -5578,11 +5622,11 @@ const GameLogic = {
     pickBurstPattern, DIFFICULTY_BONUS,
     ENDLESS_ENEMY_COUNT_MULT, ENDLESS_ENEMY_STRENGTH_MULT, ENDLESS_PLAYER_STRENGTH_MULT,
     EFFECTIVELY_INFINITE_WAVES,
-    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal,
+    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,
-    GIMMICK_NORMAL_SECONDS, GIMMICK_SPECIAL_SECONDS,
+    GIMMICK_NORMAL_SECONDS, GIMMICK_SPECIAL_SECONDS, MAX_CORRUPTED_NOTES,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;

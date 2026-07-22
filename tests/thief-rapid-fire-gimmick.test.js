@@ -51,6 +51,26 @@ for (let i = 0; i < 600; i++) launched.update(1 / 60, [], 0, [launched]);
 if (launched.thiefLaunched) throw new Error('a thiefLaunched enemy should eventually land and clear thiefLaunched');
 if (launched.y !== launched.groundY) throw new Error('a landed enemy should settle exactly at groundY, got ' + launched.y);
 
+// 盗賊A「地震」: 通常は落下中(falling)の敵にダメージは通らないが、地震ギミック中に
+// スロー化(thiefSlowMotion)された落下中の敵は、着地を待たず既に戦闘対象として扱われ、
+// ダメージを受け付ける(上から降ってきた敵をすぐ巻き込めるようにするため)
+const fallingNormal = new Enemy('normal', 500, 300, 1);
+fallingNormal.falling = true;
+const hpBeforeNormalFall = fallingNormal.hp;
+fallingNormal.takeDamage(5, 'sword');
+if (fallingNormal.hp !== hpBeforeNormalFall) {
+    throw new Error('a normally-falling enemy (not under the earthquake gimmick) should still be immune to damage');
+}
+
+const fallingSlowed = new Enemy('normal', 500, 300, 1);
+fallingSlowed.falling = true;
+fallingSlowed.thiefSlowMotion = true;
+const hpBeforeSlowedFall = fallingSlowed.hp;
+fallingSlowed.takeDamage(5, 'sword');
+if (fallingSlowed.hp === hpBeforeSlowedFall) {
+    throw new Error('a falling enemy under the earthquake gimmick\'s slow motion should already be damageable, even before landing');
+}
+
 // RhythmSystem.update(): 盗賊「地震」・「連打」いずれの最中もability_completeの誤判定を
 // 起こさない(どちらもability notesを継続的に注ぎ足すため、abilityStartBeat/abilityLengthが
 // 古いままだと誤って完了扱いになってしまう)

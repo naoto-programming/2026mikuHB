@@ -86,4 +86,31 @@ pInvincible.invincible = 1;
 pInvincible.takeDamage(5);
 if (pInvincible.hitKnockbackTimer > 0) throw new Error('an invincible player should not take damage or receive knockback');
 
+// ノックバックの強さはダメージ量に基づく: 弱い攻撃より強い攻撃の方がはっきり吹き飛ぶ
+const eWeak = new Enemy('normal', 400, 600, 1);
+eWeak.y = 600;
+eWeak.takeDamage(2, 'sword', 600); // 弱いダメージ
+const eStrong = new Enemy('normal', 400, 600, 1);
+eStrong.y = 600;
+eStrong.takeDamage(25, 'sword', 600); // 強いダメージ(致命傷にはならない範囲)
+if (!(Math.abs(eStrong.hitKnockbackVY) > Math.abs(eWeak.hitKnockbackVY))) {
+    throw new Error('a stronger hit should produce stronger (upward) knockback velocity than a weaker hit, weak=' + eWeak.hitKnockbackVY + ' strong=' + eStrong.hitKnockbackVY);
+}
+if (!(eStrong.hitKnockbackPower > eWeak.hitKnockbackPower)) {
+    throw new Error('hitKnockbackPower should scale up with damage, weak=' + eWeak.hitKnockbackPower + ' strong=' + eStrong.hitKnockbackPower);
+}
+// 敵の水平方向の吹っ飛びもダメージ量に応じて強くなる
+const eWeakX = new Enemy('normal', 400, 600, 1);
+eWeakX.hitKnockbackDir = 1;
+eWeakX.takeDamage(2, 'sword');
+eWeakX.hitKnockbackDir = 1; // takeDamage内でランダムに決まる向きを固定して比較する
+const weakDx = (() => { const before = eWeakX.x; eWeakX.update(1 / 60, [], 0, [eWeakX]); return eWeakX.x - before; })();
+const eStrongX = new Enemy('normal', 400, 600, 1);
+eStrongX.takeDamage(25, 'sword');
+eStrongX.hitKnockbackDir = 1;
+const strongDx = (() => { const before = eStrongX.x; eStrongX.update(1 / 60, [], 0, [eStrongX]); return eStrongX.x - before; })();
+if (!(strongDx > weakDx)) {
+    throw new Error('a stronger hit should move the enemy further per frame than a weaker hit, weak=' + weakDx + ' strong=' + strongDx);
+}
+
 console.log('KNOCKBACK OK');
