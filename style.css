@@ -237,6 +237,7 @@
         .combo-display {
             text-align: center;
             pointer-events: none;
+            transition: filter 0.2s ease, opacity 0.2s ease;
         }
         .combo-count {
             font-size: 3em;
@@ -246,6 +247,12 @@
             line-height: 1;
         }
         .combo-label { font-size: 1em; color: #ffaa77; letter-spacing: 3px; }
+        /* 魔法使いの判定線移動ギミックで、判定線に追従する暗い帯がコンボ表示と
+           重なっている間、ノーツ側を見やすくするためコンボ表示を少しグレーアウトさせる */
+        .combo-display.combo-dimmed {
+            filter: grayscale(70%) brightness(0.65);
+            opacity: 0.75;
+        }
 
 .tutorial-box {
             background: rgba(0,0,0,0.85);

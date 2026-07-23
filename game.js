@@ -1060,8 +1060,10 @@ class RhythmSystem {
 // function declaration inside a direct eval leaks into the caller's scope,
 // which then collides with the test's `const { applyAbility } = ...`
 // destructure of the same name ("Can't create duplicate variable in eval").
-const applyAbility = function(charId, ratio, player, enemies, playerX) {
-    const power = 0.4 + ratio * 0.6; // 全Miss:40%, 全成功:100%
+const applyAbility = function(charId, ratio, player, enemies, playerX, powerMult = 1) {
+    // powerMultは全体の威力調整用(既定1)。盗賊「能力泥棒」が他の職業から借りた能力は
+    // 本来の職業が使うより弱体化させるため、1未満の値を渡して使う
+    const power = (0.4 + ratio * 0.6) * powerMult; // 全Miss:40%, 全成功:100%
     // 上空から落下中の敵はまだ「敵」として扱わない(着地するまで攻撃対象・ターゲットにしない)
     const alive = enemies.filter(e => !e.dead && !e.falling);
     const nearby = alive.filter(e => Math.abs(e.x - playerX) < 250);
@@ -1104,7 +1106,7 @@ const applyAbility = function(charId, ratio, player, enemies, playerX) {
             // 呼び出し側(GameController)がこれを0.25拍間隔で4回呼び出し、単発の一撃ではなく
             // 連続コンボとして扱う。
             const range = player.getAttackRange();
-            const dmg = Math.floor(player.getDamage(10, 'perfect') * 1.2);
+            const dmg = Math.floor(player.getDamage(10, 'perfect') * 1.2 * powerMult);
             alive
                 .filter(e => Math.abs(e.x - playerX) < range)
                 .forEach(e => hit(e, dmg));
@@ -1176,12 +1178,12 @@ const computeKnockbackPower = function(dmg) {
     return Math.min(2.5, Math.max(0.6, dmg / 15));
 };
 
-// 盗賊「能力泥棒」ギミック: 能力ノーツのパーフェクト連続数に応じて、盗んだ能力を
-// 発動するタイミングかどうかを判定する。5回連続で最初の発動、以降は3回ごとに追加発動する
-const shouldTriggerAbilitySteal = function(streak) {
-    if (streak < 5) return false;
-    return (streak - 5) % 3 === 0;
-};
+// 盗賊「能力泥棒」ギミック: 能力ノーツをパーフェクトで叩くたびに発動を試みる。
+// 同時に発動している効果の上限(これ以上重なると何が起きているか分からなくなる)、
+// 1回の発動が「アクティブ」とみなされる時間、盗んだ能力の弱体化倍率
+const ABILITY_STEAL_MAX_CONCURRENT = 2;
+const ABILITY_STEAL_ACTIVE_SECONDS = 0.6;
+const ABILITY_STEAL_POWER_MULT = 0.35;
 
 // ============================================================
 // Player
@@ -3167,11 +3169,16 @@ class Renderer {
             // バー背景の外(ゲーム画面の背景美術やコンボ表示(HUD)の裏)に出てしまい、
             // 同化して見えにくくなることがあった。ノーツが実際に流れる高さにも追従する
             // 暗い帯を、HUDの文字と重なっても十分なコントラストが出るよう
-            // 通常のバーよりも濃く・上下にも少し広めに敷いて視認性を確保する
-            if (Math.abs(judgeLineOffsetY) > 0.5) {
+            // 通常のバーよりも濃く・上下にも少し広めに敷いて視認性を確保する。
+            // この暗い帯が出ている間は、コンボ表示(DOM要素)側も少しグレーアウトさせて
+            // ノーツ・判定線が埋もれて見えなくならないようにする
+            const overlapsHud = Math.abs(judgeLineOffsetY) > 0.5;
+            if (overlapsHud) {
                 ctx.fillStyle = 'rgba(0,0,0,0.8)';
                 ctx.fillRect(barX, barY + judgeLineOffsetY - 15, barW, barH + 30);
             }
+            const comboDisplayEl = document.getElementById('comboDisplay');
+            if (comboDisplayEl) comboDisplayEl.classList.toggle('combo-dimmed', overlapsHud);
 
             // Target line (center)
             const lineDrawX = targetX + judgeLineOffsetX;
@@ -3410,8 +3417,9 @@ class GameController {
         // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
-        // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数(Great以下で0にリセットされる)
-        this.thiefPerfectStreak = 0;
+        // 盗賊A「能力泥棒」: 現在アクティブな(効果が重なっている)盗んだ能力の残り時間の配列。
+        // 同時に発動できる件数の上限チェックに使う
+        this.activeAbilitySteals = [];
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4291,8 +4299,9 @@ class GameController {
         // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
-        // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数(Great以下で0にリセットされる)
-        this.thiefPerfectStreak = 0;
+        // 盗賊A「能力泥棒」: 現在アクティブな(効果が重なっている)盗んだ能力の残り時間の配列。
+        // 同時に発動できる件数の上限チェックに使う
+        this.activeAbilitySteals = [];
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4397,16 +4406,10 @@ class GameController {
         }
 
         // 盗賊A「能力泥棒」: ギミック中に流れるノーツは全て能力ノーツで、パーフェクトを
-        // 出し続けるとその連続数に応じて他の職業から盗んだ能力を発動する。
-        // パーフェクト以外(グレイト以下)を出すと連続数は0にリセットされる
+        // 出すたびに他の職業から盗んだ能力の発動を試みる(同時に発動できる件数には上限がある)
         if (result.note.abilityStealNote) {
             if (result.judge === 'perfect') {
-                this.thiefPerfectStreak++;
-                if (shouldTriggerAbilitySteal(this.thiefPerfectStreak)) {
-                    this.triggerAbilitySteal();
-                }
-            } else {
-                this.thiefPerfectStreak = 0;
+                this.tryTriggerAbilitySteal();
             }
             return;
         }
@@ -4526,65 +4529,108 @@ class GameController {
         }
     }
 
-    // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数がしきい値に達した瞬間に発動する。
-    // 6職業(剣士/弓士/盗賊/拳士/獣人/魔法使い)からランダムに1つ選び、その職業の能力を
-    // (パーフェクト相当の性能で)そのまま借りて発動する。
-    // どの職業の能力かひと目で分かるよう、通常の能力発動時と同じ職業ごとの専用演出
-    // (射程の可視化・矢・突進・メテオ等)も職業の色で再現し、その職業名+能力名を
-    // 大きく表示する(でないとただの汎用ダメージにしか見えず、何が起きたか分からない)
-    triggerAbilitySteal() {
+    // 盗賊A「能力泥棒」: 能力ノーツをパーフェクトで叩くたびに発動を試みる。
+    // 同時に効果が重なりすぎる(3つ以上)と何が起きているか分からなくなるため、
+    // 同時に発動中(ABILITY_STEAL_ACTIVE_SECONDS秒未満)の効果は最大ABILITY_STEAL_MAX_CONCURRENT件までに
+    // 抑える(既にその件数分アクティブなら、今回は発動せず見送る)
+    tryTriggerAbilitySteal() {
+        if (!this.activeAbilitySteals) this.activeAbilitySteals = [];
+        if (this.activeAbilitySteals.length >= ABILITY_STEAL_MAX_CONCURRENT) return;
+        this.activeAbilitySteals.push(ABILITY_STEAL_ACTIVE_SECONDS);
+
+        // 6職業(剣士/弓士/盗賊/拳士/獣人/魔法使い)からランダムに1つ選び、その職業の能力を
+        // 本来の性能そのまま(専用演出も込み)発動する。ただし本来より頻繁に発動できる分、
+        // 威力はABILITY_STEAL_POWER_MULT倍に弱体化させる
         const stolenChar = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
-        const stolenId = stolenChar.id;
-        const color = stolenChar.color || '#f39c12';
-        const outcome = applyAbility(stolenId, 1, this.localPlayer, this.stage.enemies, this.localPlayer.x);
-        // applyAbility内で既にダメージ適用済みの通常の戻り値(hits)は、ここではホストへの
-        // 通知のみ行う。魔法使いの「ノーツメテオ」だけは例外的にダメージ未適用のまま
-        // pendingMeteorとして返ってくるため、着弾演出を経てから適用する
-        outcome.hits.forEach(({ enemy, dmg }) => {
-            this.notifyEnemyDamage(enemy, dmg, 'ability');
-            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, color, 8);
-            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${dmg}`, color, 16);
-            if (enemy.dead) this.stage.totalScore += enemy.data.score;
+        this.resolveAbilityEffect(stolenChar.id, 1, {
+            powerMult: ABILITY_STEAL_POWER_MULT,
+            color: stolenChar.color,
         });
-        if (outcome.pendingMeteor) {
+
+        // 誰の能力を借りたのかがはっきり分かるよう、職業名と能力名を大きく表示する
+        this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 100,
+            `${stolenChar.name}の能力「${stolenChar.ability}」を発動!`, stolenChar.color || '#f39c12', 24);
+    }
+
+    // 職業の能力を発動する共通処理。自分自身の能力発動(charIdが自分のcharIdと一致する
+    // 通常のケース)と、盗賊「能力泥棒」が他の職業から借りて発動するケースの両方で使う。
+    // これにより、盗んだ能力も本来の職業が使う時と全く同じ専用演出(範囲の可視化・矢・
+    // 突進・メテオ落下・4回攻撃のコンボ等)になる。
+    // options.powerMult(既定1): 全体の威力調整。盗んだ能力はこれを1未満にして弱体化させる
+    // options.color: 演出の色(省略時は各職業の既定色)。盗んだ能力はその職業の色を渡す
+    // options.noteTotal: 剣士「上に弾くノーツ」用、蓄積するノーツ数(既定4)
+    resolveAbilityEffect(charId, ratio, options = {}) {
+        const powerMult = options.powerMult !== undefined ? options.powerMult : 1;
+        const color = options.color || null;
+        const gimmick = this.localPlayer.getActiveGimmick();
+        // 剣士「上に弾くノーツ」・魔法使い「イベントノーツ」の特殊処理は、あくまで
+        // 自分自身が今そのギミックを使っている場合の話であって、盗んだ能力には適用しない
+        if (charId === 'swordsman' && this.localPlayer.charId === 'swordsman' && gimmick.special === 'flickUpNote') {
+            const total = options.noteTotal || 4;
+            for (let i = 0; i < total; i++) this.accumulateFlickUpNote();
+            return;
+        }
+        if (charId === 'mage' && this.localPlayer.charId === 'mage' && gimmick.special === 'eventNote') {
+            // 能力バーストの通常効果(ノーツメテオ)は発動せず、バースト中の各ノーツは
+            // 既にhandleUniversalInput側で判定ごとの効果を処理済み
+            return;
+        }
+        if (charId === 'thief') {
+            // 4回攻撃: 0.25拍間隔で4回、基本攻撃と同じ間合いの敵全てに繰り返しヒットさせる
+            this.thiefCombo = {
+                ratio, remaining: 4, nextBeat: this.audio.getCurrentBeat(),
+                powerMult, color,
+            };
+            return;
+        }
+
+        const outcome = applyAbility(charId, ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x, powerMult);
+        const hitColor = color || '#4a90d9';
+        // applyAbility内で既にダメージ適用済みのため、ここではホストへの通知のみ行う
+        outcome.hits.forEach(({ enemy, dmg }) => this.notifyEnemyDamage(enemy, dmg, 'ability'));
+        outcome.hits.forEach(({ enemy, dmg }) => {
+            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, hitColor, 8);
+            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${dmg}`, hitColor, 18);
+        });
+        // 魔法使い「ノーツメテオ」: ダメージはapplyAbility内では未適用(pendingMeteor)。
+        // 「ノーツ直撃→爆発→ダメージ」の順になるよう、メテオの落下演出が着地した
+        // 瞬間に初めて実際のダメージを適用する
+        if (charId === 'mage' && outcome.pendingMeteor) {
             outcome.pendingMeteor.forEach(({ enemy, dmg }) => {
                 this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, () => {
                     if (enemy.dead || enemy.falling) return;
                     const actualDmg = this.dealEnemyDamage(enemy, dmg, 'ability');
-                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, color, 8);
-                    this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${actualDmg}`, color, 16);
+                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, hitColor, 8);
+                    this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${actualDmg}`, hitColor, 18);
                     if (enemy.dead) this.stage.totalScore += enemy.data.score;
                 });
             });
         }
-        if (stolenId === 'archer') {
+        if (charId === 'archer') {
             const arrowImg = this.images && this.images[IMAGE_MANIFEST.weapons.arrow];
             this.renderer.addFlyingArrow(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, outcome.dir || this.localPlayer.facing, arrowImg);
-        } else if (stolenId === 'beast') {
+        } else if (charId === 'beast') {
+            // 突進引っ掻き: 名前の通り、実際に敵の方へ突進する動きを見せる。攻撃範囲(250px)
+            // と同じ距離だけ実際に突進するようにする
             this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing, 250);
             this.audio.playDashSound();
         }
 
-        // 職業ごとの効果範囲を可視化する演出も、通常の能力発動と同じ形で再現する
+        // 能力の効果範囲を可視化する(どこまで届いたか分かりやすくする)
         const psx = this.localPlayer.x - this.stage.scrollX, psy = this.localPlayer.y - 40;
-        if (stolenId === 'swordsman') {
-            this.renderer.addRangeCircle(psx, psy, 250, color);
-        } else if (stolenId === 'archer') {
-            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 450, color);
-        } else if (stolenId === 'thief') {
-            this.renderer.addRangeCircle(psx, psy, this.localPlayer.getAttackRange(), color);
-        } else if (stolenId === 'fighter') {
-            this.renderer.addRangeCircle(psx, psy, 450, color);
-            this.renderer.addRangeCircle(psx, psy, 650, color);
-        } else if (stolenId === 'beast') {
-            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 250, color);
-            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 400, color);
+        if (charId === 'swordsman') {
+            this.renderer.addRangeCircle(psx, psy, 250, color || '#ff6b35');
+        } else if (charId === 'archer') {
+            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 450, color || '#4a90d9');
+        } else if (charId === 'fighter') {
+            this.renderer.addRangeCircle(psx, psy, 450, color || '#e67e22');
+            this.renderer.addRangeCircle(psx, psy, 650, color || '#e67e22');
+        } else if (charId === 'beast') {
+            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 250, color || '#27ae60');
+            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 400, color || '#27ae60');
         }
 
-        // 誰の能力を借りたのかがはっきり分かるよう、職業名と能力名を大きく表示する
-        this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 100,
-            `${stolenChar.name}の能力「${stolenChar.ability}」を発動!`, color, 24);
-        this.renderer.shake(6, 0.2);
+        this.renderer.shake(5, 0.2);
         this.audio.playAbilitySound();
     }
 
@@ -5119,6 +5165,12 @@ class GameController {
 
         if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
+        // 盗賊A「能力泥棒」: 現在アクティブとみなされている盗んだ能力の残り時間を減らし、
+        // 尽きたものは配列から取り除く(同時発動数の上限チェックに使う)
+        if (this.activeAbilitySteals && this.activeAbilitySteals.length > 0) {
+            this.activeAbilitySteals = this.activeAbilitySteals.map(t => t - dt).filter(t => t > 0);
+        }
+
         // 盗賊B「連打」中は、交互のノーツ以外は一切生成しない
         // (防御ノーツ・能力ノーツ含め、他のノーツが混ざらないようにする)
         const activeGimmick = this.localPlayer.getActiveGimmick();
@@ -5210,15 +5262,15 @@ class GameController {
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
         // 盗賊A「能力泥棒」: ギミック中はカウンター・攻撃ノーツを一切流さず、能力ノーツだけが
-        // 流れ続ける(通常時と同じくノーツのない拍=休符も混ざる)。パーフェクトの連続数に
-        // 応じて盗んだ能力を発動する処理はhandleUniversalInput側で行う
+        // 流れ続ける(通常時と同じくノーツのない拍=休符も混ざる)。パーフェクトを出すたびに
+        // 盗んだ能力を発動する処理はhandleUniversalInput側で行う
         if (localAlive && isAbilitySteal) {
             if (this.rhythm.abilityStealNextBeat === null) {
                 this.rhythm.swordNotes = [];
                 this.rhythm.defendNotes = [];
                 this.rhythm.abilityStealNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
                 this.rhythm.abilityActive = true;
-                this.thiefPerfectStreak = 0;
+                this.activeAbilitySteals = [];
             }
             const abilityStealHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
             while (this.rhythm.abilityStealNextBeat < abilityStealHorizon) {
@@ -5241,7 +5293,7 @@ class GameController {
             // ギミック終了
             this.rhythm.abilityStealNextBeat = null;
             this.rhythm.abilityActive = false;
-            this.thiefPerfectStreak = 0;
+            this.activeAbilitySteals = [];
         }
 
         // 魔法使いB「イベントノーツ」: 攻撃・防御・能力という区別は無くなり、代わりに
@@ -5343,89 +5395,26 @@ class GameController {
         const abilityResult = this.rhythm.update();
         if (abilityResult && abilityResult.type === 'ability_complete') {
             const ratio = abilityResult.hitCount / abilityResult.total;
-            if (this.localPlayer.charId === 'swordsman' && isFlickUpNote) {
-                // 剣士「上に弾くノーツ」: 能力バーストも通常攻撃は行わず、ノーツの数だけ蓄積する
-                for (let i = 0; i < abilityResult.total; i++) this.accumulateFlickUpNote();
-            } else if (this.localPlayer.charId === 'mage' && this.localPlayer.getActiveGimmick().special === 'eventNote') {
-                // 魔法使いB「イベントノーツ」: 能力バーストの通常効果(ノーツメテオ)は発動せず、
-                // バースト中の各ノーツは既にhandleUniversalInput側で判定ごとの効果を処理済み
-            } else if (this.localPlayer.charId === 'thief') {
-                // 4回攻撃: 0.25拍間隔で4回、基本攻撃と同じ間合いの敵全てに繰り返しヒットさせる
-                this.thiefCombo = {
-                    ratio,
-                    remaining: 4,
-                    nextBeat: this.audio.getCurrentBeat(),
-                };
-            } else {
-                const outcome = applyAbility(this.localPlayer.charId, ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
-                // applyAbility内で既にダメージ適用済みのため、ここではホストへの通知のみ行う
-                outcome.hits.forEach(({ enemy, dmg }) => this.notifyEnemyDamage(enemy, dmg, 'ability'));
-
-                outcome.hits.forEach(({ enemy, dmg }) => {
-                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
-                    this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
-                        `${dmg}`, '#4a90d9', 18);
-                });
-                // 魔法使い「ノーツメテオ」: ダメージはapplyAbility内では未適用(pendingMeteor)。
-                // 「ノーツ直撃→爆発→ダメージ」の順になるよう、メテオの落下演出が着地した
-                // 瞬間に初めて実際のダメージを適用する
-                if (this.localPlayer.charId === 'mage' && outcome.pendingMeteor) {
-                    outcome.pendingMeteor.forEach(({ enemy, dmg }) => {
-                        this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, () => {
-                            if (enemy.dead || enemy.falling) return;
-                            const actualDmg = this.dealEnemyDamage(enemy, dmg, 'ability');
-                            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
-                            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
-                                `${actualDmg}`, '#4a90d9', 18);
-                            if (enemy.dead) this.stage.totalScore += enemy.data.score;
-                        });
-                    });
-                }
-                if (this.localPlayer.charId === 'archer') {
-                    const arrowImg = this.images && this.images[IMAGE_MANIFEST.weapons.arrow];
-                    this.renderer.addFlyingArrow(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, outcome.dir || this.localPlayer.facing, arrowImg);
-                }
-                if (this.localPlayer.charId === 'beast') {
-                    // 突進引っ掻き: 名前の通り、実際に敵の方へ突進する動きを見せる。
-                    // 以前は通常の短い演出ダッシュ(perfectDash)のままだったため、実際に
-                    // ダメージが届く攻撃範囲(250px)まで突進が届いていなかった。distance
-                    // を指定し、攻撃範囲と同じ距離だけ実際に突進するようにする
-                    this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing, 250);
-                    this.audio.playDashSound();
-                }
-
-                // 能力の効果範囲を可視化する(どこまで届いたか分かりやすくする)
-                const psx = this.localPlayer.x - this.stage.scrollX, psy = this.localPlayer.y - 40;
-                if (this.localPlayer.charId === 'swordsman') {
-                    this.renderer.addRangeCircle(psx, psy, 250, '#ff6b35');
-                } else if (this.localPlayer.charId === 'archer') {
-                    this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 450, '#4a90d9');
-                } else if (this.localPlayer.charId === 'fighter') {
-                    this.renderer.addRangeCircle(psx, psy, 450, '#e67e22');
-                    this.renderer.addRangeCircle(psx, psy, 650, '#e67e22');
-                } else if (this.localPlayer.charId === 'beast') {
-                    this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 250, '#27ae60');
-                    this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 400, '#27ae60');
-                }
-
-                this.renderer.shake(5, 0.2);
-                this.audio.playAbilitySound();
-            }
+            this.resolveAbilityEffect(this.localPlayer.charId, ratio, { noteTotal: abilityResult.total });
         }
 
-        // 盗賊「4回攻撃」: 0.25拍ごとに1回分ずつ実際にヒットを適用し、都度シュバッと敵の方へダッシュする
+        // 盗賊「4回攻撃」: 0.25拍ごとに1回分ずつ実際にヒットを適用し、都度シュバッと敵の方へダッシュする。
+        // 能力泥棒が他の職業から借りた場合はthiefCombo.powerMult/colorに弱体化倍率と色が
+        // 入っており、それを使う(自分自身の盗賊の能力なら既定値のまま)
         if (this.thiefCombo) {
             const currentBeat = this.audio.getCurrentBeat();
             if (currentBeat >= this.thiefCombo.nextBeat) {
-                const outcome = applyAbility('thief', this.thiefCombo.ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+                const comboPowerMult = this.thiefCombo.powerMult !== undefined ? this.thiefCombo.powerMult : 1;
+                const comboColor = this.thiefCombo.color || '#4a90d9';
+                const outcome = applyAbility('thief', this.thiefCombo.ratio, this.localPlayer, this.stage.enemies, this.localPlayer.x, comboPowerMult);
                 // applyAbility内で既にダメージ適用済みのため、ここではホストへの通知のみ行う
                 outcome.hits.forEach(({ enemy, dmg }) => this.notifyEnemyDamage(enemy, dmg, 'ability'));
-                this.renderer.addRangeCircle(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, this.localPlayer.getAttackRange(), '#9b59b6');
+                this.renderer.addRangeCircle(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, this.localPlayer.getAttackRange(), this.thiefCombo.color || '#9b59b6');
                 let nearest = null, nearestDist = Infinity;
                 outcome.hits.forEach(({ enemy, dmg }) => {
-                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, '#4a90d9', 8);
+                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size/2, comboColor, 8);
                     this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size,
-                        `${dmg}`, '#4a90d9', 18);
+                        `${dmg}`, comboColor, 18);
                     const dist = Math.abs(enemy.x - this.localPlayer.x);
                     if (dist < nearestDist) { nearestDist = dist; nearest = enemy; }
                 });
@@ -5674,7 +5663,8 @@ const GameLogic = {
     pickBurstPattern, DIFFICULTY_BONUS,
     ENDLESS_ENEMY_COUNT_MULT, ENDLESS_ENEMY_STRENGTH_MULT, ENDLESS_PLAYER_STRENGTH_MULT,
     EFFECTIVELY_INFINITE_WAVES,
-    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower, shouldTriggerAbilitySteal,
+    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower,
+    ABILITY_STEAL_MAX_CONCURRENT, ABILITY_STEAL_ACTIVE_SECONDS, ABILITY_STEAL_POWER_MULT,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,

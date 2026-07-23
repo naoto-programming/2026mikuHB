@@ -4,7 +4,8 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, shouldTriggerAbilitySteal } = globalThis.GameLogic;
+const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, Player, Enemy, applyAbility,
+    ABILITY_STEAL_MAX_CONCURRENT, ABILITY_STEAL_ACTIVE_SECONDS, ABILITY_STEAL_POWER_MULT } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -23,16 +24,31 @@ if (CHARACTER_GIMMICKS.thief[1].special !== 'rapidFire') {
     throw new Error("thief gimmick[1] should still be rapidFire, got " + CHARACTER_GIMMICKS.thief[1].special);
 }
 
-// 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数が5に達すると最初の発動、
-// その後は3連続ごと(8, 11, 14, ...)に追加発動する
-for (let i = 0; i < 5; i++) {
-    if (shouldTriggerAbilitySteal(i)) throw new Error('should not trigger before reaching a streak of 5, got true at streak=' + i);
+// 盗賊A「能力泥棒」: 定数がまともな値になっている(同時発動2件まで、弱体化されている)ことを確認
+if (ABILITY_STEAL_MAX_CONCURRENT !== 2) throw new Error('expected at most 2 concurrent stolen abilities, got ' + ABILITY_STEAL_MAX_CONCURRENT);
+if (!(ABILITY_STEAL_ACTIVE_SECONDS > 0)) throw new Error('ABILITY_STEAL_ACTIVE_SECONDS should be a positive duration');
+if (!(ABILITY_STEAL_POWER_MULT > 0 && ABILITY_STEAL_POWER_MULT < 1)) {
+    throw new Error('a stolen ability should be weakened (powerMult between 0 and 1), got ' + ABILITY_STEAL_POWER_MULT);
 }
-if (!shouldTriggerAbilitySteal(5)) throw new Error('should trigger at streak=5 (the first activation)');
-if (shouldTriggerAbilitySteal(6) || shouldTriggerAbilitySteal(7)) throw new Error('should not trigger again until 3 more perfects have accumulated (streak 6,7)');
-if (!shouldTriggerAbilitySteal(8)) throw new Error('should trigger again at streak=8 (5 + 3)');
-if (!shouldTriggerAbilitySteal(11)) throw new Error('should trigger again at streak=11 (5 + 3 + 3)');
-if (shouldTriggerAbilitySteal(9) || shouldTriggerAbilitySteal(10)) throw new Error('should not trigger at streak=9 or 10, only every 3rd step past 5');
+
+// applyAbilityのpowerMultは、能力泥棒が弱体化した性能で他の職業の能力を借りて発動するために
+// 使う。同じ入力でpowerMultだけを下げれば、与えるダメージも比例して下がる
+{
+    const player = new Player('p1', 'thief', true);
+    const fullEnemy = new Enemy('normal', 100, 0, 1);
+    const weakEnemy = new Enemy('normal', 100, 0, 1);
+    const fullOutcome = applyAbility('swordsman', 1, player, [fullEnemy], 0, 1);
+    const weakOutcome = applyAbility('swordsman', 1, player, [weakEnemy], 0, ABILITY_STEAL_POWER_MULT);
+    if (!(weakOutcome.hits[0].dmg < fullOutcome.hits[0].dmg)) {
+        throw new Error('a lower powerMult should deal less damage than the default (1), full=' + fullOutcome.hits[0].dmg + ' weak=' + weakOutcome.hits[0].dmg);
+    }
+    // 盗賊自身の「4回攻撃」はpower変数を使わずdmgを直接計算しているため、個別に確認する
+    const fullThief = applyAbility('thief', 1, player, [new Enemy('normal', 50, 0, 1)], 0, 1);
+    const weakThief = applyAbility('thief', 1, player, [new Enemy('normal', 50, 0, 1)], 0, ABILITY_STEAL_POWER_MULT);
+    if (!(weakThief.hits[0].dmg < fullThief.hits[0].dmg)) {
+        throw new Error('powerMult should also weaken the thief\'s own ability formula, full=' + fullThief.hits[0].dmg + ' weak=' + weakThief.hits[0].dmg);
+    }
+}
 
 // RhythmSystem.update(): 盗賊「能力泥棒」・「連打」いずれの最中もability_completeの誤判定を
 // 起こさない(どちらもability notesを継続的に注ぎ足すため、abilityStartBeat/abilityLengthが
