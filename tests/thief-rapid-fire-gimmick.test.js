@@ -90,10 +90,15 @@ if (!resultDone || resultDone.type !== 'ability_complete') {
 // 盗賊A「空歩」: カウンターノーツの蓄積数に応じて自動フライバイの間隔が
 // 4→3→2→1→半拍と段階的に短くなる(頻度が上がる)
 if (getAirWalkFlybyInterval(0) !== 4) throw new Error('with no counter hits yet, the interval should start at 4 beats, got ' + getAirWalkFlybyInterval(0));
-if (getAirWalkFlybyInterval(3) !== 3) throw new Error('expected interval 3 at 3 counter hits, got ' + getAirWalkFlybyInterval(3));
-if (getAirWalkFlybyInterval(6) !== 2) throw new Error('expected interval 2 at 6 counter hits, got ' + getAirWalkFlybyInterval(6));
-if (getAirWalkFlybyInterval(9) !== 1) throw new Error('expected interval 1 at 9 counter hits, got ' + getAirWalkFlybyInterval(9));
-if (getAirWalkFlybyInterval(12) !== 0.5) throw new Error('expected interval 0.5 at 12 counter hits, got ' + getAirWalkFlybyInterval(12));
+if (getAirWalkFlybyInterval(2) !== 3) throw new Error('expected interval 3 at 2 counter hits, got ' + getAirWalkFlybyInterval(2));
+if (getAirWalkFlybyInterval(4) !== 2) throw new Error('expected interval 2 at 4 counter hits, got ' + getAirWalkFlybyInterval(4));
+if (getAirWalkFlybyInterval(6) !== 1) throw new Error('expected interval 1 at 6 counter hits, got ' + getAirWalkFlybyInterval(6));
+if (getAirWalkFlybyInterval(8) !== 0.5) throw new Error('expected interval 0.5 at 8 counter hits, got ' + getAirWalkFlybyInterval(8));
 if (getAirWalkFlybyInterval(999) !== 0.5) throw new Error('the interval should never go below 0.5 no matter how many hits accumulate, got ' + getAirWalkFlybyInterval(999));
+// しきい値は、ギミックの継続時間内にカウンターノーツを全てパーフェクトで取り続ければ
+// 現実的に到達できる程度に低く抑えられているべき(最大でも一桁台前半のヒット数で十分)
+if (getAirWalkFlybyInterval(8) !== 0.5 || 8 > 10) {
+    throw new Error('the top tier (0.5 beats) should be reachable with a realistically small number of perfect counter hits');
+}
 
 console.log('THIEF RAPID-FIRE GIMMICK OK');

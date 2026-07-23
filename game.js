@@ -60,9 +60,11 @@ const GIMMICK_SPECIAL_SECONDS = 15;
 // 弓士A「ウイルス化」: 同時に存在できる感染(ウイルス化)ノーツの上限数。
 // 発生量を増やすため1件から引き上げた
 const MAX_CORRUPTED_NOTES = 4;
-// 感染ノーツが一気に(ほぼ同時に)4件出現すると分かりづらいため、新たに感染させるまでに
-// 最低でもこの拍数だけ間隔を空け、少しずつタイミングをずらして出現させる
-const MIN_CORRUPT_STAGGER_BEATS = 4;
+// 感染ノーツが一気に(ほぼ同時に)出現すると分かりづらいため、新たに感染させるまでに
+// 最低でもこの拍数だけ間隔を空け、少しずつタイミングをずらして出現させる。
+// 大きすぎるとMAX_CORRUPTED_NOTES件まで実際には到達しづらくなり上限を上げた意味が
+// 薄れるため、「同時には出さない」ことだけを保証できる程度の小さい値にしてある
+const MIN_CORRUPT_STAGGER_BEATS = 1;
 
 const UPGRADES = [
     { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
@@ -1175,12 +1177,15 @@ const computeKnockbackPower = function(dmg) {
 };
 
 // 盗賊「空歩」ギミック: カウンターノーツの累計ヒット数に応じて、自動フライバイ攻撃の
-// 間隔(拍単位)を段階的に短くする。最初は4拍に1回、集めるごとに3→2→1→半拍まで上がる
+// 間隔(拍単位)を段階的に短くする。最初は4拍に1回、集めるごとに3→2→1→半拍まで上がる。
+// しきい値はギミックの継続時間(GIMMICK_SPECIAL_SECONDS)内に、カウンターノーツを
+// 全てパーフェクトで取り続ければ確実に半拍まで到達できる、低めの値にしてある
+// (以前の値は生成されるノーツの密度・BPMによっては半拍まで届かないことがあった)
 const getAirWalkFlybyInterval = function(counterHits) {
-    if (counterHits >= 12) return 0.5;
-    if (counterHits >= 9) return 1;
-    if (counterHits >= 6) return 2;
-    if (counterHits >= 3) return 3;
+    if (counterHits >= 8) return 0.5;
+    if (counterHits >= 6) return 1;
+    if (counterHits >= 4) return 2;
+    if (counterHits >= 2) return 3;
     return 4;
 };
 
@@ -2086,6 +2091,39 @@ class Renderer {
         }
     }
 
+    // 魔法使いB「イベントノーツ」の炎/水/土(継続ダメージ範囲=eventHazards)専用の演出。
+    // addEventNoteBurstのように演出用オブジェクトを都度生成して積み上げるのではなく、
+    // 発動中のeventHazards自体を直接参照して毎フレーム描くだけにすることで、
+    // 継続時間が長くても(あるいは複数同時に発生していても)演出が際限なく重複して
+    // 重くなることがないようにする
+    renderEventHazardEffects(ctx, game) {
+        if (!game.eventHazards || game.eventHazards.length === 0) return;
+        const noteSize = 22;
+        const count = 6;
+        game.eventHazards.forEach(hz => {
+            const originX = hz.global ? (game.localPlayer.x - game.stage.scrollX) : (hz.x - game.stage.scrollX);
+            const originY = CONSTANTS.GROUND_Y - 10;
+            for (let i = 0; i < count; i++) {
+                const ang = (i / count) * Math.PI * 2 - hz.timer * 3;
+                const px = originX + Math.cos(ang) * 22;
+                const py = originY + Math.sin(ang) * 22 * 0.6;
+                ctx.save();
+                ctx.globalAlpha = 0.85;
+                ctx.fillStyle = hz.color;
+                ctx.shadowColor = hz.color;
+                ctx.shadowBlur = 14;
+                ctx.beginPath();
+                ctx.moveTo(px, py - noteSize / 2);
+                ctx.lineTo(px + noteSize / 2, py);
+                ctx.lineTo(px, py + noteSize / 2);
+                ctx.lineTo(px - noteSize / 2, py);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+        });
+    }
+
     addFlyingArrow(x, y, dir, image) {
         this.flyingArrows.push({ x, y, dir, image, t: 0 });
     }
@@ -2448,6 +2486,7 @@ class Renderer {
 
         // 魔法使いB「イベントノーツ」: 色ごとに異なる魔法の演出(複数ノーツの動き)
         this.renderEventNoteBursts(ctx);
+        this.renderEventHazardEffects(ctx, game);
 
         // 弓士「貫通弓」が飛んでいく矢の演出
         this.renderFlyingArrows(ctx);
@@ -3096,14 +3135,24 @@ class Renderer {
         const barAmount = 1 - circleAmount;
 
         const driftingJudgeLine = gimmick.special === 'driftingJudgeLine';
+        // ギミックの開始・終了時に判定線が急に動き出したり急に元の位置へ戻ったりすると
+        // 困るため、判定円(judgeCircleTransition)と同じ考え方で、有効度合い自体も
+        // 0→1・1→0へじわじわ変化させる(瞬間切り替えにしない)
+        if (this.judgeLineActiveAmount === undefined) this.judgeLineActiveAmount = driftingJudgeLine ? 1 : 0;
+        const targetLineActive = driftingJudgeLine ? 1 : 0;
+        this.judgeLineActiveAmount += (targetLineActive - this.judgeLineActiveAmount) * 0.06;
+        if (Math.abs(this.judgeLineActiveAmount - targetLineActive) < 0.005) this.judgeLineActiveAmount = targetLineActive;
+
         // 判定線の動きにランダム性を持たせるため、一定間隔で新しいランダムな目標オフセットを
         // 選び、そこへ滑らかに近づけていく処理を、基本のサイン波の動きに重ねる。
         // こうすることで、動き自体は(瞬間移動せず)滑らかなままプレイのたびに軌道が変わり、
         // 可動域も基本のサイン波だけの時よりずっと広くなる。
         // Y方向はバー(判定線)がちょうど画面下端(CANVAS_HEIGHT)に接しているため、下に動くと
         // すぐに画面からはみ出して見えなくなってしまう。そのため下方向へは一切動かさず、
-        // 上方向だけに(その分大きく)動けるようにする
-        if (driftingJudgeLine) {
+        // 上方向だけに(その分大きく)動けるようにする。
+        // (終了直後もフェードアウト中は動きを止めないよう、judgeLineActiveAmountが
+        // 0でなくなっている間はdriftingJudgeLineがfalseになっても更新を続ける)
+        if (driftingJudgeLine || this.judgeLineActiveAmount > 0.001) {
             if (!this.judgeLineDrift) this.judgeLineDrift = { x: 0, y: 0, targetX: 0, targetY: 0, timer: 0 };
             const drift = this.judgeLineDrift;
             drift.timer -= 1 / 60;
@@ -3115,8 +3164,10 @@ class Renderer {
             drift.x += (drift.targetX - drift.x) * 0.05;
             drift.y += (drift.targetY - drift.y) * 0.05;
         }
-        const judgeLineOffsetX = driftingJudgeLine ? Math.sin(currentBeat * 1.5) * 70 + this.judgeLineDrift.x : 0;
-        const judgeLineOffsetY = driftingJudgeLine ? (Math.cos(currentBeat * 1.1) - 1) * 25 + this.judgeLineDrift.y : 0;
+        const judgeLineOffsetX = this.judgeLineDrift
+            ? (Math.sin(currentBeat * 1.5) * 70 + this.judgeLineDrift.x) * this.judgeLineActiveAmount : 0;
+        const judgeLineOffsetY = this.judgeLineDrift
+            ? ((Math.cos(currentBeat * 1.1) - 1) * 25 + this.judgeLineDrift.y) * this.judgeLineActiveAmount : 0;
 
         const targetX = barW / 2;
 
@@ -3161,9 +3212,10 @@ class Renderer {
             }
             ctx.restore();
 
-            if (driftingJudgeLine) {
-                gimmick.judgeLineOffset = judgeLineOffsetX;
-            }
+            // フェードアウト中もjudgeLineOffsetXは既に0へ向けてじわじわ小さくなっていくため、
+            // driftingJudgeLineの真偽で切り替えず常にこの値を反映する(ノーツの位置が
+            // 判定線の動きと途中でズレて急に一致しなくなるのを防ぐ)
+            gimmick.judgeLineOffset = judgeLineOffsetX;
         }
         if (circleAmount > 0.01) {
             ctx.save();
@@ -3216,7 +3268,7 @@ class Renderer {
             const laneOffset = gimmick.special === 'rapidFire' ? (note.id % 2 === 0 ? -18 : 18)
                 : 0;
 
-            let ny = barY + barH/2 + (driftingJudgeLine ? judgeLineOffsetY : 0);
+            let ny = barY + barH/2 + judgeLineOffsetY;
             const size = 35;
             ny += laneOffset;
             let shuffledNx = nx;
@@ -4874,11 +4926,12 @@ class GameController {
     }
 
     // 魔法使いB「イベントノーツ」のノーツファイヤ・ノーツウォーター・ノーツアースが立てる
-    // 継続ダメージ範囲を毎フレーム処理する。0.4秒ごとに範囲内(globalの場合は全体)の
+    // 継続ダメージ範囲を毎フレーム処理する。0.5秒ごとに範囲内(globalの場合は全体)の
     // 敵へダメージを与え、地震はついでに画面もほんの少し揺らす。
-    // 見た目(ノーツの演出)も、発動時の一瞬だけでなく継続時間いっぱい(例:10秒継続なら
-    // 10秒間ずっと)途切れず表示され続けるよう、ダメージのtickに合わせて発生源に
-    // 描き足していく
+    // 見た目(ノーツが纏わりつく演出)は、ここで演出用オブジェクトを都度生成するのではなく
+    // Renderer.renderEventHazardEffects()がeventHazards自体を直接参照して毎フレーム
+    // 描画する(発動中はhazardが存在し続けるだけで演出も途切れず表示され、かつ演出用の
+    // 配列が際限なく積み上がってアニメーションが重複し重くなることもない)
     updateEventHazards(dt) {
         if (!this.eventHazards || this.eventHazards.length === 0) return;
         for (let i = this.eventHazards.length - 1; i >= 0; i--) {
@@ -4886,18 +4939,20 @@ class GameController {
             hz.timer -= dt;
             hz.tickTimer -= dt;
             if (hz.tickTimer <= 0) {
-                hz.tickTimer += 0.4;
-                const dmg = Math.max(1, Math.floor(hz.dpsPerTick * 0.4));
+                hz.tickTimer += 0.5;
+                const dmg = Math.max(1, Math.floor(hz.dpsPerTick * 0.5));
                 const targets = hz.global
                     ? this.stage.enemies.filter(e => !e.dead && !e.falling)
                     : this.stage.enemies.filter(e => !e.dead && !e.falling && Math.abs(e.x - hz.x) < hz.radius);
                 targets.forEach(e => {
                     const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
-                    this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, hz.color, 13);
+                    // 全体(地震)は対象が多いと敵の数だけ演出が積み重なって重くなるため、
+                    // 個別のフローティングテキストは出さない
+                    if (!hz.global) {
+                        this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, hz.color, 13);
+                    }
                     if (e.dead) this.stage.totalScore += e.data.score;
                 });
-                this.renderer.addEventNoteBurst(hz.global ? this.localPlayer.x - this.stage.scrollX : hz.x - this.stage.scrollX,
-                    CONSTANTS.GROUND_Y - 10, hz.color);
             }
             // 地震(global)は継続中ずっと画面をほんの少し揺らし続ける
             if (hz.global) this.renderer.shake(3, 0.08);
@@ -5210,10 +5265,11 @@ class GameController {
             // 着地した敵も(地面についた瞬間から)自動的にこの流れに合流する
             this.stage.enemies.forEach(e => {
                 if (e.dead || e.falling || e.blackHoleState || e.tween || e.airWalkPinned) return;
-                const centerX = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2;
-                // 全く同じ高さだと面白くないので、敵ごとに少しずつ高さをずらす。
+                // 全員がX座標もぴったり同じ場所に並ぶと不自然なので、X・Y座標をそれぞれ
+                // 完全にランダムに散らす(見た目上は画面中央付近にまとまって浮かぶ)。
                 // 以前は打ち上げ物理で画面最上部より上まで飛んでいってしまっていたため、
                 // 必ず画面内(GROUND_Yより150〜330px上)に収まる範囲にする
+                const centerX = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2 + (Math.random() * 2 - 1) * 250;
                 const centerY = CONSTANTS.GROUND_Y - 150 - Math.random() * 180;
                 e.tween = {
                     fromX: e.x, fromY: e.y,
