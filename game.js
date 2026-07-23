@@ -83,19 +83,21 @@ const BLACK_HOLE_EXPLOSION_DAMAGE = 30;
 // 戦闘中は忙しくてじっくり確認できない、各キャラの「能力」「固有ギミック」の見た目・
 // 射程・威力目安を閲覧専用に紹介するための一覧(操作は一切発生させない)。
 // 融合技(重ね合わせ能力)はABILITY_FUSION_TABLEを直接使うため、ここでは複製しない
+// 色は全て実際にresolveAbilityEffect等が使っている既定色と完全に一致させてある
+// (キャラクター選択画面のイメージカラーとは別に、能力演出ごとの固有色が実際には使われている)
 const ABILITY_SHOWCASE_ABILITIES = [
     { charId: 'swordsman', shape: 'circle', radius: 250, color: '#ff6b35' },
     { charId: 'archer', shape: 'directional', range: 450, color: '#4a90d9' },
-    { charId: 'thief', shape: 'circle', radius: 150, hits: 4, color: '#f1c40f' },
-    { charId: 'fighter', shape: 'circle', radius: 650, color: '#e67e22' },
-    { charId: 'beast', shape: 'directional', range: 400, dash: true, color: '#27ae60' },
-    { charId: 'mage', shape: 'meteor', radius: 90, color: '#9b59b6' },
+    { charId: 'thief', shape: 'circle', radius: 80, hits: 4, color: '#9b59b6' },
+    { charId: 'fighter', shape: 'circle', circles: [450, 650], radius: 650, color: '#e67e22' },
+    { charId: 'beast', shape: 'directional', beams: [250, 400], range: 400, dashDistance: 250, color: '#27ae60' },
+    { charId: 'mage', shape: 'meteor', radius: 90, color: '#4a90d9' },
 ];
 
 const ABILITY_SHOWCASE_GIMMICKS = [
     { charId: 'swordsman', idx: 0, name: '上に弾くノーツ',
       desc: '発動中は攻撃せずノーツを画面下に蓄積し、ギミックが終わった直後に「ノーツ噴火」としてランダムな位置へまとめて降らせる範囲攻撃を行う。',
-      shape: 'random', count: 6, color: '#f1c40f' },
+      shape: 'random', count: 6, color: '#ff6b35' },
     { charId: 'swordsman', idx: 1, name: 'ブラックホール',
       desc: 'パーフェクトのノーツ(種類を問わない)を叩くたびに、近くの敵をブラックホールへ吸い込む。ギミックが終わる瞬間(または画面上の敵を全て吸い込みきった瞬間)に一気に爆発させ、吹き飛ばした敵同士がぶつかったり地面・壁に叩きつけられるとダメージが入る。',
       shape: 'circle', radius: 250, color: '#9b59b6' },
@@ -104,13 +106,13 @@ const ABILITY_SHOWCASE_GIMMICKS = [
       shape: 'none', color: '#8e44ad' },
     { charId: 'archer', idx: 1, name: 'ノーツ発射',
       desc: '打ったノーツが判定線から弾かれ、最も近い敵へ飛んでいって着弾点で爆発する単体攻撃になる。',
-      shape: 'directional', range: 400, color: '#4a90d9' },
+      shape: 'launchedNote', range: 400, color: '#ff6b35' },
     { charId: 'thief', idx: 0, name: '能力泥棒',
       desc: '発動中は能力ノーツだけが流れ続ける。パーフェクトを出すたびに他クラスの能力を弱体化してコピー発動し、2回連続で盗むとその2クラス専用の「融合技」が発動する。',
-      shape: 'none', color: '#f1c40f' },
+      shape: 'none', color: '#4a90d9' },
     { charId: 'thief', idx: 1, name: '連打',
       desc: '画面の端から端まで高速でダッシュし、すれ違った敵にダメージを与える。',
-      shape: 'directional', range: 900, dash: true, color: '#ff6b35' },
+      shape: 'none', edgeDash: true, color: '#ff6b35' },
     { charId: 'fighter', idx: 0, name: 'コマ送り',
       desc: 'ノーツが半拍刻みのコマ送りのように近づいてくる。',
       shape: 'none', color: '#e67e22' },
@@ -125,11 +127,31 @@ const ABILITY_SHOWCASE_GIMMICKS = [
       shape: 'none', color: '#27ae60' },
     { charId: 'mage', idx: 0, name: '判定線ドリフト',
       desc: '判定線の高さがゆっくり不規則に上下する。急に戻って混乱しないよう滑らかに移動する。',
-      shape: 'none', color: '#9b59b6' },
+      shape: 'none', color: '#3498db' },
     { charId: 'mage', idx: 1, name: 'イベントノーツ',
-      desc: '炎・水・雷・風・土のいずれかの色を持つノーツが流れ、判定の良し悪しで色ごとに全く異なる効果が発動する。射程は水<炎<風<雷<地震(全体攻撃)の順に広い。',
-      shape: 'circle', radius: MAGE_THUNDER_RANGE, color: '#e74c3c' },
+      desc: '炎・水・雷・風・土のいずれかの色を持つノーツが流れ、判定の良し悪しで色ごとに全く異なる効果が発動する。射程は水<炎<風<雷<地震(全体攻撃)の順に広い。ここでは代表として雷(射程最大)を表示している。',
+      shape: 'circle', radius: MAGE_THUNDER_RANGE, color: '#f1c40f' },
 ];
+
+// 融合技(能力泥棒で2つ盗んだ時の専用技)の効果を、抽象的な「組み合わせた能力」ではなく
+// 具体的に何が起きるかで説明するための一覧。ABILITY_FUSION_TABLEのキーと対応させてある
+const ABILITY_FUSION_EFFECT_TEXT = {
+    'archer+beast': '前方へ貫通する突進攻撃',
+    'archer+fighter': '前方の広い範囲へ貫通する乱撃',
+    'archer+mage': '前方へ誘導する隕石弾を撃ち込む攻撃',
+    'archer+swordsman': '前方に強力な斬撃を連続で放つ攻撃',
+    'archer+thief': '前方へ矢のような攻撃を4連続で放つ攻撃',
+    'beast+fighter': '前方へ強力な乱撃を叩き込む攻撃',
+    'beast+mage': '突進しながら周囲に隕石を降らせる攻撃',
+    'beast+swordsman': '突進しながら周囲を斬り裂く攻撃',
+    'beast+thief': '突進しながら周囲へ4連続攻撃する攻撃',
+    'fighter+mage': '周囲の広範囲に隕石を降らせる攻撃',
+    'fighter+swordsman': '周囲を大きく薙ぎ払う一撃',
+    'fighter+thief': '周囲へ4連続の乱撃を叩き込む攻撃',
+    'mage+swordsman': '周囲に剣の隕石を降らせる攻撃',
+    'mage+thief': 'ランダムな敵へ次々と隕石を落とす攻撃',
+    'swordsman+thief': '周囲へ素早い3連斬りを放つ攻撃',
+};
 
 const UPGRADES = [
     { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
@@ -753,9 +775,15 @@ class RhythmSystem {
             offsets.push(offsets[offsets.length - 1] + 1);
         }
         this.swordBurstLength = offsets[offsets.length - 1] + 1;
+        // 能力バーストは独立した8秒クールダウンで自動発生するため、同じ拍(同じ
+        // measureスナップ・同じバーストパターン)に攻撃ノーツと能力ノーツが重なることがある。
+        // checkInputAnyは全レーンの中で最も近い1件しか取らないため、重なると片方の入力が
+        // 「食われて」しまい、能力ノーツ側がずっと打てないまま流れてミスになる原因になっていた。
+        // 既存のfindFreeBeat(元々は感染ノーツ用に用意されていたが未使用だった)を使い、
+        // 他レーンと同じ拍にならないようずらす
         this.swordNotes = offsets.map(offset => ({
             id: this.noteId++,
-            beat: this.swordBurstStartBeat + offset,
+            beat: this.findFreeBeat(this.swordBurstStartBeat + offset),
             type: 'sword',
             hit: false,
             missed: false,
@@ -775,9 +803,11 @@ class RhythmSystem {
             offsets.push(offsets[offsets.length - 1] + 1);
         }
         this.abilityLength = offsets[offsets.length - 1] + 1;
+        // 攻撃バーストと同じ理由(startSwordBurstのコメント参照)で、他レーンと拍が
+        // 重ならないようfindFreeBeatでずらす
         this.abilityNotes = offsets.map((offset, index) => ({
             id: this.noteId++,
-            beat: this.abilityStartBeat + offset,
+            beat: this.findFreeBeat(this.abilityStartBeat + offset),
             type: 'ability',
             hit: false,
             missed: false,
@@ -986,6 +1016,15 @@ class RhythmSystem {
 
         if (!nearest) return null;
 
+        // ウイルス化ノーツ: タイミングの精度に関わらず、打ってしまった時点で必ずミス扱いにする
+        // (取りこぼす=素通りさせるのが正解のノーツのため、正確に打てても成功にはならない)
+        if (nearest.corrupted) {
+            nearest.hit = true;
+            this.combo = 0;
+            if (this.onJudge) this.onJudge('miss', 0, 0);
+            return { judge: 'miss', multiplier: 0, note: nearest, points: 0, combo: 0 };
+        }
+
         let judge = 'miss';
         let multiplier = 0.5;
 
@@ -1003,10 +1042,14 @@ class RhythmSystem {
         if (judge !== 'miss') {
             nearest.hit = true;
             if (inputType !== 'ability') {
-                // パーフェクト/グレイトはコンボ+1、グッドはコンボを変化させない(現状維持)
+                // パーフェクト/グレイトの正確なタイミングだけがコンボを伸ばす。
+                // グッド(タイミングが早すぎ/遅すぎでも辛うじて成功した判定)はミスと同様に
+                // コンボをリセットする(正確に連続して打てて初めてコンボが続く仕様にする)
                 if (judge === 'perfect' || judge === 'great') {
                     this.combo++;
                     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                } else {
+                    this.combo = 0;
                 }
 
                 const baseScore = 100;
@@ -2221,13 +2264,15 @@ class Renderer {
         game.eventHazards.forEach(hz => {
             const originX = hz.global ? (game.localPlayer.x - game.stage.scrollX) : (hz.x - game.stage.scrollX);
             const originY = CONSTANTS.GROUND_Y - 10;
-            // 炎(火柱)・水(滝壺)は専用画像を経過時間に応じて開始/メイン/終了と切り替えて表示する
+            // 炎(火柱)・水(滝壺)は専用画像を経過時間に応じて開始/メイン/終了と切り替えて表示する。
+            // 滝壺は画像の見た目の都合上、火柱よりも少し低い位置(地面寄り)に表示する
             if (hz.magicType && hz.totalDuration) {
                 const progress = Math.min(1, Math.max(0, 1 - hz.timer / hz.totalDuration));
                 const keys = hz.magicType === 'fire'
                     ? { start: IMAGE_MANIFEST.magicEffects.fireStart, main: IMAGE_MANIFEST.magicEffects.fireMain, end: IMAGE_MANIFEST.magicEffects.fireEnd }
                     : { start: IMAGE_MANIFEST.magicEffects.waterStart, main: IMAGE_MANIFEST.magicEffects.waterMain, end: IMAGE_MANIFEST.magicEffects.waterEnd };
-                if (this.drawPhasedMagicImage(ctx, game.images, keys, progress, originX, CONSTANTS.GROUND_Y + 10, 150)) {
+                const bottomY = hz.magicType === 'fire' ? CONSTANTS.GROUND_Y + 10 : CONSTANTS.GROUND_Y + 35;
+                if (this.drawPhasedMagicImage(ctx, game.images, keys, progress, originX, bottomY, 150)) {
                     return;
                 }
             }
@@ -2615,6 +2660,11 @@ class Renderer {
         // 剣士「ブラックホール」: 発動中は画面中央に出現する(敵より奥に描く)
         this.renderBlackHole(ctx, game);
 
+        // 魔法使いB「イベントノーツ」の炎(火柱)・水(滝壺)・雷(稲妻)の画像演出は、
+        // 地面に立つエフェクトのため敵より奥(背面)に描く
+        this.renderEventHazardEffects(ctx, game);
+        this.renderMagicImageBursts(ctx, game);
+
         // Render enemies
         game.stage.enemies.forEach(e => this.renderEnemy(ctx, e, scrollX, game.images, beatBob));
 
@@ -2627,10 +2677,10 @@ class Renderer {
         // 魔法使い「ノーツメテオ」が敵に着弾するまでの落下演出
         this.renderMeteorNotes(ctx);
 
-        // 魔法使いB「イベントノーツ」: 色ごとに異なる魔法の演出(複数ノーツの動き)
+        // 魔法使いB「イベントノーツ」: 色ごとに異なる魔法の演出(複数ノーツの動き)。
+        // 炎/水/雷の画像演出(renderEventHazardEffects/renderMagicImageBursts)は
+        // 敵より奥に描くため、既に敵の描画より前で呼び出し済み
         this.renderEventNoteBursts(ctx);
-        this.renderEventHazardEffects(ctx, game);
-        this.renderMagicImageBursts(ctx, game);
 
         // 弓士「貫通弓」が飛んでいく矢の演出
         this.renderFlyingArrows(ctx);
@@ -4581,10 +4631,9 @@ class GameController {
         }
 
         // ウイルス化ノーツ: 攻撃/能力/カウンターノーツのどれであっても、感染していれば
-        // 通常の効果の代わりに自分がダメージを受ける。タップ自体はきちんと当たっていても
-        // 実質ミス(被弾)なので、コンボは継続させずリセットする
+        // 通常の効果の代わりに自分がダメージを受ける。判定・コンボリセットは既に
+        // RhythmSystem.checkInput側で(タイミング精度に関わらず)ミス扱いとして処理済み
         if (result.note.corrupted) {
-            this.rhythm.combo = 0;
             const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
             if (dmg > 0) {
                 this.localPlayer.takeDamage(dmg);
@@ -5923,6 +5972,9 @@ class AbilityShowcase {
         this.selected = null;
         this.active = false;
         this.lastTime = 0;
+        this.demoPlayers = [];
+        this.demoEnemies = [];
+        this.dashAnim = null;
     }
 
     ensureRenderer() {
@@ -5978,6 +6030,26 @@ class AbilityShowcase {
         });
     }
 
+    // 攻撃範囲を示すshapeの時だけ、範囲内に収まる位置にダミーの敵を配置する
+    // (敵がいないと能力・ギミックが何に効くのか分かりづらいため)
+    spawnDemoEnemies(entry, baseX) {
+        const enemies = [];
+        const add = (offsetX) => enemies.push(new Enemy('normal', baseX + offsetX, CONSTANTS.GROUND_Y, 1));
+        if (entry.shape === 'circle') {
+            const radii = entry.circles || [entry.radius || 200];
+            radii.forEach(r => add(r * 0.6));
+        } else if (entry.shape === 'directional' || entry.shape === 'launchedNote') {
+            const ranges = entry.beams || [entry.range || 300];
+            ranges.forEach(r => add(r * 0.6));
+        } else if (entry.shape === 'meteor') {
+            add(150);
+        } else if (entry.shape === 'random') {
+            const n = Math.min(3, entry.count || 3);
+            for (let i = 0; i < n; i++) add(150 + i * 150);
+        }
+        return enemies;
+    }
+
     select(category, key) {
         let entry, title, desc, charIds;
         if (category === 'ability') {
@@ -5997,10 +6069,21 @@ class AbilityShowcase {
             const [a, b] = key.split('+');
             const ca = CHARACTERS.find(c => c.id === a), cb = CHARACTERS.find(c => c.id === b);
             title = `${ca.name}+${cb.name} 融合技「${entry.name}」`;
-            desc = `盗賊の「能力泥棒」で${ca.name}と${cb.name}の能力を連続で盗むと発動する専用の融合技。通常の能力より弱体化した威力で発動する。`;
+            const effectText = ABILITY_FUSION_EFFECT_TEXT[key] || '専用の攻撃';
+            desc = `${ca.name}と${cb.name}を組み合わせた、${effectText}の効果がある能力である。通常の能力より弱体化した威力で発動する。`;
             charIds = [a, b];
         }
         this.selected = { category, key, entry, title, desc, charIds };
+        this.dashAnim = null;
+        const baseX = 300;
+        this.demoPlayers = charIds.map((charId, i) => {
+            const p = new Player('demo' + i, charId, true);
+            p.x = baseX + i * 90;
+            p.y = CONSTANTS.GROUND_Y;
+            p.facing = 1;
+            return p;
+        });
+        this.demoEnemies = this.spawnDemoEnemies(entry, baseX);
         this.renderInfo();
     }
 
@@ -6012,27 +6095,42 @@ class AbilityShowcase {
         if (!titleEl || !descEl || !statsEl) return;
         titleEl.textContent = s.title;
         descEl.textContent = s.desc;
+        const e = s.entry;
         const shapeTextMap = {
-            circle: `範囲: 自分中心 半径${s.entry.radius}px`,
-            directional: `射程: 正面方向へ${s.entry.range}px`,
-            random: `範囲: ランダムな位置へ${s.entry.count}回`,
+            circle: `範囲: 自分中心 半径${(e.circles || [e.radius]).join('px / ')}px`,
+            directional: `射程: 正面方向へ${(e.beams || [e.range]).join('px / ')}px`,
+            launchedNote: `射程: 最も近い敵ひとりを狙う(約${e.range}px圏内を想定)`,
+            random: `範囲: ランダムな位置へ${e.count}回`,
             meteor: '範囲: 狙った相手の頭上',
-            none: '範囲: ノーツの流れ方が変化するギミック(直接の攻撃範囲は持たない)',
+            none: '範囲: ノーツの流れ方や被ダメージが変化するギミック(直接の攻撃範囲は持たない)',
         };
-        const shapeText = shapeTextMap[s.entry.shape] || '';
-        const tierText = s.entry.tier
-            ? `威力目安: ${s.entry.tier === 'strong' ? '強' : s.entry.tier === 'medium' ? '中' : '弱'}`
+        const shapeText = shapeTextMap[e.shape] || '';
+        const tierText = e.tier
+            ? `威力目安: ${e.tier === 'strong' ? '強' : e.tier === 'medium' ? '中' : '弱'}`
             : '';
-        const hitsText = s.entry.hits ? `${s.entry.hits}回連続ヒット` : '';
-        statsEl.textContent = [shapeText, tierText, hitsText].filter(Boolean).join(' / ');
+        const hitsText = e.hits ? `${e.hits}回連続ヒット` : '';
+        const moveText = (e.dashDistance || e.dash || e.edgeDash) ? '移動: 相手へ向かって突進する' : '';
+        statsEl.textContent = [shapeText, tierText, hitsText, moveText].filter(Boolean).join(' / ');
     }
 
     play() {
         if (!this.selected || !this.renderer) return;
         const entry = this.selected.entry;
-        const psx = 300, psy = CONSTANTS.GROUND_Y - 40;
+        // 再生のたびに毎回同じ動きが見えるよう、ダミーキャラ・ダミー敵を初期位置へ戻す
+        const baseX = 300;
+        this.demoPlayers.forEach((p, i) => { p.x = baseX + i * 90; });
+        this.demoEnemies = this.spawnDemoEnemies(entry, baseX);
+        this.dashAnim = null;
+
+        const mover = this.demoPlayers[0];
+        const psx = mover.x, psy = CONSTANTS.GROUND_Y - 40;
         const color = entry.color || '#f39c12';
         const hits = entry.hits || 1;
+        if (entry.edgeDash) {
+            this.dashAnim = { obj: mover, fromX: mover.x, toX: Math.min(mover.x + 850, CONSTANTS.CANVAS_WIDTH - 130), t: 0, duration: 0.25 };
+        } else if (entry.dashDistance || entry.dash) {
+            this.dashAnim = { obj: mover, fromX: mover.x, toX: mover.x + (entry.dashDistance || 250), t: 0, duration: 0.15 };
+        }
         for (let i = 0; i < hits; i++) {
             setTimeout(() => this.fireOnce(entry, psx, psy, color), i * 180);
         }
@@ -6041,18 +6139,31 @@ class AbilityShowcase {
     fireOnce(entry, psx, psy, color) {
         if (!this.renderer) return;
         if (entry.shape === 'circle') {
-            this.renderer.addRangeCircle(psx, psy, entry.radius || 200, color);
-            this.renderer.addExplosion(psx + (entry.radius || 200) * 0.5, psy, 1.1);
+            (entry.circles || [entry.radius || 200]).forEach(r => this.renderer.addRangeCircle(psx, psy, r, color));
+            this.demoEnemies.forEach(e => this.renderer.addExplosion(e.x, CONSTANTS.GROUND_Y - e.data.size / 2, 1));
         } else if (entry.shape === 'directional') {
-            this.renderer.addRangeBeam(psx, psy, 1, entry.range || 300, color);
-            if (entry.dash) this.renderer.addEdgeDash(psy, 1, color);
+            (entry.beams || [entry.range || 300]).forEach(r => this.renderer.addRangeBeam(psx, psy, 1, r, color));
+            this.demoEnemies.forEach(e => this.renderer.addExplosion(e.x, CONSTANTS.GROUND_Y - e.data.size / 2, 1));
+        } else if (entry.shape === 'launchedNote') {
+            const target = this.demoEnemies[0];
+            if (target) {
+                this.renderer.addLaunchedNote(
+                    CONSTANTS.CANVAS_WIDTH / 2, CONSTANTS.CANVAS_HEIGHT - 45,
+                    target.x, CONSTANTS.GROUND_Y - target.data.size / 2, color,
+                    () => this.renderer.addExplosion(target.x, CONSTANTS.GROUND_Y - target.data.size / 2, 1)
+                );
+            }
         } else if (entry.shape === 'random') {
             const n = entry.count || 4;
             for (let i = 0; i < n; i++) {
-                this.renderer.addMeteorNote(150 + Math.random() * 500, 0, () => {});
+                const dropX = this.demoEnemies[i % this.demoEnemies.length]
+                    ? this.demoEnemies[i % this.demoEnemies.length].x
+                    : 150 + Math.random() * 500;
+                this.renderer.addMeteorNote(dropX, 0, () => this.renderer.addExplosion(dropX, CONSTANTS.GROUND_Y - 10, 0.8));
             }
         } else if (entry.shape === 'meteor') {
-            const mx = psx + 150;
+            const target = this.demoEnemies[0];
+            const mx = target ? target.x : psx + 150;
             this.renderer.addMeteorNote(mx, 0, () => {
                 this.renderer.addExplosion(mx, CONSTANTS.GROUND_Y - 40, 1);
             });
@@ -6064,21 +6175,22 @@ class AbilityShowcase {
 
     loop(timestamp) {
         if (!this.active) return;
+        const dt = Math.min((timestamp - (this.lastTime || timestamp)) / 1000, 0.05);
         this.lastTime = timestamp;
+        if (this.dashAnim) {
+            const a = this.dashAnim;
+            a.t += dt;
+            const progress = Math.min(1, a.t / a.duration);
+            a.obj.x = a.fromX + (a.toX - a.fromX) * progress;
+            if (progress >= 1) this.dashAnim = null;
+        }
         const ctx = this.renderer.ctx;
         const canvas = this.renderer.canvas;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         const images = (typeof game !== 'undefined' && game) ? game.images : null;
         this.renderer.renderBackground(ctx, 0, canvas.width, canvas.height, images, 0);
-        if (this.selected) {
-            this.selected.charIds.forEach((charId, i) => {
-                const demo = new Player('demo' + i, charId, true);
-                demo.x = 300 + i * 90;
-                demo.y = CONSTANTS.GROUND_Y;
-                demo.facing = 1;
-                this.renderer.renderPlayer(ctx, demo, 0, images, 0);
-            });
-        }
+        this.demoEnemies.forEach(e => this.renderer.renderEnemy(ctx, e, 0, images, 0));
+        this.demoPlayers.forEach(p => this.renderer.renderPlayer(ctx, p, 0, images, 0));
         this.renderer.renderParticles(ctx);
         this.renderer.renderFloatingTexts(ctx);
         this.renderer.renderRangeIndicators(ctx);
@@ -6150,7 +6262,7 @@ const GameLogic = {
     ABILITY_FUSION_RECOIL_RATIO,
     MAGE_WATER_RADIUS, MAGE_FIRE_RADIUS, MAGE_WIND_RADIUS, MAGE_THUNDER_RANGE,
     BLACK_HOLE_COLLISION_DAMAGE, BLACK_HOLE_EXPLOSION_DAMAGE,
-    ABILITY_SHOWCASE_ABILITIES, ABILITY_SHOWCASE_GIMMICKS,
+    ABILITY_SHOWCASE_ABILITIES, ABILITY_SHOWCASE_GIMMICKS, ABILITY_FUSION_EFFECT_TEXT,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,

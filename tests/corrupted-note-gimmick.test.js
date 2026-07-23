@@ -142,4 +142,20 @@ rhythm4.update();
 if (rhythm4.combo !== 5) throw new Error('missing a rapidFireNote should not reset or change combo, got ' + rhythm4.combo);
 if (rhythm4.defendMissThisFrame) throw new Error('missing a rapidFireNote defend note should not trigger the normal self-damage path');
 
+// ウイルスノーツを実際に打ってしまった場合、タイミングがどれだけ正確でも(ちょうど拍で
+// 叩いても)必ずミス扱いになり、表示も「パーフェクト」ではなく「ミス」になる。
+// またその場でコンボは即座に0になる(打った瞬間の判定でリセットされ、後から
+// 上書きされたりしない)
+const audio6 = makeAudio();
+const rhythm6 = new RhythmSystem(audio6);
+rhythm6.combo = 5;
+rhythm6.swordNotes.push({ id: rhythm6.noteId++, beat: 1, type: 'sword', hit: false, missed: false, corrupted: true });
+const beatInterval6 = 60 / audio6.bpm;
+audio6.ctx.currentTime = 1 * beatInterval6; // ちょうど拍(何もなければperfect相当のタイミング)
+const result6 = rhythm6.checkInputAny({});
+if (!result6 || result6.judge !== 'miss') {
+    throw new Error('tapping a corrupted note precisely should still be judged as a miss, got ' + JSON.stringify(result6));
+}
+if (rhythm6.combo !== 0) throw new Error('tapping a corrupted note should immediately reset combo to 0, got ' + rhythm6.combo);
+
 console.log('CORRUPTED NOTE / SPECIAL-MISS-HANDLING GIMMICK OK');

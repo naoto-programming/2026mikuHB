@@ -7,7 +7,7 @@ function readFile(path) {
 // globalThis.GameLogic for testing - the same established pattern used by every test in this suite.
 eval(readFile('./game.js'));
 const { CHARACTERS, CHARACTER_GIMMICKS, ABILITY_FUSION_TABLE,
-    ABILITY_SHOWCASE_ABILITIES, ABILITY_SHOWCASE_GIMMICKS } = globalThis.GameLogic;
+    ABILITY_SHOWCASE_ABILITIES, ABILITY_SHOWCASE_GIMMICKS, ABILITY_FUSION_EFFECT_TEXT } = globalThis.GameLogic;
 
 // 能力・ギミック図鑑: 各キャラの「能力」紹介データが、CHARACTERS全員分きちんと揃っていること
 CHARACTERS.forEach(c => {
@@ -24,7 +24,7 @@ Object.keys(CHARACTER_GIMMICKS).forEach(charId => {
         const entry = ABILITY_SHOWCASE_GIMMICKS.find(g => g.charId === charId && g.idx === idx);
         if (!entry) throw new Error('missing gimmick showcase entry for ' + charId + ' idx=' + idx);
         if (!entry.name || !entry.desc) throw new Error('gimmick showcase entry for ' + charId + ' idx=' + idx + ' is missing name/desc');
-        if (!['circle', 'directional', 'random', 'none'].includes(entry.shape)) {
+        if (!['circle', 'directional', 'random', 'none', 'launchedNote'].includes(entry.shape)) {
             throw new Error('gimmick showcase entry for ' + charId + ' idx=' + idx + ' has an invalid shape: ' + entry.shape);
         }
     });
@@ -38,5 +38,12 @@ if (ABILITY_SHOWCASE_GIMMICKS.length !== Object.values(CHARACTER_GIMMICKS).reduc
 if (Object.keys(ABILITY_FUSION_TABLE).length !== 15) {
     throw new Error('expected 15 fusion techniques to be available for the showcase, got ' + Object.keys(ABILITY_FUSION_TABLE).length);
 }
+
+// 融合技の説明文(「〇〇の効果がある能力である」の〇〇部分)が、15組全てに具体的な
+// 効果の説明として用意されていること(抽象的な「組み合わせた能力」だけで終わらないため)
+Object.keys(ABILITY_FUSION_TABLE).forEach(key => {
+    const text = ABILITY_FUSION_EFFECT_TEXT[key];
+    if (!text) throw new Error('missing a concrete effect description for fusion: ' + key);
+});
 
 console.log('ABILITY SHOWCASE OK');

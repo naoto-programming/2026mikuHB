@@ -30,7 +30,8 @@ function makeAudio() {
     return audio;
 }
 
-// パーフェクト/グレイトはコンボ+1、グッドはコンボを変化させない、ミスはコンボをリセットする
+// パーフェクト/グレイトはコンボ+1、グッド(タイミングが早すぎ/遅すぎ)とミス(取りこぼし)は
+// どちらもコンボをリセットする
 const audio = makeAudio();
 const rhythm = new RhythmSystem(audio);
 const beatInterval = 60 / audio.bpm;
@@ -53,16 +54,25 @@ const r2 = rhythm.checkInput('sword');
 if (r2.judge !== 'great') throw new Error('expected great, got ' + r2.judge);
 if (rhythm.combo !== 2) throw new Error('great should increment combo to 2, got ' + rhythm.combo);
 
-// Good: GREAT_WINDOWの外、GOOD_WINDOWの内。コンボは変化しない(+-0)
+// Good: GREAT_WINDOWの外、GOOD_WINDOWの内(タイミングが早すぎ/遅すぎでも辛うじて成功)。
+// パーフェクト/グレイトの正確なタイミングだけがコンボを伸ばす仕様のため、
+// グッドはミスと同様にコンボをリセットする
 rhythm.swordNotes.push(makeNote(3, 'sword'));
 audio.ctx.currentTime = (3 * beatInterval) + 0.25; // GREAT(0.18)超え、GOOD(0.30)以内
 const r3 = rhythm.checkInput('sword');
 if (r3.judge !== 'good') throw new Error('expected good, got ' + r3.judge);
-if (rhythm.combo !== 2) throw new Error('good should NOT change the combo, expected it to stay at 2, got ' + rhythm.combo);
+if (rhythm.combo !== 0) throw new Error('good (a mistimed hit) should reset the combo just like a miss, got ' + rhythm.combo);
 
-// Miss(取りこぼし): コンボをリセットする
+// Miss(取りこぼし): コンボをリセットする(グッドで既に0になっているため、一度パーフェクトで
+// 積み直してから取りこぼす)
 rhythm.swordNotes.push(makeNote(4, 'sword'));
-audio.ctx.currentTime = (4 * beatInterval) + CONSTANTS.GOOD_WINDOW + 0.01;
+audio.ctx.currentTime = 4 * beatInterval;
+const r3b = rhythm.checkInput('sword');
+if (r3b.judge !== 'perfect') throw new Error('expected perfect, got ' + r3b.judge);
+if (rhythm.combo !== 1) throw new Error('perfect should increment combo to 1, got ' + rhythm.combo);
+
+rhythm.swordNotes.push(makeNote(5, 'sword'));
+audio.ctx.currentTime = (5 * beatInterval) + CONSTANTS.GOOD_WINDOW + 0.01;
 rhythm.update();
 if (rhythm.combo !== 0) throw new Error('missing a note (letting it pass) should reset combo to 0, got ' + rhythm.combo);
 
