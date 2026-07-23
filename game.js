@@ -66,6 +66,13 @@ const MAX_CORRUPTED_NOTES = 4;
 // 薄れるため、「同時には出さない」ことだけを保証できる程度の小さい値にしてある
 const MIN_CORRUPT_STAGGER_BEATS = 1;
 
+// 魔法使いB「イベントノーツ」: 各色の効果範囲(射程)。水→炎→風→雷→地震(全体攻撃)の
+// 順に段階的に大きくなるようにしてある(地震はMAGE_EARTH_GLOBALで全体攻撃を表す)
+const MAGE_WATER_RADIUS = 45;
+const MAGE_FIRE_RADIUS = 55;
+const MAGE_WIND_RADIUS = 220;
+const MAGE_THUNDER_RANGE = 450;
+
 const UPGRADES = [
     { name: '剣攻撃範囲UP', desc: '攻撃範囲+30%', type: 'range', value: 0.3, rarity: 'common' },
     { name: '攻撃力UP', desc: '攻撃力+25%', type: 'atk', value: 0.25, rarity: 'common' },
@@ -1793,7 +1800,11 @@ class Enemy {
         }
     }
 
-    takeDamage(dmg, type = 'normal', attackerY) {
+    // knockbackMult: ノックバック全体の倍率(0でノックバックそのものを無効化する。
+    // 魔法使いの雷・炎の継続ダメージはノックバックさせたくないため使う)。
+    // verticalMult: 上向き成分だけへの追加倍率(魔法使いの地震は、横方向は普通に
+    // 飛ぶが上方向にはあまり跳ねさせたくないため使う)
+    takeDamage(dmg, type = 'normal', attackerY, knockbackMult = 1, verticalMult = 1) {
         if (this.dead) return 0;
         // 上空から落下中は、まだ「敵」として着地していないため攻撃を受け付けない
         // (着地した瞬間から通常のダメージ処理が有効になる)
@@ -1801,6 +1812,9 @@ class Enemy {
         // 剣士「ブラックホール」に吸い込まれている間(吸い込まれる途中も含む)は無敵にする。
         // 爆発で解放され吹き飛ばされている間(flying)は、着地・衝突ダメージを受ける通常仕様のまま
         if (this.blackHoleState === 'sucked' || this.blackHoleState === 'suckingIn') return 0;
+        // 魔法使い「ノーツウィンド」で巻き上げられ宙を飛んでいる間は、他の魔法(炎・雷等)の
+        // ダメージも一切受け付けない(風で飛んでいる間は攻撃対象から外れる)
+        if (this.windLifted) return 0;
         if (this.resistances[type]) dmg *= this.resistances[type];
         if (this.data.defense && type === 'sword') dmg *= 0.5;
 
@@ -1816,15 +1830,16 @@ class Enemy {
         // ブラックホールに吸い込まれている/吹き飛ばされている間やtween移動中は、
         // 別の仕組みで位置が制御されているためノックバックにより弊害が起きる。除外する。
         // 強さそのものはダメージ量に比例させる(弱い攻撃は軽く、強い攻撃ははっきり吹き飛ぶ)
-        if (!this.blackHoleState && !this.tween) {
+        if (!this.blackHoleState && !this.tween && knockbackMult > 0) {
             this.hitKnockbackTimer = 0.25;
             this.hitKnockbackDir = Math.random() < 0.5 ? -1 : 1;
-            this.hitKnockbackPower = computeKnockbackPower(dmg);
+            this.hitKnockbackPower = computeKnockbackPower(dmg) * knockbackMult;
             // 攻撃者と自分の高さの関係で上向き成分を決める: 自分の方が高い(もしくは同じ)
             // 場合はそのまま(さらに)上へ、自分の方が低い場合も地面にめり込まないよう
             // 必ず上向きの成分を持たせる
             const ay = (typeof attackerY === 'number') ? attackerY : this.y;
-            this.hitKnockbackVY = (this.y <= ay) ? -(280 + (ay - this.y)) * this.hitKnockbackPower : -180 * this.hitKnockbackPower;
+            const baseVY = (this.y <= ay) ? -(280 + (ay - this.y)) : -180;
+            this.hitKnockbackVY = baseVY * this.hitKnockbackPower * verticalMult;
         }
         return dmg;
     }
@@ -4544,9 +4559,9 @@ class GameController {
     // LANマルチプレイ用: 敵にダメージを与える共通の入口。ソロ/ホスト時はそのまま
     // 適用するだけだが、クライアント時はホスト(権威側)にも通知し、ホストの状態と
     // 一致させる(ホストからの次回のworldState同期で最終的に上書き・確定する)
-    dealEnemyDamage(enemy, dmg, type, attackerY) {
+    dealEnemyDamage(enemy, dmg, type, attackerY, knockbackMult = 1, verticalMult = 1) {
         // 攻撃者の高さ(省略時はプレイヤー基準)によって、ノックバックの上向き成分が変わる
-        const actualDmg = enemy.takeDamage(dmg, type, attackerY !== undefined ? attackerY : this.localPlayer.y);
+        const actualDmg = enemy.takeDamage(dmg, type, attackerY !== undefined ? attackerY : this.localPlayer.y, knockbackMult, verticalMult);
         this.notifyEnemyDamage(enemy, dmg, type);
         return actualDmg;
     }
@@ -4962,7 +4977,8 @@ class GameController {
             if (judge === 'perfect' || judge === 'great') {
                 const duration = judge === 'perfect' ? 5 : 2;
                 const hx = this.localPlayer.x + this.localPlayer.facing * 90;
-                this.eventHazards.push({ x: hx, radius: 55 * weaken, dpsPerTick: 3.2, timer: duration, tickTimer: 0, color: '#e74c3c' });
+                // 炎の継続ダメージはノックバック対象外にする(knockbackMult: 0)
+                this.eventHazards.push({ x: hx, radius: MAGE_FIRE_RADIUS * weaken, dpsPerTick: 3.2, timer: duration, tickTimer: 0, color: '#e74c3c', knockbackMult: 0 });
                 this.renderer.addFloatingText(px, py, 'ノーツファイヤ!', '#e74c3c', 18);
                 this.audio.playAbilitySound();
             } else if (judge === 'miss') {
@@ -4976,7 +4992,7 @@ class GameController {
                 const duration = judge === 'perfect' ? 5 : 2;
                 [-1, 1].forEach(side => {
                     this.eventHazards.push({
-                        x: this.localPlayer.x + side * 70, radius: 45 * weaken,
+                        x: this.localPlayer.x + side * 70, radius: MAGE_WATER_RADIUS * weaken,
                         dpsPerTick: 3.2, timer: duration, tickTimer: 0, color: '#3498db',
                     });
                 });
@@ -4989,14 +5005,17 @@ class GameController {
                 this.renderer.addFloatingText(px, py, '弱体化...', '#3498db', 16);
             }
         } else if (color === 'thunder') {
-            // ノーツサンダー: ランダムな的に雷を落とす
+            // ノーツサンダー: 射程(THUNDER_RANGE、風より広く地震の全体攻撃よりは狭い)内から
+            // ランダムな的に雷を落とす。宙に浮いている敵(ノーツウィンド中)は対象から外し、
+            // 雷を受けている間はノックバックしない(knockbackMult: 0)
             if (judge === 'perfect' || judge === 'great') {
                 const count = judge === 'perfect' ? 10 : 5;
-                const alive = this.stage.enemies.filter(e => !e.dead && !e.falling);
+                const alive = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.windLifted &&
+                    Math.abs(e.x - this.localPlayer.x) < MAGE_THUNDER_RANGE * weaken);
                 const shuffled = [...alive].sort(() => Math.random() - 0.5).slice(0, count);
                 shuffled.forEach(e => {
                     const dmg = Math.floor(this.localPlayer.getDamage(10, judge));
-                    const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+                    const actualDmg = this.dealEnemyDamage(e, dmg, 'ability', undefined, 0);
                     this.renderer.addEventNoteBurst(e.x - this.stage.scrollX, e.y - e.data.size, '#f1c40f');
                     this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#f1c40f', 16);
                     if (e.dead) this.stage.totalScore += e.data.score;
@@ -5013,8 +5032,8 @@ class GameController {
             if (judge === 'perfect' || judge === 'great') {
                 const liftVY = judge === 'perfect' ? -700 : -450;
                 const fallDamage = judge === 'perfect' ? 24 : 14;
-                const nearby = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState && !e.tween &&
-                    Math.abs(e.x - this.localPlayer.x) < 220 * weaken);
+                const nearby = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState && !e.tween && !e.windLifted &&
+                    Math.abs(e.x - this.localPlayer.x) < MAGE_WIND_RADIUS * weaken);
                 nearby.forEach(e => {
                     e.windLifted = true;
                     e.vy = liftVY;
@@ -5033,7 +5052,8 @@ class GameController {
             // ノーツアース: ノーツ地震を発生させる(全体継続ダメージ、画面もほんの少し揺らす)
             if (judge === 'perfect' || judge === 'great') {
                 const duration = judge === 'perfect' ? 5 : 3;
-                this.eventHazards.push({ x: 0, radius: 0, dpsPerTick: 2.4, timer: duration, tickTimer: 0, color: '#8b5a2b', global: true });
+                // 地震は横方向は普通にノックバックするが、上方向はあまり跳ねさせないよう弱める
+                this.eventHazards.push({ x: 0, radius: 0, dpsPerTick: 2.4, timer: duration, tickTimer: 0, color: '#8b5a2b', global: true, verticalMult: 0.3 });
                 this.renderer.addFloatingText(px, py, 'ノーツアース!', '#8b5a2b', 18);
                 this.audio.playAbilitySound();
             } else if (judge === 'miss') {
@@ -5061,11 +5081,16 @@ class GameController {
             if (hz.tickTimer <= 0) {
                 hz.tickTimer += 0.5;
                 const dmg = Math.max(1, Math.floor(hz.dpsPerTick * 0.5));
+                // ノーツウィンドで宙に浮いている敵は、飛んでいる間は他の魔法の攻撃対象から外す
                 const targets = hz.global
-                    ? this.stage.enemies.filter(e => !e.dead && !e.falling)
-                    : this.stage.enemies.filter(e => !e.dead && !e.falling && Math.abs(e.x - hz.x) < hz.radius);
+                    ? this.stage.enemies.filter(e => !e.dead && !e.falling && !e.windLifted)
+                    : this.stage.enemies.filter(e => !e.dead && !e.falling && !e.windLifted && Math.abs(e.x - hz.x) < hz.radius);
                 targets.forEach(e => {
-                    const actualDmg = this.dealEnemyDamage(e, dmg, 'ability');
+                    // 炎の継続ダメージはノックバックさせない(knockbackMult=0)。
+                    // 地震は横方向は普通にノックバックするが、上方向だけ弱める(verticalMult)
+                    const actualDmg = this.dealEnemyDamage(e, dmg, 'ability', undefined,
+                        hz.knockbackMult !== undefined ? hz.knockbackMult : 1,
+                        hz.verticalMult !== undefined ? hz.verticalMult : 1);
                     // 全体(地震)は対象が多いと敵の数だけ演出が積み重なって重くなるため、
                     // 個別のフローティングテキストは出さない
                     if (!hz.global) {
@@ -5787,6 +5812,7 @@ const GameLogic = {
     EFFECTIVELY_INFINITE_WAVES,
     IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower,
     ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE,
+    MAGE_WATER_RADIUS, MAGE_FIRE_RADIUS, MAGE_WIND_RADIUS, MAGE_THUNDER_RANGE,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,

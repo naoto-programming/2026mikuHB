@@ -6,7 +6,8 @@ function readFile(path) {
 // eval() here loads the local, trusted game.js (not external/untrusted input) to expose
 // globalThis.GameLogic for testing - the same established pattern used by every test in this suite.
 eval(readFile('./game.js'));
-const { RhythmSystem, AudioSystem, CONSTANTS, Enemy, Player, applyAbility } = globalThis.GameLogic;
+const { RhythmSystem, AudioSystem, CONSTANTS, Enemy, Player, applyAbility,
+    MAGE_WATER_RADIUS, MAGE_FIRE_RADIUS, MAGE_WIND_RADIUS, MAGE_THUNDER_RANGE } = globalThis.GameLogic;
 
 function audioNodeStub() {
     return {
@@ -77,6 +78,18 @@ if (!outcome.pendingMeteor || outcome.pendingMeteor.length === 0) {
 }
 if (mageEnemies[0].hp !== mageEnemies[0].maxHp) {
     throw new Error('the target enemy HP must not be reduced yet at the moment applyAbility returns');
+}
+
+// イベントノーツ各色の射程は、水→炎→風→雷の順に段階的に大きくなる
+// (地震は全体攻撃なので射程という概念自体が無く、この比較には含めない)
+if (!(MAGE_WATER_RADIUS < MAGE_FIRE_RADIUS)) {
+    throw new Error('water\'s range should be smaller than fire\'s, water=' + MAGE_WATER_RADIUS + ' fire=' + MAGE_FIRE_RADIUS);
+}
+if (!(MAGE_FIRE_RADIUS < MAGE_WIND_RADIUS)) {
+    throw new Error('fire\'s range should be smaller than wind\'s, fire=' + MAGE_FIRE_RADIUS + ' wind=' + MAGE_WIND_RADIUS);
+}
+if (!(MAGE_WIND_RADIUS < MAGE_THUNDER_RANGE)) {
+    throw new Error('wind\'s range should be smaller than thunder\'s, wind=' + MAGE_WIND_RADIUS + ' thunder=' + MAGE_THUNDER_RANGE);
 }
 
 console.log('MAGE EVENT NOTES OK');

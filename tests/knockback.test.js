@@ -113,4 +113,36 @@ if (!(strongDx > weakDx)) {
     throw new Error('a stronger hit should move the enemy further per frame than a weaker hit, weak=' + weakDx + ' strong=' + strongDx);
 }
 
+// 魔法使い「ノーツウィンド」で宙に浮いている間(windLifted)は、他のダメージ源からも
+// 一切ダメージを受けない(風で飛んでいる間は攻撃対象から外れる)
+const eWindLifted = new Enemy('normal', 400, 600, 1);
+eWindLifted.windLifted = true;
+const hpBeforeWindLifted = eWindLifted.hp;
+eWindLifted.takeDamage(50, 'ability');
+if (eWindLifted.hp !== hpBeforeWindLifted) throw new Error('a wind-lifted enemy should be immune to damage from other sources');
+
+// knockbackMultが0の攻撃(魔法使いの雷・炎の継続ダメージ)は、ダメージは通っても
+// ノックバックそのものが一切発生しない
+const eNoKnockback = new Enemy('normal', 400, 600, 1);
+const hpBeforeNoKb = eNoKnockback.hp;
+eNoKnockback.takeDamage(5, 'ability', undefined, 0);
+if (eNoKnockback.hp === hpBeforeNoKb) throw new Error('damage should still apply even when knockback is suppressed');
+if (eNoKnockback.hitKnockbackTimer > 0) throw new Error('knockbackMult=0 should suppress hit-knockback entirely');
+
+// verticalMultは、横方向のノックバックは維持したまま上方向の跳ね返りだけを弱める
+// (魔法使いの地震: 全体を吹き飛ばすが上にはあまり跳ねさせたくない)
+const eNormalKb = new Enemy('normal', 400, 600, 1);
+eNormalKb.y = 600;
+eNormalKb.takeDamage(20, 'ability', 600);
+const eWeakVertical = new Enemy('normal', 400, 600, 1);
+eWeakVertical.y = 600;
+eWeakVertical.takeDamage(20, 'ability', 600, 1, 0.3);
+if (!(eWeakVertical.hitKnockbackTimer > 0)) throw new Error('verticalMult should not suppress knockback entirely, horizontal knockback should still start');
+if (!(Math.abs(eWeakVertical.hitKnockbackVY) < Math.abs(eNormalKb.hitKnockbackVY))) {
+    throw new Error('a lower verticalMult should produce a weaker upward knockback, normal=' + eNormalKb.hitKnockbackVY + ' weak=' + eWeakVertical.hitKnockbackVY);
+}
+if (eWeakVertical.hitKnockbackPower !== eNormalKb.hitKnockbackPower) {
+    throw new Error('verticalMult should only affect the vertical component, not the overall knockback power');
+}
+
 console.log('KNOCKBACK OK');
