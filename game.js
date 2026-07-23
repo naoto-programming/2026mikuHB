@@ -5394,9 +5394,10 @@ class GameController {
             }
             const abilityStealHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
             while (this.rhythm.abilityStealNextBeat < abilityStealHorizon) {
-                // 常にノーツがあると忙しすぎるため、通常時のノーツ(バースト)と同じく
-                // ノーツのない拍(休符)も混ざるよう、一定確率でその拍への配置をスキップする
-                if (Math.random() < 0.7) {
+                // 発生量を増やすため、半拍間隔・高確率で生成する(それでも常に埋まっていると
+                // 忙しすぎるため、通常時のノーツ(バースト)と同じくノーツのない拍=休符も
+                // 少しだけ混ざるよう、一定確率でその拍への配置をスキップする)
+                if (Math.random() < 0.8) {
                     const note = {
                         id: this.rhythm.noteId++,
                         beat: this.rhythm.abilityStealNextBeat,
@@ -5407,7 +5408,7 @@ class GameController {
                     };
                     this.rhythm.abilityNotes.push(note);
                 }
-                this.rhythm.abilityStealNextBeat += 1;
+                this.rhythm.abilityStealNextBeat += 0.5;
             }
         } else if (localAlive && this.rhythm.abilityStealNextBeat !== null) {
             // ギミック終了
