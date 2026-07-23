@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ビートソード - 2D横スクロールリズム協力アクション</title>
-    <link rel="stylesheet" href="style.css?v=28">
+    <link rel="stylesheet" href="style.css?v=29">
 <base target="_blank">
 </head>
 <body>
@@ -240,7 +240,8 @@
                     <h3 id="showcaseTitle" style="color:#ff6b35;margin-top:10px;"></h3>
                     <p id="showcaseDesc" style="color:#ddd;max-width:560px;margin:8px 0;"></p>
                     <p id="showcaseStats" style="color:#888;font-size:0.85em;"></p>
-                    <button class="btn" onclick="Game.playAbilityShowcase()">アニメーションを再生</button>
+                    <p id="showcaseHint" class="hidden" style="color:#f1c40f;font-size:0.9em;">画面をタップ、またはキーを押してノーツを打つと発動します</p>
+                    <button class="btn" id="showcasePlayBtn" onclick="Game.playAbilityShowcase()">アニメーションを再生</button>
                 </div>
             </div>
             <button class="btn" onclick="Game.exitAbilityShowcase()" style="margin-top:15px;">戻る</button>
@@ -269,6 +270,6 @@
 <!-- キャッシュバスティング用のバージョン番号(?v=N): GitHub Pages / ブラウザが
      game.jsを古いままキャッシュし、修正が反映されて見えないことがあったため、
      コードを更新するたびにこの番号を増やす -->
-<script src="game.js?v=28"></script>
+<script src="game.js?v=29"></script>
 </body>
 </html>

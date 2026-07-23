@@ -27,6 +27,16 @@ Object.keys(CHARACTER_GIMMICKS).forEach(charId => {
         if (!['circle', 'directional', 'random', 'none', 'launchedNote'].includes(entry.shape)) {
             throw new Error('gimmick showcase entry for ' + charId + ' idx=' + idx + ' has an invalid shape: ' + entry.shape);
         }
+        if (entry.special !== gimmick.special) {
+            throw new Error('gimmick showcase entry for ' + charId + ' idx=' + idx + ' has special="' + entry.special +
+                '" but CHARACTER_GIMMICKS says "' + gimmick.special + '" - practice mode needs these to match exactly');
+        }
+        if (!['sword', 'ability'].includes(entry.laneType)) {
+            throw new Error('gimmick showcase entry for ' + charId + ' idx=' + idx + ' has an invalid laneType: ' + entry.laneType);
+        }
+        if (!(entry.noteInterval > 0)) {
+            throw new Error('gimmick showcase entry for ' + charId + ' idx=' + idx + ' needs a positive noteInterval to drive its practice note stream');
+        }
     });
 });
 if (ABILITY_SHOWCASE_GIMMICKS.length !== Object.values(CHARACTER_GIMMICKS).reduce((n, g) => n + g.length, 0)) {

@@ -94,43 +94,46 @@ const ABILITY_SHOWCASE_ABILITIES = [
     { charId: 'mage', shape: 'meteor', radius: 90, color: '#4a90d9' },
 ];
 
+// special: CHARACTER_GIMMICKSの実際のgimmick.specialと一致させ、practiceモードで
+// 本物のRhythmSystem/renderRhythmUIにそのまま渡せるようにする。
+// laneType/noteInterval: 図鑑内でノーツを実際に流す練習モード用の設定(攻撃/能力レーン、生成間隔)
 const ABILITY_SHOWCASE_GIMMICKS = [
-    { charId: 'swordsman', idx: 0, name: '上に弾くノーツ',
+    { charId: 'swordsman', idx: 0, special: 'flickUpNote', name: '上に弾くノーツ',
       desc: '発動中は攻撃せずノーツを画面下に蓄積し、ギミックが終わった直後に「ノーツ噴火」としてランダムな位置へまとめて降らせる範囲攻撃を行う。',
-      shape: 'random', count: 6, color: '#ff6b35' },
-    { charId: 'swordsman', idx: 1, name: 'ブラックホール',
+      shape: 'random', count: 6, color: '#ff6b35', laneType: 'sword', noteInterval: 1 },
+    { charId: 'swordsman', idx: 1, special: 'blackHole', name: 'ブラックホール',
       desc: 'パーフェクトのノーツ(種類を問わない)を叩くたびに、近くの敵をブラックホールへ吸い込む。ギミックが終わる瞬間(または画面上の敵を全て吸い込みきった瞬間)に一気に爆発させ、吹き飛ばした敵同士がぶつかったり地面・壁に叩きつけられるとダメージが入る。',
-      shape: 'circle', radius: 250, color: '#9b59b6' },
-    { charId: 'archer', idx: 0, name: 'ウイルスノーツ',
+      shape: 'circle', radius: 250, color: '#9b59b6', laneType: 'sword', noteInterval: 1 },
+    { charId: 'archer', idx: 0, special: 'corruptedNote', name: 'ウイルスノーツ',
       desc: '流れてくるノーツの一部がウイルス化する。ウイルス化ノーツは打たずにそのまま素通りさせるのが正解。誤って打ってしまうと自分がダメージを受け、コンボもリセットされる。',
-      shape: 'none', color: '#8e44ad' },
-    { charId: 'archer', idx: 1, name: 'ノーツ発射',
+      shape: 'none', color: '#8e44ad', laneType: 'sword', noteInterval: 1 },
+    { charId: 'archer', idx: 1, special: 'launchNote', name: 'ノーツ発射',
       desc: '打ったノーツが判定線から弾かれ、最も近い敵へ飛んでいって着弾点で爆発する単体攻撃になる。',
-      shape: 'launchedNote', range: 400, color: '#ff6b35' },
-    { charId: 'thief', idx: 0, name: '能力泥棒',
+      shape: 'launchedNote', range: 400, color: '#ff6b35', laneType: 'sword', noteInterval: 1.2 },
+    { charId: 'thief', idx: 0, special: 'abilitySteal', name: '能力泥棒',
       desc: '発動中は能力ノーツだけが流れ続ける。パーフェクトを出すたびに他クラスの能力を弱体化してコピー発動し、2回連続で盗むとその2クラス専用の「融合技」が発動する。',
-      shape: 'none', color: '#4a90d9' },
-    { charId: 'thief', idx: 1, name: '連打',
+      shape: 'none', color: '#4a90d9', laneType: 'ability', noteInterval: 0.5 },
+    { charId: 'thief', idx: 1, special: 'rapidFire', name: '連打',
       desc: '画面の端から端まで高速でダッシュし、すれ違った敵にダメージを与える。',
-      shape: 'none', edgeDash: true, color: '#ff6b35' },
-    { charId: 'fighter', idx: 0, name: 'コマ送り',
+      shape: 'none', edgeDash: true, color: '#ff6b35', laneType: 'sword', noteInterval: 0.5, rapidFireNote: true },
+    { charId: 'fighter', idx: 0, special: 'steppedMotion', name: 'コマ送り',
       desc: 'ノーツが半拍刻みのコマ送りのように近づいてくる。',
-      shape: 'none', color: '#e67e22' },
-    { charId: 'fighter', idx: 1, name: '反転',
+      shape: 'none', color: '#e67e22', laneType: 'sword', noteInterval: 1 },
+    { charId: 'fighter', idx: 1, special: 'flipMirror', name: '反転',
       desc: '1拍ごとにノーツの左右位置が反転する。',
-      shape: 'none', color: '#e67e22' },
-    { charId: 'beast', idx: 0, name: '見えない接近',
+      shape: 'none', color: '#e67e22', laneType: 'sword', noteInterval: 1 },
+    { charId: 'beast', idx: 0, special: 'invisibleApproach', name: '見えない接近',
       desc: 'ノーツが判定線に近づく途中、一瞬だけ見えなくなる区間がある。',
-      shape: 'none', color: '#27ae60' },
-    { charId: 'beast', idx: 1, name: '中央集中円',
+      shape: 'none', color: '#27ae60', laneType: 'sword', noteInterval: 1 },
+    { charId: 'beast', idx: 1, special: 'centerJudgeCircle', name: '中央集中円',
       desc: 'ノーツが画面中央の円から放射状に飛び出し、判定線へ集まってくる。',
-      shape: 'none', color: '#27ae60' },
-    { charId: 'mage', idx: 0, name: '判定線ドリフト',
+      shape: 'none', color: '#27ae60', laneType: 'sword', noteInterval: 1 },
+    { charId: 'mage', idx: 0, special: 'driftingJudgeLine', name: '判定線ドリフト',
       desc: '判定線の高さがゆっくり不規則に上下する。急に戻って混乱しないよう滑らかに移動する。',
-      shape: 'none', color: '#3498db' },
-    { charId: 'mage', idx: 1, name: 'イベントノーツ',
+      shape: 'none', color: '#3498db', laneType: 'sword', noteInterval: 1 },
+    { charId: 'mage', idx: 1, special: 'eventNote', name: 'イベントノーツ',
       desc: '炎・水・雷・風・土のいずれかの色を持つノーツが流れ、判定の良し悪しで色ごとに全く異なる効果が発動する。射程は水<炎<風<雷<地震(全体攻撃)の順に広い。ここでは代表として雷(射程最大)を表示している。',
-      shape: 'circle', radius: MAGE_THUNDER_RANGE, color: '#f1c40f' },
+      shape: 'circle', radius: MAGE_THUNDER_RANGE, color: '#f1c40f', laneType: 'ability', noteInterval: 1, eventColor: 'thunder' },
 ];
 
 // 融合技(能力泥棒で2つ盗んだ時の専用技)の効果を、抽象的な「組み合わせた能力」ではなく
@@ -5975,6 +5978,16 @@ class AbilityShowcase {
         this.demoPlayers = [];
         this.demoEnemies = [];
         this.dashAnim = null;
+        // ギミック練習モード用: 本物のRhythmSystem/AudioSystemを流用し、実際にノーツを
+        // 流して打たせることで、押しても発動しない・演出だけの見せかけにならないようにする
+        this.practiceAudio = null;
+        this.practiceRhythm = null;
+        this.fakeGame = null;
+        this.practiceNextBeat = 0;
+        this.blackHoleHits = 0;
+        this.storedNotes = 0;
+        this.eruptingNotes = [];
+        this.heldKeys = new Set();
     }
 
     ensureRenderer() {
@@ -5982,6 +5995,181 @@ class AbilityShowcase {
         const canvas = document.getElementById('showcaseCanvas');
         this.renderer = new Renderer(canvas);
         this.renderer.resize();
+    }
+
+    ensurePractice() {
+        if (this.practiceRhythm) return;
+        this.practiceAudio = new AudioSystem();
+        try { this.practiceAudio.init(); } catch (e) { /* AudioContext生成に失敗しても図鑑自体は見られるようにする */ }
+        this.practiceAudio.bpm = 120;
+        this.practiceRhythm = new RhythmSystem(this.practiceAudio);
+        this.fakeGame = {
+            audio: this.practiceAudio,
+            rhythm: this.practiceRhythm,
+            localPlayer: {
+                getActiveGimmick: () => (this.selected && this.selected.category === 'gimmick')
+                    ? { special: this.selected.entry.special } : {},
+            },
+            images: null,
+            gameTime: 0,
+            swordsmanStoredNotes: 0,
+            eruptingNotes: this.eruptingNotes,
+            state: 'playing',
+        };
+        const canvas = document.getElementById('showcaseCanvas');
+        canvas.addEventListener('pointerdown', () => this.handlePracticeInput());
+        window.addEventListener('keydown', (e) => {
+            if (!this.active) return;
+            const key = e.key.toLowerCase();
+            if (this.heldKeys.has(key)) return;
+            this.heldKeys.add(key);
+            this.handlePracticeInput();
+        });
+        window.addEventListener('keyup', (e) => this.heldKeys.delete(e.key.toLowerCase()));
+    }
+
+    // ギミックが必要とするノーツレーンを、そのギミック専用の間隔で流し始める
+    // (発動中は休符なく一定間隔で流し続け、いつでも練習できるようにする)
+    startPractice(entry) {
+        this.ensurePractice();
+        this.practiceRhythm.swordNotes = [];
+        this.practiceRhythm.abilityNotes = [];
+        this.practiceRhythm.defendNotes = [];
+        this.practiceRhythm.combo = 0;
+        this.practiceRhythm.abilityActive = entry.laneType === 'ability';
+        this.practiceAudio.isPlaying = true;
+        this.practiceAudio.startTime = this.practiceAudio.ctx ? this.practiceAudio.ctx.currentTime : 0;
+        this.blackHoleHits = 0;
+        this.storedNotes = 0;
+        this.eruptingNotes.length = 0;
+        this.practiceNextBeat = 1; // 最初の1拍は心構えの猶予として空ける
+    }
+
+    spawnPracticeNote(entry, beat) {
+        const r = this.practiceRhythm;
+        if (entry.laneType === 'ability') {
+            const note = { id: r.noteId++, beat, type: 'ability', hit: false, missed: false };
+            if (entry.eventColor) { note.eventNote = true; note.eventColor = entry.eventColor; }
+            r.abilityNotes.push(note);
+        } else {
+            const note = { id: r.noteId++, beat, type: 'sword', hit: false, missed: false };
+            if (entry.rapidFireNote) note.rapidFireNote = true;
+            if (entry.special === 'corruptedNote' && Math.round(beat) % 3 === 0) note.corrupted = true;
+            r.swordNotes.push(note);
+        }
+    }
+
+    handlePracticeInput() {
+        if (!this.active || !this.selected || this.selected.category !== 'gimmick' || !this.practiceRhythm) return;
+        const entry = this.selected.entry;
+        const result = this.practiceRhythm.checkInputAny({ special: entry.special });
+        if (!result || !result.note) return;
+        this.onPracticeHit(entry, result);
+    }
+
+    // ギミックごとに、本物の発動条件(パーフェクトのみ/取りこぼしも成立等)に合わせて
+    // 実際の効果を出す。射程・範囲を示すだけのシンプルなギミックはfireOnceを使い回す
+    onPracticeHit(entry, result) {
+        const mover = this.demoPlayers[0];
+        const psx = mover.x, psy = CONSTANTS.GROUND_Y - 40;
+        const color = entry.color || '#f39c12';
+        if (entry.special === 'blackHole') {
+            if (result.judge === 'perfect') this.blackHoleSuckOne();
+            return;
+        }
+        if (entry.special === 'flickUpNote') {
+            if (result.judge !== 'miss') this.accumulateFlickUpDemo();
+            return;
+        }
+        if (entry.special === 'corruptedNote') {
+            // checkInput側で既に、感染ノーツは打った時点で必ずミス扱いになる(本編と同じ挙動)。
+            // 図鑑では被ダメ演出までは再現せず、判定(ミス表示)だけで効果が伝わるようにする
+            return;
+        }
+        if (entry.special === 'rapidFire') {
+            if (result.judge === 'perfect') {
+                this.dashAnim = { obj: mover, fromX: mover.x, toX: Math.min(mover.x + 850, CONSTANTS.CANVAS_WIDTH - 130), t: 0, duration: 0.25 };
+                this.renderer.addEdgeDash(psy, 1, color);
+            }
+            return;
+        }
+        if (result.judge === 'miss') return;
+        this.fireOnce(entry, psx, psy, color);
+    }
+
+    // 剣士「ブラックホール」: 練習用のダミー敵を実際に吸い込み、周回させ、
+    // 全員吸い込みきったら本物と同じ流れで爆発させる
+    blackHoleSuckOne() {
+        const cx = CONSTANTS.CANVAS_WIDTH / 2, cy = CONSTANTS.CANVAS_HEIGHT / 2;
+        const target = this.demoEnemies.find(e => !e.blackHoleState && !e.tween && !e.dead);
+        if (!target) return;
+        target.blackHoleState = 'suckingIn';
+        target.blackHoleCenterX = cx;
+        target.blackHoleCenterY = cy;
+        target.tween = {
+            fromX: target.x, fromY: target.y, toX: cx, toY: cy,
+            timer: 0, duration: 0.35, onComplete: 'blackHoleSucked',
+        };
+        this.renderer.addParticle(cx, cy, '#9b59b6', 10);
+        this.blackHoleHits++;
+        if (this.blackHoleHits >= this.demoEnemies.length) {
+            setTimeout(() => {
+                if (this.selected && this.selected.entry && this.selected.entry.special === 'blackHole') {
+                    this.explodeBlackHoleDemo();
+                }
+            }, 500);
+        }
+    }
+
+    explodeBlackHoleDemo() {
+        const cx = CONSTANTS.CANVAS_WIDTH / 2, cy = CONSTANTS.CANVAS_HEIGHT / 2;
+        this.demoEnemies.forEach(e => {
+            if (e.blackHoleState !== 'sucked' && e.blackHoleState !== 'suckingIn') return;
+            e.tween = null;
+            const angle = Math.random() * Math.PI * 2;
+            e.blackHoleState = 'flying';
+            e.flyVX = Math.cos(angle) * 400;
+            e.flyVY = Math.sin(angle) * 400;
+            e.flyTimer = 0;
+        });
+        this.renderer.addExplosion(cx, cy, 2.5);
+        this.renderer.shake(12, 0.3);
+        this.blackHoleHits = 0;
+        // 少し間を置いてから初期位置に戻し、何度でも練習できるようにする
+        setTimeout(() => {
+            if (this.selected && this.selected.entry && this.selected.entry.special === 'blackHole') {
+                this.demoEnemies = this.spawnDemoEnemies(this.selected.entry, 300);
+            }
+        }, 900);
+    }
+
+    // 剣士「上に弾くノーツ」: 打つたびに蓄積し、4回溜まったら本物と同じくノーツ噴火を起こす
+    accumulateFlickUpDemo() {
+        this.storedNotes++;
+        this.renderer.addParticle(CONSTANTS.CANVAS_WIDTH / 2, CONSTANTS.CANVAS_HEIGHT - 20, '#f1c40f', 6);
+        if (this.storedNotes >= 4) {
+            const count = this.storedNotes;
+            this.storedNotes = 0;
+            for (let i = 0; i < count; i++) {
+                this.eruptingNotes.push({
+                    x: Math.random() * CONSTANTS.CANVAS_WIDTH, t: -i * 0.12, duration: 0.7, hasHit: false,
+                });
+            }
+        }
+    }
+
+    updateEruptingNotesDemo(dt) {
+        for (let i = this.eruptingNotes.length - 1; i >= 0; i--) {
+            const n = this.eruptingNotes[i];
+            n.t += dt;
+            const progress = Math.min(1, n.t / n.duration);
+            const y = progress * CONSTANTS.CANVAS_HEIGHT;
+            if (!n.hasHit && y >= CONSTANTS.GROUND_Y) {
+                n.hasHit = true;
+                this.renderer.addExplosion(n.x, CONSTANTS.GROUND_Y - 10, 0.8);
+            }
+            if (progress >= 1) this.eruptingNotes.splice(i, 1);
+        }
     }
 
     enter() {
@@ -6084,6 +6272,13 @@ class AbilityShowcase {
             return p;
         });
         this.demoEnemies = this.spawnDemoEnemies(entry, baseX);
+        if (category === 'gimmick') {
+            this.startPractice(entry);
+        }
+        const playBtn = document.getElementById('showcasePlayBtn');
+        const hint = document.getElementById('showcaseHint');
+        if (playBtn) playBtn.classList.toggle('hidden', category === 'gimmick');
+        if (hint) hint.classList.toggle('hidden', category !== 'gimmick');
         this.renderInfo();
     }
 
@@ -6184,11 +6379,42 @@ class AbilityShowcase {
             a.obj.x = a.fromX + (a.toX - a.fromX) * progress;
             if (progress >= 1) this.dashAnim = null;
         }
+        // ブラックホールに吸い込み中/周回中/爆発で吹き飛び中の敵だけ、実際の物理を進める
+        // (それ以外の待機中のダミー敵は静止したままにする)
+        this.demoEnemies.forEach(e => {
+            if (e.tween || e.blackHoleState) e.update(dt, [], 0, []);
+        });
+
+        const isGimmick = this.selected && this.selected.category === 'gimmick';
+        if (isGimmick && this.practiceRhythm) {
+            const entry = this.selected.entry;
+            const currentBeat = this.practiceAudio.getCurrentBeat();
+            let guard = 0;
+            while (currentBeat >= this.practiceNextBeat && guard < 20) {
+                this.spawnPracticeNote(entry, this.practiceNextBeat);
+                this.practiceNextBeat += entry.noteInterval;
+                guard++;
+            }
+            this.practiceRhythm.update();
+            // RhythmSystem.update()は能力ノーツが(まだ1つも流れていない間も含め)全て
+            // hit/missed済みだと自動的にabilityActiveをfalseに戻してしまう
+            // (本編ではability_completeの合図として使うが、図鑑では常に流し続けたいだけ
+            // なので、能力レーンを使うギミックの間はtrueに固定し直す)
+            if (entry.laneType === 'ability') this.practiceRhythm.abilityActive = true;
+            this.updateEruptingNotesDemo(dt);
+            this.fakeGame.swordsmanStoredNotes = this.storedNotes;
+            this.fakeGame.gameTime += dt;
+        }
+
         const ctx = this.renderer.ctx;
         const canvas = this.renderer.canvas;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         const images = (typeof game !== 'undefined' && game) ? game.images : null;
+        if (this.fakeGame) this.fakeGame.images = images;
         this.renderer.renderBackground(ctx, 0, canvas.width, canvas.height, images, 0);
+        if (isGimmick && this.selected.entry.special === 'blackHole') {
+            this.renderer.renderBlackHole(ctx, this.fakeGame);
+        }
         this.demoEnemies.forEach(e => this.renderer.renderEnemy(ctx, e, 0, images, 0));
         this.demoPlayers.forEach(p => this.renderer.renderPlayer(ctx, p, 0, images, 0));
         this.renderer.renderParticles(ctx);
@@ -6197,6 +6423,11 @@ class AbilityShowcase {
         this.renderer.renderEdgeDashes(ctx);
         this.renderer.renderMeteorNotes(ctx);
         this.renderer.renderExplosions(ctx, null);
+        if (isGimmick) {
+            if (this.selected.entry.special === 'flickUpNote') this.renderer.renderStoredNotes(ctx, this.fakeGame);
+            this.renderer.renderFlickUpEruption(ctx, this.fakeGame);
+            this.renderer.renderRhythmUI(ctx, this.fakeGame);
+        }
         requestAnimationFrame((t) => this.loop(t));
     }
 }
