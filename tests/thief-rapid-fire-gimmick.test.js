@@ -5,7 +5,8 @@ function readFile(path) {
 }
 eval(readFile('./game.js'));
 const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, Player, Enemy, applyAbility, CHARACTERS,
-    ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE } = globalThis.GameLogic;
+    ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE,
+    ABILITY_FUSION_RECOIL_RATIO } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -32,6 +33,11 @@ if (!(ABILITY_FUSION_POWER_MULT > 0 && ABILITY_FUSION_POWER_MULT < 1)) {
     throw new Error('a fusion ability should also be weakened (powerMult between 0 and 1), got ' + ABILITY_FUSION_POWER_MULT);
 }
 if (!(ABILITY_STEAL_PENDING_BEATS > 0)) throw new Error('ABILITY_STEAL_PENDING_BEATS should be a positive number of beats');
+// 融合技は単独発動より強力なため、使い放題にならないよう発動のたびに反動ダメージを
+// 受けるデメリットを持たせてある(最大HPに対する割合として、0より大きく小さすぎない値)
+if (!(ABILITY_FUSION_RECOIL_RATIO > 0 && ABILITY_FUSION_RECOIL_RATIO < 0.3)) {
+    throw new Error('a fusion technique should cost some noticeable but not overwhelming recoil damage, got ' + ABILITY_FUSION_RECOIL_RATIO);
+}
 
 // 融合技テーブル: 6職業の総当たり(15通り)全てに専用の融合技が定義されており、
 // それぞれ固有の名前・有効なshapeを持っていることを確認する
@@ -112,6 +118,26 @@ const rhythmDone = makeStaleAbilityRhythm();
 const resultDone = rhythmDone.update();
 if (!resultDone || resultDone.type !== 'ability_complete') {
     throw new Error('ability_complete should resume firing normally once neither gimmick is active');
+}
+
+// 能力泥棒のノーツは右からだけでなく、fromLeftフラグが立っているものは
+// 防御ノーツと同じ側(左)から流れてくる
+{
+    const audio = makeAudio();
+    const rhythm = new RhythmSystem(audio);
+    rhythm.abilityActive = true;
+    const leftNote = { id: rhythm.noteId++, beat: 2, type: 'ability', hit: false, missed: false, abilityStealNote: true, fromLeft: true };
+    const rightNote = { id: rhythm.noteId++, beat: 2, type: 'ability', hit: false, missed: false, abilityStealNote: true, fromLeft: false };
+    rhythm.abilityNotes.push(leftNote, rightNote);
+    audio.ctx.currentTime = 1.5 * (60 / 120);
+    const rendered = rhythm.getNotesForRender({});
+    const leftRendered = rendered.find(n => n.id === leftNote.id);
+    const rightRendered = rendered.find(n => n.id === rightNote.id);
+    if (!leftRendered || !rightRendered) throw new Error('both ability-steal notes should be visible');
+    if (!(leftRendered.x < 300) || !(rightRendered.x > 300)) {
+        throw new Error('fromLeft should approach from the defend (left) side while the rest still approach from the right, left.x=' +
+            leftRendered.x + ' right.x=' + rightRendered.x);
+    }
 }
 
 console.log('THIEF RAPID-FIRE GIMMICK OK');

@@ -87,11 +87,14 @@ pInvincible.takeDamage(5);
 if (pInvincible.hitKnockbackTimer > 0) throw new Error('an invincible player should not take damage or receive knockback');
 
 // ノックバックの強さはダメージ量に基づく: 弱い攻撃より強い攻撃の方がはっきり吹き飛ぶ
+// (Enemyはランダムに耐性を持つことがあるため、比較のため明示的に無効化する)
 const eWeak = new Enemy('normal', 400, 600, 1);
 eWeak.y = 600;
+eWeak.resistances = {};
 eWeak.takeDamage(2, 'sword', 600); // 弱いダメージ
 const eStrong = new Enemy('normal', 400, 600, 1);
 eStrong.y = 600;
+eStrong.resistances = {};
 eStrong.takeDamage(25, 'sword', 600); // 強いダメージ(致命傷にはならない範囲)
 if (!(Math.abs(eStrong.hitKnockbackVY) > Math.abs(eWeak.hitKnockbackVY))) {
     throw new Error('a stronger hit should produce stronger (upward) knockback velocity than a weaker hit, weak=' + eWeak.hitKnockbackVY + ' strong=' + eStrong.hitKnockbackVY);
@@ -101,11 +104,13 @@ if (!(eStrong.hitKnockbackPower > eWeak.hitKnockbackPower)) {
 }
 // 敵の水平方向の吹っ飛びもダメージ量に応じて強くなる
 const eWeakX = new Enemy('normal', 400, 600, 1);
+eWeakX.resistances = {};
 eWeakX.hitKnockbackDir = 1;
 eWeakX.takeDamage(2, 'sword');
 eWeakX.hitKnockbackDir = 1; // takeDamage内でランダムに決まる向きを固定して比較する
 const weakDx = (() => { const before = eWeakX.x; eWeakX.update(1 / 60, [], 0, [eWeakX]); return eWeakX.x - before; })();
 const eStrongX = new Enemy('normal', 400, 600, 1);
+eStrongX.resistances = {};
 eStrongX.takeDamage(25, 'sword');
 eStrongX.hitKnockbackDir = 1;
 const strongDx = (() => { const before = eStrongX.x; eStrongX.update(1 / 60, [], 0, [eStrongX]); return eStrongX.x - before; })();
@@ -133,9 +138,11 @@ if (eNoKnockback.hitKnockbackTimer > 0) throw new Error('knockbackMult=0 should 
 // (魔法使いの地震: 全体を吹き飛ばすが上にはあまり跳ねさせたくない)
 const eNormalKb = new Enemy('normal', 400, 600, 1);
 eNormalKb.y = 600;
+eNormalKb.resistances = {}; // Enemyはランダムに耐性を持つことがあるため、比較のため無効化する
 eNormalKb.takeDamage(20, 'ability', 600);
 const eWeakVertical = new Enemy('normal', 400, 600, 1);
 eWeakVertical.y = 600;
+eWeakVertical.resistances = {};
 eWeakVertical.takeDamage(20, 'ability', 600, 1, 0.3);
 if (!(eWeakVertical.hitKnockbackTimer > 0)) throw new Error('verticalMult should not suppress knockback entirely, horizontal knockback should still start');
 if (!(Math.abs(eWeakVertical.hitKnockbackVY) < Math.abs(eNormalKb.hitKnockbackVY))) {
