@@ -3129,8 +3129,9 @@ class Renderer {
         // 可動域も基本のサイン波だけの時よりずっと広くなる。
         // Y方向はバー(判定線)がちょうど画面下端(CANVAS_HEIGHT)に接しているため、下に動くと
         // すぐに画面からはみ出して見えなくなってしまう。そのため下方向へは一切動かさず、
-        // 上方向だけに動けるようにする。ただし上げすぎると画面下部のコンボ表示(HUD)と
-        // 重なって見にくくなるため、HUDにかからない範囲に収まる程度の上限にしてある
+        // 上方向だけに(その分大きく)動けるようにする。上げるとコンボ表示(HUD)と重なる
+        // ことがあるが、可動域自体を狭めて避けるのではなく、重なっても判定線・ノーツが
+        // しっかり見えるよう専用の背景(下の「追従する暗い帯」)でコントラストを確保する
         // (終了直後もフェードアウト中は動きを止めないよう、judgeLineActiveAmountが
         // 0でなくなっている間はdriftingJudgeLineがfalseになっても更新を続ける)
         if (driftingJudgeLine || this.judgeLineActiveAmount > 0.001) {
@@ -3140,7 +3141,7 @@ class Renderer {
             if (drift.timer <= 0) {
                 drift.timer = 1.2 + Math.random() * 1.6;
                 drift.targetX = (Math.random() * 2 - 1) * 75;
-                drift.targetY = -Math.random() * 90;
+                drift.targetY = -Math.random() * 180;
             }
             drift.x += (drift.targetX - drift.x) * 0.05;
             drift.y += (drift.targetY - drift.y) * 0.05;
@@ -3148,7 +3149,7 @@ class Renderer {
         const judgeLineOffsetX = this.judgeLineDrift
             ? (Math.sin(currentBeat * 1.5) * 70 + this.judgeLineDrift.x) * this.judgeLineActiveAmount : 0;
         const judgeLineOffsetY = this.judgeLineDrift
-            ? ((Math.cos(currentBeat * 1.1) - 1) * 15 + this.judgeLineDrift.y) * this.judgeLineActiveAmount : 0;
+            ? ((Math.cos(currentBeat * 1.1) - 1) * 25 + this.judgeLineDrift.y) * this.judgeLineActiveAmount : 0;
 
         const targetX = barW / 2;
 
@@ -3163,12 +3164,13 @@ class Renderer {
             ctx.strokeRect(barX, barY, barW, barH);
 
             // 判定線がドリフトして動くと、ノーツもその高さに追従して動くため、固定された
-            // バー背景の外(ゲーム画面の背景美術の上)に出てしまい、同化して見えにくく
-            // なることがあった。ノーツが実際に流れる高さにも追従する暗い帯を敷いて
-            // 視認性を確保する
+            // バー背景の外(ゲーム画面の背景美術やコンボ表示(HUD)の裏)に出てしまい、
+            // 同化して見えにくくなることがあった。ノーツが実際に流れる高さにも追従する
+            // 暗い帯を、HUDの文字と重なっても十分なコントラストが出るよう
+            // 通常のバーよりも濃く・上下にも少し広めに敷いて視認性を確保する
             if (Math.abs(judgeLineOffsetY) > 0.5) {
-                ctx.fillStyle = 'rgba(0,0,0,0.55)';
-                ctx.fillRect(barX, barY + judgeLineOffsetY, barW, barH);
+                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.fillRect(barX, barY + judgeLineOffsetY - 15, barW, barH + 30);
             }
 
             // Target line (center)
@@ -4526,30 +4528,62 @@ class GameController {
 
     // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数がしきい値に達した瞬間に発動する。
     // 6職業(剣士/弓士/盗賊/拳士/獣人/魔法使い)からランダムに1つ選び、その職業の能力を
-    // (パーフェクト相当の性能で)そのまま借りて発動する
+    // (パーフェクト相当の性能で)そのまま借りて発動する。
+    // どの職業の能力かひと目で分かるよう、通常の能力発動時と同じ職業ごとの専用演出
+    // (射程の可視化・矢・突進・メテオ等)も職業の色で再現し、その職業名+能力名を
+    // 大きく表示する(でないとただの汎用ダメージにしか見えず、何が起きたか分からない)
     triggerAbilitySteal() {
         const stolenChar = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
-        const outcome = applyAbility(stolenChar.id, 1, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+        const stolenId = stolenChar.id;
+        const color = stolenChar.color || '#f39c12';
+        const outcome = applyAbility(stolenId, 1, this.localPlayer, this.stage.enemies, this.localPlayer.x);
         // applyAbility内で既にダメージ適用済みの通常の戻り値(hits)は、ここではホストへの
         // 通知のみ行う。魔法使いの「ノーツメテオ」だけは例外的にダメージ未適用のまま
-        // pendingMeteorとして返ってくるため、ここで代わりに即時適用する
+        // pendingMeteorとして返ってくるため、着弾演出を経てから適用する
         outcome.hits.forEach(({ enemy, dmg }) => {
             this.notifyEnemyDamage(enemy, dmg, 'ability');
-            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, '#f39c12', 8);
-            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${dmg}`, '#f39c12', 16);
+            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, color, 8);
+            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${dmg}`, color, 16);
             if (enemy.dead) this.stage.totalScore += enemy.data.score;
         });
         if (outcome.pendingMeteor) {
             outcome.pendingMeteor.forEach(({ enemy, dmg }) => {
-                if (enemy.dead || enemy.falling) return;
-                const actualDmg = this.dealEnemyDamage(enemy, dmg, 'ability');
-                this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, '#f39c12', 8);
-                this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${actualDmg}`, '#f39c12', 16);
-                if (enemy.dead) this.stage.totalScore += enemy.data.score;
+                this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, () => {
+                    if (enemy.dead || enemy.falling) return;
+                    const actualDmg = this.dealEnemyDamage(enemy, dmg, 'ability');
+                    this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, color, 8);
+                    this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${actualDmg}`, color, 16);
+                    if (enemy.dead) this.stage.totalScore += enemy.data.score;
+                });
             });
         }
-        this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 90,
-            `${stolenChar.name}の能力を発動!`, '#f39c12', 20);
+        if (stolenId === 'archer') {
+            const arrowImg = this.images && this.images[IMAGE_MANIFEST.weapons.arrow];
+            this.renderer.addFlyingArrow(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 40, outcome.dir || this.localPlayer.facing, arrowImg);
+        } else if (stolenId === 'beast') {
+            this.localPlayer.perfectDash(outcome.dir || this.localPlayer.facing, 250);
+            this.audio.playDashSound();
+        }
+
+        // 職業ごとの効果範囲を可視化する演出も、通常の能力発動と同じ形で再現する
+        const psx = this.localPlayer.x - this.stage.scrollX, psy = this.localPlayer.y - 40;
+        if (stolenId === 'swordsman') {
+            this.renderer.addRangeCircle(psx, psy, 250, color);
+        } else if (stolenId === 'archer') {
+            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 450, color);
+        } else if (stolenId === 'thief') {
+            this.renderer.addRangeCircle(psx, psy, this.localPlayer.getAttackRange(), color);
+        } else if (stolenId === 'fighter') {
+            this.renderer.addRangeCircle(psx, psy, 450, color);
+            this.renderer.addRangeCircle(psx, psy, 650, color);
+        } else if (stolenId === 'beast') {
+            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 250, color);
+            this.renderer.addRangeBeam(psx, psy, outcome.dir || this.localPlayer.facing, 400, color);
+        }
+
+        // 誰の能力を借りたのかがはっきり分かるよう、職業名と能力名を大きく表示する
+        this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 100,
+            `${stolenChar.name}の能力「${stolenChar.ability}」を発動!`, color, 24);
         this.renderer.shake(6, 0.2);
         this.audio.playAbilitySound();
     }
