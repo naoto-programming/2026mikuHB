@@ -1179,11 +1179,36 @@ const computeKnockbackPower = function(dmg) {
 };
 
 // 盗賊「能力泥棒」ギミック: 能力ノーツをパーフェクトで叩くたびに発動を試みる。
-// 同時に発動している効果の上限(これ以上重なると何が起きているか分からなくなる)、
-// 1回の発動が「アクティブ」とみなされる時間、盗んだ能力の弱体化倍率
-const ABILITY_STEAL_MAX_CONCURRENT = 2;
-const ABILITY_STEAL_ACTIVE_SECONDS = 0.6;
+// 1つだけなら弱体化した単独の能力(ABILITY_STEAL_POWER_MULT倍)をそのまま発動するが、
+// 最初の発動からABILITY_STEAL_PENDING_BEATS拍以内にもう一度パーフェクトが来ると、
+// 2つの能力を組み合わせた専用の「融合技」(ABILITY_FUSION_POWER_MULT倍の威力)を発動する
 const ABILITY_STEAL_POWER_MULT = 0.35;
+const ABILITY_STEAL_PENDING_BEATS = 2;
+const ABILITY_FUSION_POWER_MULT = 0.5;
+
+// 職業ペアごとの融合技テーブル。キーは2つの職業IDをアルファベット順に'+'で連結したもの
+// (組み合わせに順序は関係ないため)。
+// shape: 'circle'(自分中心の範囲)/'directional'(向いている方向への直線)/'random'(生存中からランダムな数体)
+// hits: 何回に分けて発動するか(既定1)。dash: 発動時に敵へ向かって突進する演出を追加する。
+// meteor: メテオが降ってくる演出にし、着弾の瞬間までダメージ適用を遅らせる。
+// knockback: 命中した敵を吹き飛ばす強さ(pxの目安)。tier: weak/medium/strongの威力段階
+const ABILITY_FUSION_TABLE = {
+    'archer+beast': { name: '貫通突進', shape: 'directional', range: 400, dash: true, knockback: 30, tier: 'medium' },
+    'archer+fighter': { name: '貫通乱撃', shape: 'directional', range: 600, knockback: 40, tier: 'medium' },
+    'archer+mage': { name: '誘導隕石弾', shape: 'directional', range: 350, meteor: true, tier: 'medium' },
+    'archer+swordsman': { name: '斬撃乱舞', shape: 'directional', range: 400, tier: 'strong' },
+    'archer+thief': { name: '乱れ矢', shape: 'directional', range: 350, hits: 4, tier: 'medium' },
+    'beast+fighter': { name: '怒涛乱撃', shape: 'directional', range: 500, knockback: 50, tier: 'strong' },
+    'beast+mage': { name: '獣隕石襲', shape: 'circle', radius: 300, dash: true, meteor: true, knockback: 30, tier: 'strong' },
+    'beast+swordsman': { name: '獣断撃', shape: 'circle', radius: 300, dash: true, knockback: 30, tier: 'strong' },
+    'beast+thief': { name: '疾走乱撃', shape: 'circle', radius: 220, hits: 4, dash: true, knockback: 20, tier: 'medium' },
+    'fighter+mage': { name: '爆裂隕石群', shape: 'circle', radius: 650, meteor: true, tier: 'medium' },
+    'fighter+swordsman': { name: '豪断撃', shape: 'circle', radius: 500, knockback: 40, tier: 'strong' },
+    'fighter+thief': { name: '乱撃粉砕', shape: 'circle', radius: 200, hits: 4, knockback: 20, tier: 'medium' },
+    'mage+swordsman': { name: '剣雨', shape: 'circle', radius: 300, meteor: true, tier: 'medium' },
+    'mage+thief': { name: '瞬間隕石乱打', shape: 'random', count: 4, meteor: true, tier: 'weak' },
+    'swordsman+thief': { name: '疾風連斬', shape: 'circle', radius: 250, hits: 3, tier: 'medium' },
+};
 
 // ============================================================
 // Player
@@ -3417,9 +3442,11 @@ class GameController {
         // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
-        // 盗賊A「能力泥棒」: 現在アクティブな(効果が重なっている)盗んだ能力の残り時間の配列。
-        // 同時に発動できる件数の上限チェックに使う
-        this.activeAbilitySteals = [];
+        // 盗賊A「能力泥棒」: 直前に盗んで「保留」している能力({charId, expiresAtBeat})。
+        // 保留中にもう一度パーフェクトが来ると、2つを組み合わせた融合技になる
+        this.pendingAbilitySteal = null;
+        // 発動中の融合技のコンボ進行状況({config, color, remaining, nextBeat})
+        this.abilityFusionCombo = null;
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4299,9 +4326,11 @@ class GameController {
         // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
-        // 盗賊A「能力泥棒」: 現在アクティブな(効果が重なっている)盗んだ能力の残り時間の配列。
-        // 同時に発動できる件数の上限チェックに使う
-        this.activeAbilitySteals = [];
+        // 盗賊A「能力泥棒」: 直前に盗んで「保留」している能力({charId, expiresAtBeat})。
+        // 保留中にもう一度パーフェクトが来ると、2つを組み合わせた融合技になる
+        this.pendingAbilitySteal = null;
+        // 発動中の融合技のコンボ進行状況({config, color, remaining, nextBeat})
+        this.abilityFusionCombo = null;
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4530,26 +4559,103 @@ class GameController {
     }
 
     // 盗賊A「能力泥棒」: 能力ノーツをパーフェクトで叩くたびに発動を試みる。
-    // 同時に効果が重なりすぎる(3つ以上)と何が起きているか分からなくなるため、
-    // 同時に発動中(ABILITY_STEAL_ACTIVE_SECONDS秒未満)の効果は最大ABILITY_STEAL_MAX_CONCURRENT件までに
-    // 抑える(既にその件数分アクティブなら、今回は発動せず見送る)
+    // 既に1つ「保留」中(直前のパーフェクトで盗んだが、まだ単独発動していない)なら、
+    // それと組み合わせて2職業の融合技を発動する。保留が無ければ、今回の分を新たに
+    // 保留にする(ABILITY_STEAL_PENDING_BEATS拍以内に次のパーフェクトが来なければ、
+    // update()側で単独の(弱体化した)能力として発動される)
     tryTriggerAbilitySteal() {
-        if (!this.activeAbilitySteals) this.activeAbilitySteals = [];
-        if (this.activeAbilitySteals.length >= ABILITY_STEAL_MAX_CONCURRENT) return;
-        this.activeAbilitySteals.push(ABILITY_STEAL_ACTIVE_SECONDS);
-
-        // 6職業(剣士/弓士/盗賊/拳士/獣人/魔法使い)からランダムに1つ選び、その職業の能力を
-        // 本来の性能そのまま(専用演出も込み)発動する。ただし本来より頻繁に発動できる分、
-        // 威力はABILITY_STEAL_POWER_MULT倍に弱体化させる
         const stolenChar = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
+        if (this.pendingAbilitySteal) {
+            const first = this.pendingAbilitySteal;
+            this.pendingAbilitySteal = null;
+            this.triggerAbilityFusion(first.charId, stolenChar.id);
+            return;
+        }
+        this.pendingAbilitySteal = {
+            charId: stolenChar.id,
+            expiresAtBeat: this.audio.getCurrentBeat() + ABILITY_STEAL_PENDING_BEATS,
+        };
+    }
+
+    // 保留中の単独盗み(2つ目のパーフェクトが間に合わず、融合技にならなかった場合)を
+    // 弱体化した単独の能力として発動する
+    resolveSoloAbilitySteal(charId) {
+        const stolenChar = CHARACTERS.find(c => c.id === charId) || CHARACTERS[0];
         this.resolveAbilityEffect(stolenChar.id, 1, {
             powerMult: ABILITY_STEAL_POWER_MULT,
             color: stolenChar.color,
         });
-
-        // 誰の能力を借りたのかがはっきり分かるよう、職業名と能力名を大きく表示する
         this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 100,
             `${stolenChar.name}の能力「${stolenChar.ability}」を発動!`, stolenChar.color || '#f39c12', 24);
+    }
+
+    // 2職業の能力を組み合わせた専用の融合技を発動する。ABILITY_FUSION_TABLEで定義した
+    // 対象範囲(自分中心の円/狙った方向への直線/ランダムな数体)・突進演出の有無・
+    // メテオ演出の有無・ノックバックの強さ・威力段階に従い、本来のどちらの能力とも
+    // 違う派生技として振る舞う
+    triggerAbilityFusion(charIdA, charIdB) {
+        const key = [charIdA, charIdB].sort().join('+');
+        const config = ABILITY_FUSION_TABLE[key];
+        const charA = CHARACTERS.find(c => c.id === charIdA) || CHARACTERS[0];
+        const charB = CHARACTERS.find(c => c.id === charIdB) || CHARACTERS[0];
+        if (!config) return; // 6職業総当たりで全組み合わせを用意しているため理論上は起きない
+        const color = charA.color || charB.color || '#f39c12';
+
+        this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 110,
+            `${charA.name}+${charB.name} 融合技「${config.name}」!`, color, 26);
+        this.renderer.shake(8, 0.25);
+        this.audio.playAbilitySound();
+
+        this.abilityFusionCombo = {
+            config, color, remaining: config.hits || 1, nextBeat: this.audio.getCurrentBeat(),
+        };
+    }
+
+    // 融合技の1ヒット分(複数回に分かれるものは、これがhits回呼ばれる)を実際に発動する
+    resolveAbilityFusionHit(config, color) {
+        const POWER_TIERS = { weak: 20, medium: 35, strong: 55 };
+        const baseDmg = Math.floor(POWER_TIERS[config.tier] * this.localPlayer.upgrades.ability * ABILITY_FUSION_POWER_MULT);
+        const playerX = this.localPlayer.x;
+        const alive = this.stage.enemies.filter(e => !e.dead && !e.falling);
+        let targets = [];
+        if (config.shape === 'circle') {
+            targets = alive.filter(e => Math.abs(e.x - playerX) < config.radius);
+        } else if (config.shape === 'directional') {
+            const dir = this.localPlayer.facing || 1;
+            targets = alive.filter(e => Math.sign(e.x - playerX) === dir && Math.abs(e.x - playerX) < config.range);
+        } else if (config.shape === 'random') {
+            targets = [...alive].sort(() => Math.random() - 0.5).slice(0, config.count || 3);
+        }
+
+        const applyHit = (enemy) => {
+            if (enemy.dead || enemy.falling) return;
+            const actualDmg = this.dealEnemyDamage(enemy, baseDmg, 'ability');
+            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, color, 8);
+            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${actualDmg}`, color, 18);
+            if (config.knockback) {
+                const dir = Math.sign(enemy.x - playerX) || 1;
+                enemy.x += dir * config.knockback;
+            }
+            if (enemy.dead) this.stage.totalScore += enemy.data.score;
+        };
+        targets.forEach(enemy => {
+            if (config.meteor) {
+                this.renderer.addMeteorNote(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, () => applyHit(enemy));
+            } else {
+                applyHit(enemy);
+            }
+        });
+
+        if (config.dash && targets.length > 0) {
+            this.localPlayer.perfectDash(Math.sign(targets[0].x - playerX) || this.localPlayer.facing, 250);
+            this.audio.playDashSound();
+        }
+        const psx = this.localPlayer.x - this.stage.scrollX, psy = this.localPlayer.y - 40;
+        if (config.shape === 'circle') {
+            this.renderer.addRangeCircle(psx, psy, config.radius, color);
+        } else if (config.shape === 'directional') {
+            this.renderer.addRangeBeam(psx, psy, this.localPlayer.facing || 1, config.range, color);
+        }
     }
 
     // 職業の能力を発動する共通処理。自分自身の能力発動(charIdが自分のcharIdと一致する
@@ -5165,10 +5271,22 @@ class GameController {
 
         if (this.abilityCooldown > 0) this.abilityCooldown -= dt;
 
-        // 盗賊A「能力泥棒」: 現在アクティブとみなされている盗んだ能力の残り時間を減らし、
-        // 尽きたものは配列から取り除く(同時発動数の上限チェックに使う)
-        if (this.activeAbilitySteals && this.activeAbilitySteals.length > 0) {
-            this.activeAbilitySteals = this.activeAbilitySteals.map(t => t - dt).filter(t => t > 0);
+        // 盗賊A「能力泥棒」: 保留中の盗みが、融合技にならないまま期限(拍)を過ぎたら、
+        // 弱体化した単独の能力として発動する
+        if (this.pendingAbilitySteal && this.audio.getCurrentBeat() >= this.pendingAbilitySteal.expiresAtBeat) {
+            const charId = this.pendingAbilitySteal.charId;
+            this.pendingAbilitySteal = null;
+            this.resolveSoloAbilitySteal(charId);
+        }
+        // 発動中の融合技のコンボを、盗賊「4回攻撃」と同じ0.2拍間隔で進行させる
+        if (this.abilityFusionCombo) {
+            const currentBeat = this.audio.getCurrentBeat();
+            if (currentBeat >= this.abilityFusionCombo.nextBeat) {
+                this.resolveAbilityFusionHit(this.abilityFusionCombo.config, this.abilityFusionCombo.color);
+                this.abilityFusionCombo.remaining--;
+                this.abilityFusionCombo.nextBeat += 0.2;
+                if (this.abilityFusionCombo.remaining <= 0) this.abilityFusionCombo = null;
+            }
         }
 
         // 盗賊B「連打」中は、交互のノーツ以外は一切生成しない
@@ -5270,7 +5388,8 @@ class GameController {
                 this.rhythm.defendNotes = [];
                 this.rhythm.abilityStealNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
                 this.rhythm.abilityActive = true;
-                this.activeAbilitySteals = [];
+                this.pendingAbilitySteal = null;
+                this.abilityFusionCombo = null;
             }
             const abilityStealHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
             while (this.rhythm.abilityStealNextBeat < abilityStealHorizon) {
@@ -5293,7 +5412,8 @@ class GameController {
             // ギミック終了
             this.rhythm.abilityStealNextBeat = null;
             this.rhythm.abilityActive = false;
-            this.activeAbilitySteals = [];
+            this.pendingAbilitySteal = null;
+            this.abilityFusionCombo = null;
         }
 
         // 魔法使いB「イベントノーツ」: 攻撃・防御・能力という区別は無くなり、代わりに
@@ -5664,7 +5784,7 @@ const GameLogic = {
     ENDLESS_ENEMY_COUNT_MULT, ENDLESS_ENEMY_STRENGTH_MULT, ENDLESS_PLAYER_STRENGTH_MULT,
     EFFECTIVELY_INFINITE_WAVES,
     IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower,
-    ABILITY_STEAL_MAX_CONCURRENT, ABILITY_STEAL_ACTIVE_SECONDS, ABILITY_STEAL_POWER_MULT,
+    ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,

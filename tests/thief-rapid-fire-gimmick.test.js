@@ -4,8 +4,8 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, Player, Enemy, applyAbility,
-    ABILITY_STEAL_MAX_CONCURRENT, ABILITY_STEAL_ACTIVE_SECONDS, ABILITY_STEAL_POWER_MULT } = globalThis.GameLogic;
+const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, Player, Enemy, applyAbility, CHARACTERS,
+    ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -24,11 +24,40 @@ if (CHARACTER_GIMMICKS.thief[1].special !== 'rapidFire') {
     throw new Error("thief gimmick[1] should still be rapidFire, got " + CHARACTER_GIMMICKS.thief[1].special);
 }
 
-// 盗賊A「能力泥棒」: 定数がまともな値になっている(同時発動2件まで、弱体化されている)ことを確認
-if (ABILITY_STEAL_MAX_CONCURRENT !== 2) throw new Error('expected at most 2 concurrent stolen abilities, got ' + ABILITY_STEAL_MAX_CONCURRENT);
-if (!(ABILITY_STEAL_ACTIVE_SECONDS > 0)) throw new Error('ABILITY_STEAL_ACTIVE_SECONDS should be a positive duration');
+// 盗賊A「能力泥棒」: 単独発動・融合技それぞれの弱体化倍率がまともな値になっていることを確認
 if (!(ABILITY_STEAL_POWER_MULT > 0 && ABILITY_STEAL_POWER_MULT < 1)) {
-    throw new Error('a stolen ability should be weakened (powerMult between 0 and 1), got ' + ABILITY_STEAL_POWER_MULT);
+    throw new Error('a solo stolen ability should be weakened (powerMult between 0 and 1), got ' + ABILITY_STEAL_POWER_MULT);
+}
+if (!(ABILITY_FUSION_POWER_MULT > 0 && ABILITY_FUSION_POWER_MULT < 1)) {
+    throw new Error('a fusion ability should also be weakened (powerMult between 0 and 1), got ' + ABILITY_FUSION_POWER_MULT);
+}
+if (!(ABILITY_STEAL_PENDING_BEATS > 0)) throw new Error('ABILITY_STEAL_PENDING_BEATS should be a positive number of beats');
+
+// 融合技テーブル: 6職業の総当たり(15通り)全てに専用の融合技が定義されており、
+// それぞれ固有の名前・有効なshapeを持っていることを確認する
+{
+    const ids = CHARACTERS.map(c => c.id);
+    const expectedPairs = [];
+    for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+            expectedPairs.push([ids[i], ids[j]].sort().join('+'));
+        }
+    }
+    if (expectedPairs.length !== 15) throw new Error('expected 15 unordered pairs from 6 characters, got ' + expectedPairs.length);
+    expectedPairs.forEach(key => {
+        const config = ABILITY_FUSION_TABLE[key];
+        if (!config) throw new Error('missing a fusion entry for pair: ' + key);
+        if (!config.name) throw new Error('fusion entry for ' + key + ' is missing a name');
+        if (!['circle', 'directional', 'random'].includes(config.shape)) {
+            throw new Error('fusion entry for ' + key + ' has an invalid shape: ' + config.shape);
+        }
+        if (!['weak', 'medium', 'strong'].includes(config.tier)) {
+            throw new Error('fusion entry for ' + key + ' has an invalid tier: ' + config.tier);
+        }
+    });
+    // 全ての名前が重複なくユニークであること(組み合わせごとに本当に別物と分かるように)
+    const names = new Set(expectedPairs.map(key => ABILITY_FUSION_TABLE[key].name));
+    if (names.size !== expectedPairs.length) throw new Error('fusion technique names should all be unique across the 15 pairs');
 }
 
 // applyAbilityのpowerMultは、能力泥棒が弱体化した性能で他の職業の能力を借りて発動するために
