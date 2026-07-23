@@ -3129,7 +3129,8 @@ class Renderer {
         // 可動域も基本のサイン波だけの時よりずっと広くなる。
         // Y方向はバー(判定線)がちょうど画面下端(CANVAS_HEIGHT)に接しているため、下に動くと
         // すぐに画面からはみ出して見えなくなってしまう。そのため下方向へは一切動かさず、
-        // 上方向だけに(その分大きく)動けるようにする。
+        // 上方向だけに動けるようにする。ただし上げすぎると画面下部のコンボ表示(HUD)と
+        // 重なって見にくくなるため、HUDにかからない範囲に収まる程度の上限にしてある
         // (終了直後もフェードアウト中は動きを止めないよう、judgeLineActiveAmountが
         // 0でなくなっている間はdriftingJudgeLineがfalseになっても更新を続ける)
         if (driftingJudgeLine || this.judgeLineActiveAmount > 0.001) {
@@ -3139,7 +3140,7 @@ class Renderer {
             if (drift.timer <= 0) {
                 drift.timer = 1.2 + Math.random() * 1.6;
                 drift.targetX = (Math.random() * 2 - 1) * 75;
-                drift.targetY = -Math.random() * 180;
+                drift.targetY = -Math.random() * 90;
             }
             drift.x += (drift.targetX - drift.x) * 0.05;
             drift.y += (drift.targetY - drift.y) * 0.05;
@@ -3147,7 +3148,7 @@ class Renderer {
         const judgeLineOffsetX = this.judgeLineDrift
             ? (Math.sin(currentBeat * 1.5) * 70 + this.judgeLineDrift.x) * this.judgeLineActiveAmount : 0;
         const judgeLineOffsetY = this.judgeLineDrift
-            ? ((Math.cos(currentBeat * 1.1) - 1) * 25 + this.judgeLineDrift.y) * this.judgeLineActiveAmount : 0;
+            ? ((Math.cos(currentBeat * 1.1) - 1) * 15 + this.judgeLineDrift.y) * this.judgeLineActiveAmount : 0;
 
         const targetX = barW / 2;
 
@@ -5088,6 +5089,11 @@ class GameController {
         // (防御ノーツ・能力ノーツ含め、他のノーツが混ざらないようにする)
         const activeGimmick = this.localPlayer.getActiveGimmick();
         const isRapidFire = activeGimmick.special === 'rapidFire';
+        // 盗賊A「能力泥棒」・魔法使いB「イベントノーツ」も、専用のノーツ生成ロジックだけを
+        // 使い、それ以外の経路(特に下の「敵の攻撃予兆による防御ノーツ自動生成」)からは
+        // 通常のノーツが混ざらないようにする
+        const isAbilitySteal = activeGimmick.special === 'abilitySteal';
+        const isEventNote = activeGimmick.special === 'eventNote';
 
         // 剣士「ブラックホール」: ギミックが終了した瞬間にブラックホールを爆発させる
         const blackHoleActive = activeGimmick.special === 'blackHole';
@@ -5136,7 +5142,7 @@ class GameController {
         // 参加者側では、通常Enemy.startAttack()が行うリセットが自分の端末では実行されない
         // (敵AIはホストのみが動かすため)ため、attackWarningがfalseになった瞬間に
         // ここで代わりにリセットしておく(そうしないと次の攻撃予兆で防御ノーツが出せなくなる)
-        if (localAlive && !isRapidFire) this.stage.enemies.forEach(e => {
+        if (localAlive && !isRapidFire && !isAbilitySteal && !isEventNote) this.stage.enemies.forEach(e => {
             if (!e.attackWarning) {
                 if (e.defendNoteSpawned) e.defendNoteSpawned = false;
                 return;
@@ -5168,9 +5174,6 @@ class GameController {
         // 弓士A「ウイルス化」: ノーツの感染は各ノーツの生成関数(startSwordBurst/startAbility/
         // generateDefendNote)の中で、生成された瞬間にだけ判定される
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
-
-        const isAbilitySteal = activeGimmick.special === 'abilitySteal';
-        const isEventNote = activeGimmick.special === 'eventNote';
 
         // 盗賊A「能力泥棒」: ギミック中はカウンター・攻撃ノーツを一切流さず、能力ノーツだけが
         // 流れ続ける(通常時と同じくノーツのない拍=休符も混ざる)。パーフェクトの連続数に
