@@ -48,7 +48,7 @@ const CHARACTERS = [
 const CHARACTER_GIMMICKS = {
     swordsman: [{ special: 'flickUpNote' }, { special: 'blackHole' }],
     archer: [{ special: 'corruptedNote' }, { special: 'launchNote' }],
-    thief: [{ special: 'airWalk' }, { special: 'rapidFire', damageMult: 0.6 }],
+    thief: [{ special: 'abilitySteal' }, { special: 'rapidFire', damageMult: 0.6 }],
     fighter: [{ special: 'steppedMotion' }, { special: 'flipMirror' }],
     beast: [{ special: 'invisibleApproach' }, { special: 'centerJudgeCircle' }],
     mage: [{ special: 'driftingJudgeLine' }, { special: 'eventNote' }],
@@ -655,9 +655,9 @@ class RhythmSystem {
         this.effectiveDiff = 1;
         this.rapidFireNextBeat = null;
         this.rapidFireAlternator = 0;
-        this.airWalkNextBeat = null;
+        this.abilityStealNextBeat = null;
         // 魔法使いB「イベントノーツ」: 完全ランダムな色のイベントノーツを流し続けるための
-        // 次のノーツ生成予定拍(盗賊の各ギミックのairWalkNextBeat等と同じ仕組み)
+        // 次のノーツ生成予定拍(盗賊の各ギミックのabilityStealNextBeat等と同じ仕組み)
         this.eventNoteNextBeat = null;
         // 弓士A「ウイルス化」: 最後に感染ノーツを発生させた拍(ちょっとずつタイミングを
         // ずらして出現させるため)
@@ -850,7 +850,7 @@ class RhythmSystem {
         // 盗賊A「地震」・B「連打」・魔法使いB「イベントノーツ」はability notesを継続的に
         // 注ぎ足すため、この完了判定は行わない(abilityStartBeat/abilityLengthが古いままなので、
         // 判定するとすぐ誤発火してしまう)
-        if (this.abilityActive && this.rapidFireNextBeat === null && this.airWalkNextBeat === null && this.eventNoteNextBeat === null) {
+        if (this.abilityActive && this.rapidFireNextBeat === null && this.abilityStealNextBeat === null && this.eventNoteNextBeat === null) {
             const allDone = this.abilityNotes.every(n => n.hit || n.missed);
             if (allDone || currentBeat > this.abilityStartBeat + this.abilityLength + 1) {
                 this.abilityActive = false;
@@ -895,7 +895,7 @@ class RhythmSystem {
         searchPool.forEach(note => {
             if (!note.hit && !note.missed && note.type === inputType) {
                 const dist = Math.abs(note.beat - currentBeat) * beatInterval;
-                const window = (note.rapidFireNote || note.airWalkNote)
+                const window = (note.rapidFireNote || note.abilityStealNote)
                     ? Math.min(CONSTANTS.GOOD_WINDOW * windowMult, rapidFireWindowCap)
                     : CONSTANTS.GOOD_WINDOW * windowMult;
                 if (dist < nearestDist && dist < window) {
@@ -979,7 +979,7 @@ class RhythmSystem {
             notes.forEach(note => {
                 if (!note.hit && !note.missed) {
                     const dist = Math.abs(note.beat - currentBeat) * beatInterval;
-                    const window = (note.rapidFireNote || note.airWalkNote)
+                    const window = (note.rapidFireNote || note.abilityStealNote)
                         ? Math.min(CONSTANTS.GOOD_WINDOW * windowMult, rapidFireWindowCap)
                         : CONSTANTS.GOOD_WINDOW * windowMult;
                     if (dist < bestDist && dist < window) {
@@ -1045,7 +1045,7 @@ class RhythmSystem {
         this.judges = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.rapidFireNextBeat = null;
         this.rapidFireAlternator = 0;
-        this.airWalkNextBeat = null;
+        this.abilityStealNextBeat = null;
         this.eventNoteNextBeat = null;
         this.lastCorruptedAtBeat = -Infinity;
     }
@@ -1176,17 +1176,11 @@ const computeKnockbackPower = function(dmg) {
     return Math.min(2.5, Math.max(0.6, dmg / 15));
 };
 
-// 盗賊「空歩」ギミック: カウンターノーツの累計ヒット数に応じて、自動フライバイ攻撃の
-// 間隔(拍単位)を段階的に短くする。最初は4拍に1回、集めるごとに3→2→1→半拍まで上がる。
-// しきい値はギミックの継続時間(GIMMICK_SPECIAL_SECONDS)内に、カウンターノーツを
-// 全てパーフェクトで取り続ければ確実に半拍まで到達できる、低めの値にしてある
-// (以前の値は生成されるノーツの密度・BPMによっては半拍まで届かないことがあった)
-const getAirWalkFlybyInterval = function(counterHits) {
-    if (counterHits >= 8) return 0.5;
-    if (counterHits >= 6) return 1;
-    if (counterHits >= 4) return 2;
-    if (counterHits >= 2) return 3;
-    return 4;
+// 盗賊「能力泥棒」ギミック: 能力ノーツのパーフェクト連続数に応じて、盗んだ能力を
+// 発動するタイミングかどうかを判定する。5回連続で最初の発動、以降は3回ごとに追加発動する
+const shouldTriggerAbilitySteal = function(streak) {
+    if (streak < 5) return false;
+    return (streak - 5) % 3 === 0;
 };
 
 // ============================================================
@@ -1554,14 +1548,10 @@ class Enemy {
         // 通常のコンストラクタ経由(テスト等)ではyはそのまま(即着地扱い)にする
         this.falling = false;
         this.groundY = y;
-        // 魔法使い「ノーツウィンド」で巻き上げられている間の状態。他のギミック(盗賊「空歩」の
-        // airWalkPinned等)とは別の専用フラグにしている(LANマルチプレイで別々のキャラクターが
-        // 同時にそれぞれのギミックを使った時、同じ敵集団に対してフラグを奪い合わないようにする)
+        // 魔法使い「ノーツウィンド」で巻き上げられている間の状態
         this.windLifted = false;
         this.windFallDamage = 0;
         this.windJustLanded = false;
-        // 盗賊「空歩」ギミック: 画面中央付近に固定されている間はtrue
-        this.airWalkPinned = false;
 
         if (Math.random() < 0.25 * stageMod) {
             const types = ['sword', 'ability'];
@@ -1644,14 +1634,8 @@ class Enemy {
                     this.orbitAngle = Math.random() * Math.PI * 2;
                     this.orbitRadius = 20 + Math.random() * 30;
                     this.orbitSpeed = 3 + Math.random() * 2;
-                } else if (onComplete === 'airWalkPinned') {
-                    this.airWalkPinned = true;
                 }
             }
-            return;
-        } else if (this.airWalkPinned) {
-            // 盗賊「空歩」ギミック: 中央付近に固定された敵は、ギミック終了で解除されるまで
-            // 一切動かない(通常AI・重力を無効化する)
             return;
         } else if (this.blackHoleState === 'sucked') {
             // 剣士「ブラックホール」: 吸い込まれている間、一点に留まると見栄えが悪いため
@@ -2048,45 +2032,42 @@ class Renderer {
         }
     }
 
-    // 魔法使いB「イベントノーツ」: 色ごとに動きを変えると却って何の魔法か分かりにくかった
-    // ため、どの色でも共通のシンプルな動き(発生源に複数のノーツがまとわりつくように
-    // ゆっくり回転しながら漂う)にし、色だけで見分けられるようにする
+    // 魔法使いB「イベントノーツ」: ノーツで魔法を作り込みすぎるとラグくなるため、
+    // ノーツが少しまとわりつく程度の軽い演出に留める(色ごとに動きを変えず共通の動きにし、
+    // 色だけで見分けられるようにする)。shadowBlur(重い処理)は使わず、
+    // save/restoreもバースト単位でまとめて呼ぶことで負荷を抑える
     addEventNoteBurst(x, y, color) {
-        const count = 8;
+        const count = 3;
         const particles = [];
         for (let i = 0; i < count; i++) {
-            particles.push({ angle: (i / count) * Math.PI * 2, radiusJitter: Math.random() * 8 });
+            particles.push({ angle: (i / count) * Math.PI * 2 });
         }
-        this.eventNoteBursts.push({ x, y, color, particles, t: 0, duration: 0.7 });
+        this.eventNoteBursts.push({ x, y, color, particles, t: 0, duration: 0.6 });
     }
 
     renderEventNoteBursts(ctx) {
-        const noteSize = 26; // 通常ノーツ(35)に近い、はっきり見える大きめサイズ
+        const noteSize = 20;
         for (let bi = this.eventNoteBursts.length - 1; bi >= 0; bi--) {
             const b = this.eventNoteBursts[bi];
             b.t += 1 / 60;
             const progress = Math.min(1, b.t / b.duration);
-            const alpha = 1 - progress;
-            const radius = 18 + progress * 22;
+            const radius = 14 + progress * 12;
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, 1 - progress);
+            ctx.fillStyle = b.color;
             b.particles.forEach(p => {
-                const ang = p.angle + progress * 5;
-                const px = b.x + Math.cos(ang) * (radius + p.radiusJitter);
-                const py = b.y + Math.sin(ang) * (radius + p.radiusJitter) * 0.6;
-                const size = noteSize * (1 - progress * 0.3);
-                ctx.save();
-                ctx.globalAlpha = Math.max(0, alpha);
-                ctx.fillStyle = b.color;
-                ctx.shadowColor = b.color;
-                ctx.shadowBlur = 18;
+                const ang = p.angle + progress * 4;
+                const px = b.x + Math.cos(ang) * radius;
+                const py = b.y + Math.sin(ang) * radius * 0.6;
                 ctx.beginPath();
-                ctx.moveTo(px, py - size / 2);
-                ctx.lineTo(px + size / 2, py);
-                ctx.lineTo(px, py + size / 2);
-                ctx.lineTo(px - size / 2, py);
+                ctx.moveTo(px, py - noteSize / 2);
+                ctx.lineTo(px + noteSize / 2, py);
+                ctx.lineTo(px, py + noteSize / 2);
+                ctx.lineTo(px - noteSize / 2, py);
                 ctx.closePath();
                 ctx.fill();
-                ctx.restore();
             });
+            ctx.restore();
             if (progress >= 1) this.eventNoteBursts.splice(bi, 1);
         }
     }
@@ -2095,23 +2076,22 @@ class Renderer {
     // addEventNoteBurstのように演出用オブジェクトを都度生成して積み上げるのではなく、
     // 発動中のeventHazards自体を直接参照して毎フレーム描くだけにすることで、
     // 継続時間が長くても(あるいは複数同時に発生していても)演出が際限なく重複して
-    // 重くなることがないようにする
+    // 重くなることがないようにする。こちらも軽い演出(ノーツが少しまとわりつく程度)に留め、
+    // shadowBlurは使わない
     renderEventHazardEffects(ctx, game) {
         if (!game.eventHazards || game.eventHazards.length === 0) return;
-        const noteSize = 22;
-        const count = 6;
+        const noteSize = 18;
+        const count = 3;
         game.eventHazards.forEach(hz => {
             const originX = hz.global ? (game.localPlayer.x - game.stage.scrollX) : (hz.x - game.stage.scrollX);
             const originY = CONSTANTS.GROUND_Y - 10;
+            ctx.save();
+            ctx.globalAlpha = 0.8;
+            ctx.fillStyle = hz.color;
             for (let i = 0; i < count; i++) {
-                const ang = (i / count) * Math.PI * 2 - hz.timer * 3;
-                const px = originX + Math.cos(ang) * 22;
-                const py = originY + Math.sin(ang) * 22 * 0.6;
-                ctx.save();
-                ctx.globalAlpha = 0.85;
-                ctx.fillStyle = hz.color;
-                ctx.shadowColor = hz.color;
-                ctx.shadowBlur = 14;
+                const ang = (i / count) * Math.PI * 2 - hz.timer * 2.5;
+                const px = originX + Math.cos(ang) * 18;
+                const py = originY + Math.sin(ang) * 18 * 0.6;
                 ctx.beginPath();
                 ctx.moveTo(px, py - noteSize / 2);
                 ctx.lineTo(px + noteSize / 2, py);
@@ -2119,8 +2099,8 @@ class Renderer {
                 ctx.lineTo(px - noteSize / 2, py);
                 ctx.closePath();
                 ctx.fill();
-                ctx.restore();
             }
+            ctx.restore();
         });
     }
 
@@ -3181,6 +3161,15 @@ class Renderer {
             ctx.lineWidth = 1;
             ctx.strokeRect(barX, barY, barW, barH);
 
+            // 判定線がドリフトして動くと、ノーツもその高さに追従して動くため、固定された
+            // バー背景の外(ゲーム画面の背景美術の上)に出てしまい、同化して見えにくく
+            // なることがあった。ノーツが実際に流れる高さにも追従する暗い帯を敷いて
+            // 視認性を確保する
+            if (Math.abs(judgeLineOffsetY) > 0.5) {
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(barX, barY + judgeLineOffsetY, barW, barH);
+            }
+
             // Target line (center)
             const lineDrawX = targetX + judgeLineOffsetX;
             const lineDrawCenterY = barY + barH / 2 + judgeLineOffsetY;
@@ -3418,14 +3407,8 @@ class GameController {
         // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
-        // 盗賊A「空歩」: カウンターノーツの蓄積数(攻撃頻度を上げる)、攻撃ノーツで
-        // 蓄積する攻撃範囲ボーナス、能力ノーツで蓄積するダメージボーナス、
-        // 自動フライバイの状態とスケジュール
-        this.thiefCounterHits = 0;
-        this.thiefRangeBonus = 0;
-        this.thiefDamageBonus = 0;
-        this.thiefFlyby = null;
-        this.thiefNextFlybyBeat = null;
+        // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数(Great以下で0にリセットされる)
+        this.thiefPerfectStreak = 0;
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4305,14 +4288,8 @@ class GameController {
         // 盗賊B「連打」: 端から端への高速ダッシュ方向・すれ違いヒット済み敵
         this.rapidFireDashDir = 1;
         this.rapidFireSweepHitIds = null;
-        // 盗賊A「空歩」: カウンターノーツの蓄積数(攻撃頻度を上げる)、攻撃ノーツで
-        // 蓄積する攻撃範囲ボーナス、能力ノーツで蓄積するダメージボーナス、
-        // 自動フライバイの状態とスケジュール
-        this.thiefCounterHits = 0;
-        this.thiefRangeBonus = 0;
-        this.thiefDamageBonus = 0;
-        this.thiefFlyby = null;
-        this.thiefNextFlybyBeat = null;
+        // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数(Great以下で0にリセットされる)
+        this.thiefPerfectStreak = 0;
         this.swordsmanStoredNotes = 0;
         this.eruptingNotes = [];
         this.flickUpWasActive = false;
@@ -4416,16 +4393,17 @@ class GameController {
             return;
         }
 
-        // 盗賊A「空歩」: ギミック中はノーツを打つたびボーナスが蓄積するだけで、
-        // 実際の攻撃(中央に固定された敵へのフライバイ攻撃)はノーツとは無関係に拍のタイミングで
-        // 自動的に発動する(updateThiefFlyby/update()側のスケジューリングを参照)。
-        // カウンター(防御)ノーツは攻撃頻度を、攻撃ノーツは攻撃範囲(距離ではない)を、
-        // 能力ノーツはダメージを、それぞれ蓄積させる
-        if (result.note.airWalkNote) {
+        // 盗賊A「能力泥棒」: ギミック中に流れるノーツは全て能力ノーツで、パーフェクトを
+        // 出し続けるとその連続数に応じて他の職業から盗んだ能力を発動する。
+        // パーフェクト以外(グレイト以下)を出すと連続数は0にリセットされる
+        if (result.note.abilityStealNote) {
             if (result.judge === 'perfect') {
-                if (result.note.type === 'defend') this.thiefCounterHits++;
-                else if (result.note.type === 'sword') this.thiefRangeBonus += 25;
-                else if (result.note.type === 'ability') this.thiefDamageBonus += 0.15;
+                this.thiefPerfectStreak++;
+                if (shouldTriggerAbilitySteal(this.thiefPerfectStreak)) {
+                    this.triggerAbilitySteal();
+                }
+            } else {
+                this.thiefPerfectStreak = 0;
             }
             return;
         }
@@ -4545,80 +4523,34 @@ class GameController {
         }
     }
 
-    // 盗賊A「空歩」: 拍のタイミングで自動的に(ノーツとは無関係に)発動する、画面中央に
-    // 固定された敵へ向かって飛んですれ違いざまに攻撃するフライバイを1回開始する
-    startThiefFlyby() {
-        // 空歩ギミック中は敵が画面中央付近に固定される(airWalkPinned)。まだ固定先へ
-        // 移動中(tween)の敵も対象にしてよいが、上空から落下中でまだ「敵」として扱わない
-        // 敵と、画面外の敵は除外する
-        const candidates = this.stage.enemies.filter(e => !e.dead && !e.falling && !e.blackHoleState &&
-            e.x >= this.stage.scrollX && e.x <= this.stage.scrollX + CONSTANTS.CANVAS_WIDTH);
-        if (candidates.length === 0) return;
-        const target = candidates[Math.floor(Math.random() * candidates.length)];
-        // 攻撃ノーツのボーナスは距離ではなく攻撃範囲(splash)に使うため、飛距離は固定にする
-        const overshoot = 60;
-        const dx = target.x - this.localPlayer.x;
-        const dy = target.y - this.localPlayer.y;
-        const dist = Math.max(1, Math.hypot(dx, dy));
-        const dirX = dx / dist, dirY = dy / dist;
-        this.localPlayer.facing = Math.sign(dx) || this.localPlayer.facing;
-        const rawToX = target.x + dirX * overshoot;
-        const rawToY = target.y + dirY * overshoot;
-        this.thiefFlyby = {
-            fromX: this.localPlayer.x, fromY: this.localPlayer.y,
-            toX: Math.max(this.stage.scrollX + 30, Math.min(rawToX, this.stage.scrollX + CONSTANTS.CANVAS_WIDTH - 30)),
-            toY: Math.max(CONSTANTS.GROUND_Y - 400, Math.min(rawToY, CONSTANTS.GROUND_Y)),
-            timer: 0, duration: 0.35, hitIds: new Set(),
-        };
-        this.audio.playDashSound();
-    }
-
-    // 盗賊A「空歩」: 発動中のフライバイを毎フレーム進行させ、実際に触れた(すれ違った)
-    // 敵にダメージを与える。ダメージ量は能力ノーツで蓄積したthiefDamageBonusを反映し、
-    // 攻撃ノーツで蓄積したthiefRangeBonus分だけ、直撃した敵の周囲にもダメージが広がる
-    // (距離ではなく範囲が伸びる)
-    updateThiefFlyby(dt) {
-        if (!this.thiefFlyby) return;
-        const fb = this.thiefFlyby;
-        fb.timer += dt;
-        const t = Math.min(1, fb.timer / fb.duration);
-        this.localPlayer.x = fb.fromX + (fb.toX - fb.fromX) * t;
-        this.localPlayer.y = fb.fromY + (fb.toY - fb.fromY) * t;
-        this.localPlayer.state = 'attack';
-
-        const dmg = Math.floor(this.localPlayer.getDamage(6, 'good') * (1 + this.thiefDamageBonus));
-        this.stage.enemies.forEach(e => {
-            if (e.dead || e.falling || e.blackHoleState || fb.hitIds.has(e)) return;
-            const dist = Math.hypot(e.x - this.localPlayer.x, e.y - this.localPlayer.y);
-            if (dist < e.data.size * 0.6 + 20) {
-                fb.hitIds.add(e);
-                const actualDmg = this.dealEnemyDamage(e, dmg, 'sword');
-                this.renderer.addParticle(e.x - this.stage.scrollX, e.y - e.data.size / 2, '#2ecc71', 6);
-                this.renderer.addFloatingText(e.x - this.stage.scrollX, e.y - e.data.size, `${actualDmg}`, '#2ecc71', 14);
-                if (e.dead) this.stage.totalScore += e.data.score;
-
-                // 攻撃範囲ボーナス: 直撃した敵の周囲にもダメージが広がる
-                if (this.thiefRangeBonus > 0) {
-                    this.stage.enemies.forEach(other => {
-                        if (other === e || other.dead || other.falling || other.blackHoleState || fb.hitIds.has(other)) return;
-                        const splashDist = Math.hypot(other.x - e.x, other.y - e.y);
-                        if (splashDist < this.thiefRangeBonus) {
-                            fb.hitIds.add(other);
-                            const splashDmg = Math.floor(dmg * 0.6);
-                            const actualSplash = this.dealEnemyDamage(other, splashDmg, 'sword');
-                            this.renderer.addParticle(other.x - this.stage.scrollX, other.y - other.data.size / 2, '#2ecc71', 6);
-                            this.renderer.addFloatingText(other.x - this.stage.scrollX, other.y - other.data.size, `${actualSplash}`, '#2ecc71', 14);
-                            if (other.dead) this.stage.totalScore += other.data.score;
-                        }
-                    });
-                }
-            }
+    // 盗賊A「能力泥棒」: 能力ノーツのパーフェクト連続数がしきい値に達した瞬間に発動する。
+    // 6職業(剣士/弓士/盗賊/拳士/獣人/魔法使い)からランダムに1つ選び、その職業の能力を
+    // (パーフェクト相当の性能で)そのまま借りて発動する
+    triggerAbilitySteal() {
+        const stolenChar = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
+        const outcome = applyAbility(stolenChar.id, 1, this.localPlayer, this.stage.enemies, this.localPlayer.x);
+        // applyAbility内で既にダメージ適用済みの通常の戻り値(hits)は、ここではホストへの
+        // 通知のみ行う。魔法使いの「ノーツメテオ」だけは例外的にダメージ未適用のまま
+        // pendingMeteorとして返ってくるため、ここで代わりに即時適用する
+        outcome.hits.forEach(({ enemy, dmg }) => {
+            this.notifyEnemyDamage(enemy, dmg, 'ability');
+            this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, '#f39c12', 8);
+            this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${dmg}`, '#f39c12', 16);
+            if (enemy.dead) this.stage.totalScore += enemy.data.score;
         });
-
-        if (t >= 1) {
-            this.thiefFlyby = null;
-            this.localPlayer.state = 'idle';
+        if (outcome.pendingMeteor) {
+            outcome.pendingMeteor.forEach(({ enemy, dmg }) => {
+                if (enemy.dead || enemy.falling) return;
+                const actualDmg = this.dealEnemyDamage(enemy, dmg, 'ability');
+                this.renderer.addParticle(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size / 2, '#f39c12', 8);
+                this.renderer.addFloatingText(enemy.x - this.stage.scrollX, enemy.y - enemy.data.size, `${actualDmg}`, '#f39c12', 16);
+                if (enemy.dead) this.stage.totalScore += enemy.data.score;
+            });
         }
+        this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 90,
+            `${stolenChar.name}の能力を発動!`, '#f39c12', 20);
+        this.renderer.shake(6, 0.2);
+        this.audio.playAbilitySound();
     }
 
     // 剣士「上に弾くノーツ」: ノーツを打った分だけ画面下部への蓄積数を1増やす
@@ -5169,10 +5101,6 @@ class GameController {
         // ここでは二重にupdateせず、ネットワーク経由で届く見た目の状態を反映するだけにする
         this.players.forEach(p => {
             if (p.isRemotePuppet) return;
-            // 盗賊A「空歩」: フライバイ攻撃の最中は位置をこちら側で直接動かすため、
-            // 通常の間合いAIは呼ばない(スローモーションにはしない。敵を中央に固定する
-            // ことで見せるギミックなので、プレイヤー自身の速度は変えない)
-            if (p === this.localPlayer && this.thiefFlyby) return;
             const holdGimmickTimer = (p === this.localPlayer) && this.shouldHoldGimmickTimer();
             p.update(dt, this.stage.scrollX, this.stage.enemies, holdGimmickTimer);
         });
@@ -5241,84 +5169,42 @@ class GameController {
         // generateDefendNote)の中で、生成された瞬間にだけ判定される
         // (既に画面に流れているノーツを後から感染させると反応不可能になるため、ここでは何もしない)
 
-        const isAirWalk = activeGimmick.special === 'airWalk';
+        const isAbilitySteal = activeGimmick.special === 'abilitySteal';
         const isEventNote = activeGimmick.special === 'eventNote';
 
-        // 盗賊A「空歩」: カウンター・攻撃・能力ノーツが流れ続ける(通常時と同じくノーツの
-        // ない拍=休符も混ざる)。敵は画面中央付近(高さは各自少しずつずらす)へ滑らかに
-        // 移動してそのまま固定され、実際の攻撃(フライバイ)はノーツとは無関係に、
-        // カウンターノーツの蓄積数に応じた間隔で自動的に発動する
-        if (localAlive && isAirWalk) {
-            if (this.rhythm.airWalkNextBeat === null) {
+        // 盗賊A「能力泥棒」: ギミック中はカウンター・攻撃ノーツを一切流さず、能力ノーツだけが
+        // 流れ続ける(通常時と同じくノーツのない拍=休符も混ざる)。パーフェクトの連続数に
+        // 応じて盗んだ能力を発動する処理はhandleUniversalInput側で行う
+        if (localAlive && isAbilitySteal) {
+            if (this.rhythm.abilityStealNextBeat === null) {
                 this.rhythm.swordNotes = [];
-                this.rhythm.abilityNotes = [];
-                this.rhythm.airWalkNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
+                this.rhythm.defendNotes = [];
+                this.rhythm.abilityStealNextBeat = snapToMeasureBeat(this.audio.getCurrentBeat(), LOOKAHEAD_BEATS);
                 this.rhythm.abilityActive = true;
-                this.thiefCounterHits = 0;
-                this.thiefRangeBonus = 0;
-                this.thiefDamageBonus = 0;
-                this.thiefNextFlybyBeat = this.audio.getCurrentBeat();
+                this.thiefPerfectStreak = 0;
             }
-            // 既に画面中央付近に固定されている敵・移動中(tween)の敵はそのままにし、
-            // まだ固定されていない敵(元々地面にいた敵、または上空から落下して着地した敵)
-            // だけを新たに中央へ向かわせる。毎フレーム確認することで、ギミック発動中に
-            // 着地した敵も(地面についた瞬間から)自動的にこの流れに合流する
-            this.stage.enemies.forEach(e => {
-                if (e.dead || e.falling || e.blackHoleState || e.tween || e.airWalkPinned) return;
-                // 全員がX座標もぴったり同じ場所に並ぶと不自然なので、X・Y座標をそれぞれ
-                // 完全にランダムに散らす(見た目上は画面中央付近にまとまって浮かぶ)。
-                // 以前は打ち上げ物理で画面最上部より上まで飛んでいってしまっていたため、
-                // 必ず画面内(GROUND_Yより150〜330px上)に収まる範囲にする
-                const centerX = this.stage.scrollX + CONSTANTS.CANVAS_WIDTH / 2 + (Math.random() * 2 - 1) * 250;
-                const centerY = CONSTANTS.GROUND_Y - 150 - Math.random() * 180;
-                e.tween = {
-                    fromX: e.x, fromY: e.y,
-                    toX: centerX, toY: centerY,
-                    timer: 0, duration: 0.5,
-                    onComplete: 'airWalkPinned',
-                };
-            });
-            const airWalkHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
-            const airWalkTypes = ['sword', 'defend', 'ability'];
-            while (this.rhythm.airWalkNextBeat < airWalkHorizon) {
-                // 攻撃→能力→カウンターの規則的な繰り返しにはせず、通常時と同じように
-                // ランダムな種類のノーツが流れてくるようにする。また、以前は0.5拍ごとに
-                // 必ずノーツがあり完全に等間隔だったが、通常時のノーツ(バースト)と同じく
+            const abilityStealHorizon = this.audio.getCurrentBeat() + LOOKAHEAD_BEATS + 1;
+            while (this.rhythm.abilityStealNextBeat < abilityStealHorizon) {
+                // 常にノーツがあると忙しすぎるため、通常時のノーツ(バースト)と同じく
                 // ノーツのない拍(休符)も混ざるよう、一定確率でその拍への配置をスキップする
                 if (Math.random() < 0.7) {
-                    const type = airWalkTypes[Math.floor(Math.random() * airWalkTypes.length)];
                     const note = {
                         id: this.rhythm.noteId++,
-                        beat: this.rhythm.airWalkNextBeat,
-                        type,
+                        beat: this.rhythm.abilityStealNextBeat,
+                        type: 'ability',
                         hit: false,
                         missed: false,
-                        airWalkNote: true,
+                        abilityStealNote: true,
                     };
-                    if (type === 'sword') this.rhythm.swordNotes.push(note);
-                    else if (type === 'defend') this.rhythm.defendNotes.push(note);
-                    else this.rhythm.abilityNotes.push(note);
+                    this.rhythm.abilityNotes.push(note);
                 }
-                this.rhythm.airWalkNextBeat += 0.5;
+                this.rhythm.abilityStealNextBeat += 1;
             }
-            // カウンターノーツの蓄積数に応じた間隔(4→3→2→1→半拍)で、ノーツの判定とは
-            // 無関係に次のフライバイを自動発動する
-            if (!this.thiefFlyby && this.thiefNextFlybyBeat !== null && this.audio.getCurrentBeat() >= this.thiefNextFlybyBeat) {
-                this.startThiefFlyby();
-                this.thiefNextFlybyBeat = this.audio.getCurrentBeat() + getAirWalkFlybyInterval(this.thiefCounterHits);
-            }
-        } else if (localAlive && this.rhythm.airWalkNextBeat !== null) {
-            // ギミック終了: 中央固定を解除し(tween中だった敵はその場で固定解除する)、
-            // フライバイの予約を止め、プレイヤーを地面へ戻す
-            this.rhythm.airWalkNextBeat = null;
+        } else if (localAlive && this.rhythm.abilityStealNextBeat !== null) {
+            // ギミック終了
+            this.rhythm.abilityStealNextBeat = null;
             this.rhythm.abilityActive = false;
-            this.thiefFlyby = null;
-            this.thiefNextFlybyBeat = null;
-            this.localPlayer.y = CONSTANTS.GROUND_Y;
-            this.stage.enemies.forEach(e => {
-                e.airWalkPinned = false;
-                if (e.tween && e.tween.onComplete === 'airWalkPinned') e.tween = null;
-            });
+            this.thiefPerfectStreak = 0;
         }
 
         // 魔法使いB「イベントノーツ」: 攻撃・防御・能力という区別は無くなり、代わりに
@@ -5397,7 +5283,7 @@ class GameController {
                 this.rhythm.rapidFireAlternator++;
                 this.rhythm.rapidFireNextBeat += 0.5;
             }
-        } else if (localAlive && !isAirWalk && !isEventNote) {
+        } else if (localAlive && !isAbilitySteal && !isEventNote) {
             if (this.rhythm.rapidFireNextBeat !== null) this.rhythm.rapidFireNextBeat = null;
             if (!this.rhythm.swordBurstActive) {
                 const inRange = this.stage.enemies.some(e => !e.dead && !e.falling &&
@@ -5409,7 +5295,7 @@ class GameController {
         }
 
         // 能力バーストをクールダウン明けに自動開始する（連打・地震中は他のノーツを混ぜない）
-        if (localAlive && !isRapidFire && !isAirWalk && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
+        if (localAlive && !isRapidFire && !isAbilitySteal && !this.rhythm.abilityActive && this.abilityCooldown <= 0) {
             this.localPlayer.useAbility();
             this.audio.playAbilitySound();
             this.rhythm.startAbility(4, this.localPlayer.getActiveGimmick());
@@ -5536,9 +5422,6 @@ class GameController {
                 this.rapidFireSweepHitIds = null;
             }
         }
-
-        // 盗賊A「地震」: 発動中のフライバイ攻撃を進行させる
-        this.updateThiefFlyby(dt);
 
         // 防御ノーツを取りこぼした瞬間、周囲の敵からまとめてダメージを受ける
         if (this.rhythm.defendMissThisFrame && this.localPlayer.invincible <= 0) {
@@ -5754,7 +5637,7 @@ const GameLogic = {
     pickBurstPattern, DIFFICULTY_BONUS,
     ENDLESS_ENEMY_COUNT_MULT, ENDLESS_ENEMY_STRENGTH_MULT, ENDLESS_PLAYER_STRENGTH_MULT,
     EFFECTIVELY_INFINITE_WAVES,
-    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower, getAirWalkFlybyInterval,
+    IMAGE_MANIFEST, applyAbility, resolvePerfectHeal, computeKnockbackPower, shouldTriggerAbilitySteal,
     AudioSystem, RhythmSystem, Player, Enemy, StageManager, Renderer, GameController,
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,

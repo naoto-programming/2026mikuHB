@@ -104,4 +104,18 @@ function makePlayer(charId) {
     if (outcome.hits[0].dmg <= 0) throw new Error('all-miss ability should still deal reduced (non-zero) damage');
 }
 
+// 盗賊「能力泥棒」: applyAbilityはcharIdを独立した引数として受け取るため、
+// プレイヤー自身のcharId(例: thief)と異なる職業のcharIdを渡しても、その職業の能力が
+// 正しく発動する(他の職業の能力を「借りて」発動する仕組みの土台になっている)
+{
+    const thiefPlayer = makePlayer('thief');
+    thiefPlayer.x = 0;
+    const target = new Enemy('normal', 100, 0, 1);
+    const outcome = applyAbility('swordsman', 1, thiefPlayer, [target], 0);
+    if (outcome.charId !== 'swordsman') throw new Error('applyAbility should apply the swordsman ability regardless of the player object\'s own charId');
+    if (outcome.hits.length !== 1 || outcome.hits[0].enemy !== target) {
+        throw new Error('borrowing another class\'s ability for a non-matching player should still work exactly like that class using it themselves');
+    }
+}
+
 console.log('ABILITIES OK');
