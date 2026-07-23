@@ -4500,13 +4500,14 @@ class GameController {
         // ability: checkInputAny内のcheckInput('ability')が既にノーツをhit済みにしている。
         // バースト完了時の一括効果はupdate()側のability_complete処理で変更なく発動する。
 
-        // 剣士「ブラックホール」: 発動中、パーフェクトのカウンター(防御)ノーツは敵を1体
-        // ブラックホールへ吸い込み、パーフェクトの攻撃/能力ノーツは終了時に爆発する
-        // ダメージを蓄積する(通常のノーツ効果に加えて発生する)
+        // 剣士「ブラックホール」: 発動中、パーフェクトのノーツは種類を問わず(攻撃・防御・
+        // 能力の全て)敵を1体ブラックホールへ吸い込む。加えて、攻撃/能力ノーツは終了時に
+        // 爆発するダメージも蓄積する(通常のノーツ効果に加えて発生する)。
+        // ギミック自体は専用のノーツ生成を行わないため、発動時に画面に残っていた
+        // ノーツもそのまま流れ続け、消えることはない
         if (gimmick.special === 'blackHole' && result.judge === 'perfect') {
-            if (noteType === 'defend') {
-                this.suckEnemyIntoBlackHole();
-            } else if (noteType === 'sword' || noteType === 'ability') {
+            this.suckEnemyIntoBlackHole();
+            if (noteType === 'sword' || noteType === 'ability') {
                 this.blackHoleDamageMult++;
             }
         }
@@ -4830,8 +4831,8 @@ class GameController {
         this.renderer.shake(5, 0.2);
     }
 
-    // 剣士「ブラックホール」: パーフェクトのカウンターノーツで、まだ吸い込まれていない敵を
-    // 1体選んで画面中央のブラックホールへ吸い込む。瞬間移動に見えないよう、まず吸い込まれる
+    // 剣士「ブラックホール」: パーフェクトのノーツ(種類を問わない)で、まだ吸い込まれていない
+    // 敵を1体選んで画面中央のブラックホールへ吸い込む。瞬間移動に見えないよう、まず吸い込まれる
     // までの短い移動アニメーション(tween)を経由してから、内部でバラバラに周回する状態になる
     suckEnemyIntoBlackHole() {
         // 自分の近く(小さい範囲内)にいる敵だけを吸い込みの対象にする
