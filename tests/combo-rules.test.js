@@ -77,7 +77,7 @@ rhythm.update();
 if (rhythm.combo !== 0) throw new Error('missing a note (letting it pass) should reset combo to 0, got ' + rhythm.combo);
 
 // 能力ノーツも1つずつ実際の判定(パーフェクト等)を返し、判定演出用のonJudgeも呼ばれる。
-// ただしコンボ・スコアには影響させない
+// 攻撃・防御ノーツと同じくパーフェクト/グレイトはコンボを伸ばす(スコアには影響させない)
 const audio2 = makeAudio();
 const rhythm2 = new RhythmSystem(audio2);
 rhythm2.combo = 5;
@@ -89,12 +89,12 @@ const beatInterval2 = 60 / audio2.bpm;
 audio2.ctx.currentTime = 1 * beatInterval2; // ちょうど拍(perfect相当)
 const abilityResult = rhythm2.checkInput('ability');
 if (abilityResult.judge !== 'perfect') throw new Error('ability notes should report their real judge (perfect), got ' + abilityResult.judge);
-if (rhythm2.combo !== 5) throw new Error('an ability note hit must not change combo, expected it to stay at 5, got ' + rhythm2.combo);
+if (rhythm2.combo !== 6) throw new Error('a perfect ability note hit should increment combo just like sword/defend notes, expected 6, got ' + rhythm2.combo);
 if (onJudgeCalls.length !== 1 || onJudgeCalls[0].judge !== 'perfect') {
     throw new Error('hitting an ability note should still fire onJudge with its real judge, so a per-note effect can be shown');
 }
-if (onJudgeCalls[0].combo !== 5) {
-    throw new Error('onJudge for an ability note should report the current (unchanged) combo, not a hardcoded 0, got ' + onJudgeCalls[0].combo);
+if (onJudgeCalls[0].combo !== 6) {
+    throw new Error('onJudge for an ability note should report the updated combo, got ' + onJudgeCalls[0].combo);
 }
 
 console.log('COMBO RULES OK');

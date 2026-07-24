@@ -6,7 +6,8 @@ function readFile(path) {
 eval(readFile('./game.js'));
 const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, Player, Enemy, applyAbility, CHARACTERS,
     ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE,
-    ABILITY_FUSION_RECOIL_RATIO, RAPID_NOTE_MISS_WINDOW_BEATS } = globalThis.GameLogic;
+    ABILITY_FUSION_RECOIL_RATIO,
+    RAPID_NOTE_WINDOW_TOTAL_BEATS, RAPID_NOTE_EARLY_WINDOW_BEATS, RAPID_NOTE_LATE_WINDOW_BEATS } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -157,13 +158,18 @@ if (!resultDone || resultDone.type !== 'ability_complete') {
     }
 }
 
-// 0.5拍間隔で連続するノーツ(連打・能力泥棒)は、前後のノーツの判定窓(半径)が
-// 重ならないよう、半径が間隔(0.5拍)の半分未満でなければならない。以前は
-// 「間隔未満(0.45拍)」にしていただけで、実際には半径0.45拍(直径0.9拍)が
-// 間隔0.5拍に対して大きく重なってしまっていた
-if (!(RAPID_NOTE_MISS_WINDOW_BEATS < 0.25)) {
-    throw new Error('RAPID_NOTE_MISS_WINDOW_BEATS must be less than half the 0.5-beat note spacing to avoid overlapping the neighboring note\'s window, got ' + RAPID_NOTE_MISS_WINDOW_BEATS);
+// 0.5拍間隔で連続するノーツ(連打・能力泥棒)は、隣接ノーツの判定窓と重ならないよう、
+// 「前のノーツの遅打ち許容」+「次のノーツの早打ち許容」が間隔(0.5拍)を超えてはいけない。
+// 早打ち(まだノーツの拍が来ていない状態でのタップ)は自然に早めがちなプレイに合わせて
+// 広め、遅打ち(拍を過ぎてからのタップ)はすぐ次のノーツへ譲れるよう狭めの非対称にしてある
+if (!(RAPID_NOTE_EARLY_WINDOW_BEATS + RAPID_NOTE_LATE_WINDOW_BEATS <= 0.5)) {
+    throw new Error('early+late rapid-note windows must not exceed the 0.5-beat note spacing, or adjacent notes\' windows will overlap, got early=' +
+        RAPID_NOTE_EARLY_WINDOW_BEATS + ' late=' + RAPID_NOTE_LATE_WINDOW_BEATS);
 }
+if (!(RAPID_NOTE_EARLY_WINDOW_BEATS > RAPID_NOTE_LATE_WINDOW_BEATS)) {
+    throw new Error('the early (anticipatory) window should be more generous than the late window, since players tend to tap slightly early');
+}
+if (RAPID_NOTE_WINDOW_TOTAL_BEATS <= 0) throw new Error('RAPID_NOTE_WINDOW_TOTAL_BEATS should be a positive budget shared between early/late');
 
 // 最初のノーツを無視して(打たずに)2つ目からタップし始めても、2つ目のノーツを
 // 正確なタイミングで打てば、既に残っている1つ目のノーツへ誤って吸われることなく
