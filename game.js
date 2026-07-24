@@ -66,6 +66,13 @@ const MAX_CORRUPTED_NOTES = 4;
 // 薄れるため、「同時には出さない」ことだけを保証できる程度の小さい値にしてある
 const MIN_CORRUPT_STAGGER_BEATS = 1;
 
+// 盗賊B「連打」・盗賊A「能力泥棒」: ノーツが0.5拍間隔で連続するギミック用の、
+// ミス判定・描画消失までの猶予(拍)。checkInput/checkInputAnyのrapidFireWindowCapと
+// 同じ基準(間隔0.5拍の半分の90%)にすることで、前後のノーツの判定窓が重ならないようにする
+// (重なると、次のノーツを正確に打ったつもりでもまだ残っていた前のノーツの方へ
+// 誤って吸われてしまい、本来のノーツがそのまま流れてミスになる)
+const RAPID_NOTE_MISS_WINDOW_BEATS = 0.25 * 0.9;
+
 // 魔法使いB「イベントノーツ」: 各色の効果範囲(射程)。水→炎→風→雷→地震(全体攻撃)の
 // 順に段階的に大きくなるようにしてある(地震はMAGE_EARTH_GLOBALで全体攻撃を表す)
 const MAGE_WATER_RADIUS = 45;
@@ -932,8 +939,20 @@ class RhythmSystem {
         this.defendMissThisFrame = false;
 
         // Mark missed notes
+        // 盗賊B「連打」・盗賊A「能力泥棒」は0.5拍間隔でノーツが連続する。通常のGOOD_WINDOW
+        // (0.3秒)をそのまま拍に換算すると、BPMによっては0.5拍間隔より長くなってしまい、
+        // 前のノーツがまだ「取りこぼし」判定されないまま次のノーツと同時に有効な状態で
+        // 残ってしまう。すると、次のノーツを正確なタイミングで打ったつもりでも、
+        // (checkInput/checkInputAnyの検索が全レーンの中から距離最小の1件を選ぶ都合上)
+        // まだ残っていた前のノーツの方が僅かに近いと判定されて誤ってそちらにヒットしてしまい、
+        // 本来打つべきだった次のノーツがそのまま流れてミスになる、という不具合が起きていた。
+        // checkInputの判定窓(rapidFireWindowCap)と同じ基準で、次のノーツが来る前に
+        // 必ず取りこぼし判定されるよう、この種のノーツだけmiss判定までの猶予を縮める
         [...this.swordNotes, ...this.abilityNotes, ...this.defendNotes].forEach(note => {
-            if (!note.hit && !note.missed && currentBeat > note.beat + CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60)) {
+            const missWindowBeats = (note.rapidFireNote || note.abilityStealNote)
+                ? RAPID_NOTE_MISS_WINDOW_BEATS
+                : CONSTANTS.GOOD_WINDOW * (this.audio.bpm / 60);
+            if (!note.hit && !note.missed && currentBeat > note.beat + missWindowBeats) {
                 note.missed = true;
                 if (note.corrupted) {
                     // ウイルスノーツは打たずに無視するのが正解なので、素通りさせた瞬間に
@@ -990,12 +1009,14 @@ class RhythmSystem {
         const windowMult = inputType === 'defend' ? 1 : (gimmick.judgeWindowMult || 1);
         const currentBeat = this.audio.getInputBeat();
         const beatInterval = 60 / this.audio.bpm;
-        // 盗賊B「連打」・盗賊A「地震」中はノーツが0.5拍間隔で連続する。通常のGOOD_WINDOW
-        // (0.3秒)をそのまま使うとBPMが速い曲では半拍の間隔より判定窓の方が広くなってしまい、
-        // 少し遅れたタップが本来叩くべきノーツではなく「次」のノーツに誤って取られてしまう
-        // (音がズレて聞こえたり、意図したノーツがいつまでも取りこぼし扱いにならず居座って
-        // 見える原因になっていた)。0.5拍間隔で連続するノーツは判定窓を半拍未満に制限する
-        const rapidFireWindowCap = beatInterval * 0.5 * 0.9;
+        // 盗賊B「連打」・盗賊A「能力泥棒」中はノーツが0.5拍間隔で連続する。前後のノーツの
+        // 判定窓が重ならないようにするには、半径(判定窓)を間隔(0.5拍)の半分未満にする
+        // 必要がある。以前は半径を「間隔未満(0.45拍)」にしていただけで、前後のノーツの
+        // 判定窓(半径0.45拍=直径0.9拍)が間隔0.5拍に対して大きく重なってしまっていた。
+        // このため、連続するノーツの途中からタップし始めると、僅かなタイミングのブレで
+        // 本来打つべきノーツではなく前(または次)のノーツへ誤って吸われてしまい、
+        // 本来のノーツがそのまま流れてミスになる不具合があった
+        const rapidFireWindowCap = beatInterval * 0.25 * 0.9;
 
         let searchPool = inputType === 'ability' ? this.abilityNotes
             : inputType === 'defend' ? this.defendNotes
@@ -1089,8 +1110,8 @@ class RhythmSystem {
         const windowMult = gimmick.judgeWindowMult || 1;
         const currentBeat = this.audio.getInputBeat();
         const beatInterval = 60 / this.audio.bpm;
-        // checkInput内と同じ理由で、連打ノーツは判定窓を半拍未満に制限する
-        const rapidFireWindowCap = beatInterval * 0.5 * 0.9;
+        // checkInput内と同じ理由で、連打ノーツは判定窓の半径を間隔(0.5拍)の半分未満に制限する
+        const rapidFireWindowCap = beatInterval * 0.25 * 0.9;
         const pools = [
             { type: 'sword', notes: this.swordNotes, windowMult },
             { type: 'ability', notes: this.abilityActive ? this.abilityNotes : [], windowMult },
@@ -1143,7 +1164,11 @@ class RhythmSystem {
 
         return allNotes.filter(n => {
             const dist = n.beat - currentBeat;
-            return dist > -missWindowBeats && dist < visibleBeats && !n.hit;
+            // 連打・能力泥棒のノーツは、既にミス確定扱いになる猶予(RAPID_NOTE_MISS_WINDOW_BEATS)
+            // が通常より短いため、描画上の消失タイミングもそれに合わせて早める
+            // (でないと、既に打てなくなったノーツがまだ画面に居座って見えてしまう)
+            const noteMissWindowBeats = (n.rapidFireNote || n.abilityStealNote) ? RAPID_NOTE_MISS_WINDOW_BEATS : missWindowBeats;
+            return dist > -noteMissWindowBeats && dist < visibleBeats && !n.hit;
         }).map(n => {
             const offset = (n.beat - currentBeat) * (CONSTANTS.NOTE_SPEED * speedMult * beatInterval);
             const base = 300 + lineOffset;
@@ -6498,6 +6523,7 @@ const GameLogic = {
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,
     GIMMICK_NORMAL_SECONDS, GIMMICK_SPECIAL_SECONDS, MAX_CORRUPTED_NOTES, MIN_CORRUPT_STAGGER_BEATS,
+    RAPID_NOTE_MISS_WINDOW_BEATS,
 };
 if (typeof globalThis !== 'undefined') {
     globalThis.GameLogic = GameLogic;

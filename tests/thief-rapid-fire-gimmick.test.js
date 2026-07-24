@@ -6,7 +6,7 @@ function readFile(path) {
 eval(readFile('./game.js'));
 const { RhythmSystem, AudioSystem, CHARACTER_GIMMICKS, Player, Enemy, applyAbility, CHARACTERS,
     ABILITY_STEAL_POWER_MULT, ABILITY_STEAL_PENDING_BEATS, ABILITY_FUSION_POWER_MULT, ABILITY_FUSION_TABLE,
-    ABILITY_FUSION_RECOIL_RATIO } = globalThis.GameLogic;
+    ABILITY_FUSION_RECOIL_RATIO, RAPID_NOTE_MISS_WINDOW_BEATS } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -14,6 +14,23 @@ function makeAudio() {
     audio.isPlaying = true;
     audio.ctx = { currentTime: 0 };
     audio.startTime = 0;
+    return audio;
+}
+
+function audioNodeStub() {
+    return {
+        connect: () => {}, disconnect: () => {}, start: () => {}, stop: () => {},
+        frequency: { setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+        gain: { setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+    };
+}
+// playHitSound等が実際に音を鳴らそうとしても落ちないよう、Web Audioの最小限のスタブを持つ
+// AudioSystemを作る(makeAudio()はcheckInputを直接呼ばないテストで使う軽量版のため分けている)
+function makeAudioWithSoundStub() {
+    const audio = makeAudio();
+    audio.ctx.createOscillator = () => audioNodeStub();
+    audio.ctx.createGain = () => audioNodeStub();
+    audio.masterGain = audioNodeStub();
     return audio;
 }
 
@@ -137,6 +154,57 @@ if (!resultDone || resultDone.type !== 'ability_complete') {
     if (!(leftRendered.x < 300) || !(rightRendered.x > 300)) {
         throw new Error('fromLeft should approach from the defend (left) side while the rest still approach from the right, left.x=' +
             leftRendered.x + ' right.x=' + rightRendered.x);
+    }
+}
+
+// 0.5拍間隔で連続するノーツ(連打・能力泥棒)は、前後のノーツの判定窓(半径)が
+// 重ならないよう、半径が間隔(0.5拍)の半分未満でなければならない。以前は
+// 「間隔未満(0.45拍)」にしていただけで、実際には半径0.45拍(直径0.9拍)が
+// 間隔0.5拍に対して大きく重なってしまっていた
+if (!(RAPID_NOTE_MISS_WINDOW_BEATS < 0.25)) {
+    throw new Error('RAPID_NOTE_MISS_WINDOW_BEATS must be less than half the 0.5-beat note spacing to avoid overlapping the neighboring note\'s window, got ' + RAPID_NOTE_MISS_WINDOW_BEATS);
+}
+
+// 最初のノーツを無視して(打たずに)2つ目からタップし始めても、2つ目のノーツを
+// 正確なタイミングで打てば、既に残っている1つ目のノーツへ誤って吸われることなく
+// きちんと2つ目にヒットする
+{
+    const audio = makeAudioWithSoundStub();
+    const rhythm = new RhythmSystem(audio);
+    const beatInterval = 60 / audio.bpm;
+    rhythm.swordNotes.push(
+        { id: rhythm.noteId++, beat: 0, type: 'sword', hit: false, missed: false, rapidFireNote: true },
+        { id: rhythm.noteId++, beat: 0.5, type: 'sword', hit: false, missed: false, rapidFireNote: true }
+    );
+    // 1つ目のノーツは無視したまま、2つ目のノーツのタイミングちょうどでタップする
+    audio.ctx.currentTime = 0.5 * beatInterval;
+    rhythm.update(); // 実際のゲームループと同様、タップの前にも毎フレームmiss判定が走る
+    const result = rhythm.checkInputAny({});
+    if (!result || !result.note || result.note.beat !== 0.5) {
+        throw new Error('tapping precisely on the 2nd note should hit the 2nd note, not get stolen by the stale 1st note, got ' +
+            JSON.stringify(result && result.note));
+    }
+    if (result.judge === 'miss') throw new Error('the 2nd note should be hit successfully (not judged as a miss)');
+}
+
+// 途中からタップし始めた時、少し早め/遅めのタイミングのブレがあっても、狙った
+// ノーツとは別の(前後に隣接する)ノーツへ誤ってヒットすることがない
+// (前のノーツに対する猶予をタップより先に使い切らせるため、まずrhythm.update()を呼ぶ)
+{
+    const audio = makeAudioWithSoundStub();
+    const rhythm = new RhythmSystem(audio);
+    const beatInterval = 60 / audio.bpm;
+    rhythm.swordNotes.push(
+        { id: rhythm.noteId++, beat: 0, type: 'sword', hit: false, missed: false, rapidFireNote: true },
+        { id: rhythm.noteId++, beat: 0.5, type: 'sword', hit: false, missed: false, rapidFireNote: true }
+    );
+    // 2つ目のノーツより少しだけ早いタイミング(0.15拍分)でタップする
+    audio.ctx.currentTime = (0.5 - 0.15) * beatInterval;
+    rhythm.update();
+    const result = rhythm.checkInputAny({});
+    if (!result || !result.note || result.note.beat !== 0.5) {
+        throw new Error('an early-but-reasonable tap aimed at the 2nd note must not get attributed to the stale 1st note, got ' +
+            JSON.stringify(result && result.note));
     }
 }
 
