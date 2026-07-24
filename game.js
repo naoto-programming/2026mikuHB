@@ -6067,7 +6067,11 @@ class AbilityShowcase {
         this.blackHoleHits = 0;
         this.storedNotes = 0;
         this.eruptingNotes.length = 0;
-        this.practiceNextBeat = 1; // 最初の1拍は心構えの猶予として空ける
+        // 本編の攻撃/能力バースト・連打等と同じく、最初のノーツはLOOKAHEAD_BEATS拍先に
+        // 配置する。これをしないとノーツが出現した瞬間には既に判定線(またはcenterJudgeCircle
+        // ギミックの円)の位置に来てしまっており、判定線・円から湧いて出ているように
+        // 見えてしまう(画面外から判定線へ近づいてくる本来の見た目にならない)
+        this.practiceNextBeat = snapToMeasureBeat(this.practiceAudio.getCurrentBeat(), LOOKAHEAD_BEATS);
     }
 
     spawnPracticeNote(entry, beat) {
@@ -6286,7 +6290,17 @@ class AbilityShowcase {
             desc = `${ca.name}と${cb.name}を組み合わせた、${effectText}の効果がある能力である。通常の能力より弱体化した威力で発動する。`;
             charIds = [a, b];
         }
-        this.selected = { category, key, entry, title, desc, charIds };
+        // 融合技は2キャラそれぞれの本来の能力の色を両方使い、2つが重なって発動している
+        // ことが見た目からも伝わるようにする(似たshapeの組み合わせでも、色の組み合わせで
+        // 区別しやすくなる)
+        let colorA = null, colorB = null;
+        if (category === 'fusion') {
+            const abilA = ABILITY_SHOWCASE_ABILITIES.find(x => x.charId === charIds[0]);
+            const abilB = ABILITY_SHOWCASE_ABILITIES.find(x => x.charId === charIds[1]);
+            colorA = (abilA && abilA.color) || '#f39c12';
+            colorB = (abilB && abilB.color) || '#f39c12';
+        }
+        this.selected = { category, key, entry, title, desc, charIds, colorA, colorB };
         this.dashAnim = null;
         const baseX = 300;
         this.demoPlayers = charIds.map((charId, i) => {
@@ -6336,6 +6350,7 @@ class AbilityShowcase {
     play() {
         if (!this.selected || !this.renderer) return;
         const entry = this.selected.entry;
+        const isFusion = this.selected.category === 'fusion';
         // 再生のたびに毎回同じ動きが見えるよう、ダミーキャラ・ダミー敵を初期位置へ戻す
         const baseX = 300;
         this.demoPlayers.forEach((p, i) => { p.x = baseX + i * 90; });
@@ -6344,25 +6359,51 @@ class AbilityShowcase {
 
         const mover = this.demoPlayers[0];
         const psx = mover.x, psy = CONSTANTS.GROUND_Y - 40;
-        const color = entry.color || '#f39c12';
+        const color = isFusion ? this.selected.colorA : (entry.color || '#f39c12');
+        const color2 = isFusion ? this.selected.colorB : null;
         const hits = entry.hits || 1;
-        if (entry.edgeDash) {
-            this.dashAnim = { obj: mover, fromX: mover.x, toX: Math.min(mover.x + 850, CONSTANTS.CANVAS_WIDTH - 130), t: 0, duration: 0.25 };
-        } else if (entry.dashDistance || entry.dash) {
-            this.dashAnim = { obj: mover, fromX: mover.x, toX: mover.x + (entry.dashDistance || 250), t: 0, duration: 0.15 };
-        }
-        for (let i = 0; i < hits; i++) {
-            setTimeout(() => this.fireOnce(entry, psx, psy, color), i * 180);
+
+        const startAttack = () => {
+            if (entry.edgeDash) {
+                this.dashAnim = { obj: mover, fromX: mover.x, toX: Math.min(mover.x + 850, CONSTANTS.CANVAS_WIDTH - 130), t: 0, duration: 0.25 };
+            } else if (entry.dashDistance || entry.dash) {
+                this.dashAnim = { obj: mover, fromX: mover.x, toX: mover.x + (entry.dashDistance || 250), t: 0, duration: 0.15 };
+            }
+            for (let i = 0; i < hits; i++) {
+                setTimeout(() => this.fireOnce(entry, psx, psy, color, color2), i * 180);
+            }
+        };
+
+        if (isFusion) {
+            // 融合技: 2キャラそれぞれの能力の色で、足元から中央へ寄っていくような
+            // 収束フラッシュを一瞬見せてから本来の攻撃を発動し、「2つの能力が重なって
+            // 1つの技になっている」感触を強める
+            const midX = (this.demoPlayers[0].x + this.demoPlayers[1].x) / 2;
+            this.demoPlayers.forEach((p, i) => {
+                this.renderer.addParticle(p.x, CONSTANTS.GROUND_Y - 40, i === 0 ? color : color2, 12, 10);
+            });
+            this.renderer.addRangeCircle(midX, CONSTANTS.GROUND_Y - 40, 60, color);
+            this.renderer.addRangeCircle(midX, CONSTANTS.GROUND_Y - 40, 40, color2);
+            this.renderer.shake(4, 0.15);
+            setTimeout(startAttack, 220);
+        } else {
+            startAttack();
         }
     }
 
-    fireOnce(entry, psx, psy, color) {
+    // color2が渡されている(=融合技)場合、同じ形をひとまわり小さくもう一色で重ねて描き、
+    // 単色のギミック・能力とは見た目がはっきり区別できるようにする
+    fireOnce(entry, psx, psy, color, color2) {
         if (!this.renderer) return;
         if (entry.shape === 'circle') {
-            (entry.circles || [entry.radius || 200]).forEach(r => this.renderer.addRangeCircle(psx, psy, r, color));
+            const radii = entry.circles || [entry.radius || 200];
+            radii.forEach(r => this.renderer.addRangeCircle(psx, psy, r, color));
+            if (color2) radii.forEach(r => this.renderer.addRangeCircle(psx, psy, r * 0.7, color2));
             this.demoEnemies.forEach(e => this.renderer.addExplosion(e.x, CONSTANTS.GROUND_Y - e.data.size / 2, 1));
         } else if (entry.shape === 'directional') {
-            (entry.beams || [entry.range || 300]).forEach(r => this.renderer.addRangeBeam(psx, psy, 1, r, color));
+            const ranges = entry.beams || [entry.range || 300];
+            ranges.forEach(r => this.renderer.addRangeBeam(psx, psy, 1, r, color));
+            if (color2) ranges.forEach(r => this.renderer.addRangeBeam(psx, psy, 1, r * 0.65, color2));
             this.demoEnemies.forEach(e => this.renderer.addExplosion(e.x, CONSTANTS.GROUND_Y - e.data.size / 2, 1));
         } else if (entry.shape === 'launchedNote') {
             const target = this.demoEnemies[0];
@@ -6379,7 +6420,10 @@ class AbilityShowcase {
                 const dropX = this.demoEnemies[i % this.demoEnemies.length]
                     ? this.demoEnemies[i % this.demoEnemies.length].x
                     : 150 + Math.random() * 500;
+                // 融合技は、隕石が降るたびに2キャラの色を交互に使い分ける
+                const dropColor = (color2 && i % 2 === 1) ? color2 : color;
                 this.renderer.addMeteorNote(dropX, 0, () => this.renderer.addExplosion(dropX, CONSTANTS.GROUND_Y - 10, 0.8));
+                this.renderer.addParticle(dropX, CONSTANTS.GROUND_Y - 10, dropColor, 4);
             }
         } else if (entry.shape === 'meteor') {
             const target = this.demoEnemies[0];
@@ -6391,6 +6435,7 @@ class AbilityShowcase {
             this.renderer.addFloatingText(psx, psy - 80, entry.name || '', color, 20);
         }
         this.renderer.addParticle(psx, psy, color, 10);
+        if (color2) this.renderer.addParticle(psx, psy, color2, 10);
     }
 
     loop(timestamp) {
@@ -6414,8 +6459,12 @@ class AbilityShowcase {
         if (isGimmick && this.practiceRhythm) {
             const entry = this.selected.entry;
             const currentBeat = this.practiceAudio.getCurrentBeat();
+            // 本編の連打/能力泥棒等と同じく、常にLOOKAHEAD_BEATS拍先まで予約済みノーツで
+            // 埋めておく(「今この瞬間の拍」ちょうどに生成すると、画面外から近づいてくる間が
+            // なく判定線に湧いて出てしまうため)
+            const horizon = currentBeat + LOOKAHEAD_BEATS + 1;
             let guard = 0;
-            while (currentBeat >= this.practiceNextBeat && guard < 20) {
+            while (this.practiceNextBeat < horizon && guard < 20) {
                 this.spawnPracticeNote(entry, this.practiceNextBeat);
                 this.practiceNextBeat += entry.noteInterval;
                 guard++;
