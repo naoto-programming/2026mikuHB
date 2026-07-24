@@ -65,6 +65,8 @@ const MAX_CORRUPTED_NOTES = 4;
 // 大きすぎるとMAX_CORRUPTED_NOTES件まで実際には到達しづらくなり上限を上げた意味が
 // 薄れるため、「同時には出さない」ことだけを保証できる程度の小さい値にしてある
 const MIN_CORRUPT_STAGGER_BEATS = 1;
+// ウイルス化ノーツ(ダメージノーツ)を打ってしまった時の自傷ダメージ(固定値)
+const CORRUPTED_NOTE_SELF_DAMAGE = 5;
 
 // 盗賊B「連打」・盗賊A「能力泥棒」: ノーツが0.5拍間隔で連続するギミック用の判定窓(拍)。
 // 前後のノーツの判定窓が重ならないようにするには、前後合計の許容が間隔(0.5拍)の
@@ -4677,15 +4679,13 @@ class GameController {
         }
 
         // ウイルス化ノーツ: 攻撃/能力/カウンターノーツのどれであっても、感染していれば
-        // 通常の効果の代わりに自分がダメージを受ける。判定・コンボリセットは既に
+        // 通常の効果の代わりに自分が固定ダメージを受ける。判定・コンボリセットは既に
         // RhythmSystem.checkInput側で(タイミング精度に関わらず)ミス扱いとして処理済み
         if (result.note.corrupted) {
-            const dmg = this.stage.getNearbyEnemyDamage(this.localPlayer.x, 200);
-            if (dmg > 0) {
-                this.localPlayer.takeDamage(dmg);
-                this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
-                    `-${Math.floor(dmg)}`, '#e74c3c', 16);
-            }
+            const dmg = CORRUPTED_NOTE_SELF_DAMAGE;
+            this.localPlayer.takeDamage(dmg);
+            this.renderer.addFloatingText(this.localPlayer.x - this.stage.scrollX, this.localPlayer.y - 70,
+                `-${dmg}`, '#e74c3c', 16);
             return;
         }
 
@@ -6140,7 +6140,9 @@ class AbilityShowcase {
             }
             return;
         }
-        if (result.judge === 'miss') return;
+        // それ以外(ノーツ発射・イベントノーツ等)は、パーフェクト/グレイトの時だけ
+        // きちんと効果を発動する(グッドでは実際のゲームでも十分な効果が出ない場合があるため)
+        if (result.judge !== 'perfect' && result.judge !== 'great') return;
         this.fireOnce(entry, psx, psy, color);
     }
 
@@ -6514,6 +6516,7 @@ class AbilityShowcase {
         this.renderer.renderRangeIndicators(ctx);
         this.renderer.renderEdgeDashes(ctx);
         this.renderer.renderMeteorNotes(ctx);
+        this.renderer.renderLaunchedNotes(ctx);
         this.renderer.renderExplosions(ctx, null);
         if (isGimmick) {
             if (this.selected.entry.special === 'flickUpNote') this.renderer.renderStoredNotes(ctx, this.fakeGame);
@@ -6590,6 +6593,7 @@ const GameLogic = {
     BURST_PATTERNS, LOOKAHEAD_BEATS, CHARACTER_GIMMICKS,
     MEASURE_BEATS, snapToMeasureBeat,
     GIMMICK_NORMAL_SECONDS, GIMMICK_SPECIAL_SECONDS, MAX_CORRUPTED_NOTES, MIN_CORRUPT_STAGGER_BEATS,
+    CORRUPTED_NOTE_SELF_DAMAGE,
     RAPID_NOTE_WINDOW_TOTAL_BEATS, RAPID_NOTE_EARLY_WINDOW_BEATS, RAPID_NOTE_LATE_WINDOW_BEATS,
 };
 if (typeof globalThis !== 'undefined') {

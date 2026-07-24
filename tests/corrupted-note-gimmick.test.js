@@ -4,7 +4,8 @@ function readFile(path) {
     return ObjC.unwrap(data);
 }
 eval(readFile('./game.js'));
-const { RhythmSystem, AudioSystem, CONSTANTS, MAX_CORRUPTED_NOTES, MIN_CORRUPT_STAGGER_BEATS } = globalThis.GameLogic;
+const { RhythmSystem, AudioSystem, CONSTANTS, MAX_CORRUPTED_NOTES, MIN_CORRUPT_STAGGER_BEATS,
+    CORRUPTED_NOTE_SELF_DAMAGE } = globalThis.GameLogic;
 
 function makeAudio() {
     const audio = new AudioSystem();
@@ -157,5 +158,10 @@ if (!result6 || result6.judge !== 'miss') {
     throw new Error('tapping a corrupted note precisely should still be judged as a miss, got ' + JSON.stringify(result6));
 }
 if (rhythm6.combo !== 0) throw new Error('tapping a corrupted note should immediately reset combo to 0, got ' + rhythm6.combo);
+
+// ダメージノーツ(ウイルス化ノーツ)を打った時の自傷ダメージは固定5
+if (CORRUPTED_NOTE_SELF_DAMAGE !== 5) {
+    throw new Error('CORRUPTED_NOTE_SELF_DAMAGE should be a fixed 5, got ' + CORRUPTED_NOTE_SELF_DAMAGE);
+}
 
 console.log('CORRUPTED NOTE / SPECIAL-MISS-HANDLING GIMMICK OK');
